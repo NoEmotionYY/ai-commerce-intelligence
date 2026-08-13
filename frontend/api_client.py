@@ -26,6 +26,11 @@ class DashboardResponse(BaseModel):
     inventory_alerts: list[dict[str, Any]]
 
 
+class AuthenticationResponse(BaseModel):
+    role: str
+    authenticated: bool
+
+
 class EvidenceResponse(BaseModel):
     source: str
     metric: str
@@ -109,9 +114,24 @@ class CommentAnalysisResponse(BaseModel):
     topics: list[dict[str, Any]]
 
 
+class CompetitorPriceTrendResponse(BaseModel):
+    recent_price: float
+    previous_price: float
+    change_pct: float
+    window: str
+
+
+class ContentTrendResponse(BaseModel):
+    recent_average_likes: float
+    previous_average_likes: float
+    change_pct: float
+    new_features: list[str]
+    window: str
+
+
 class DailyReportResponse(BaseModel):
-    competitor_price: dict[str, Any]
-    content_trend: dict[str, Any]
+    competitor_price: CompetitorPriceTrendResponse
+    content_trend: ContentTrendResponse
     recommendations: list[str]
 
 
@@ -133,16 +153,15 @@ def _error_detail(response: httpx.Response) -> str | None:
 
 
 def _status_message(response: httpx.Response) -> str:
-    detail = _error_detail(response)
     if response.status_code in {401, 403}:
-        return f"身份验证失败：{detail or '凭据为空、无效或权限不足'}"
+        return "身份验证失败：凭据为空、无效或权限不足。"
     if response.status_code == 404:
-        return f"请求的资源不存在：{detail or '请刷新后重试'}"
+        return "请求的业务数据不存在，请刷新后重试。"
     if response.status_code == 422:
-        return f"请求参数无效：{detail or '请检查输入'}"
+        return "输入内容不符合要求，请检查后重试。"
     if response.status_code >= 500:
-        return f"后端服务暂时不可用：{detail or '请稍后重试'}"
-    return f"请求失败（HTTP {response.status_code}）：{detail or '请稍后重试'}"
+        return "业务服务暂时不可用，请稍后重试。"
+    return "业务请求未成功，请稍后重试。"
 
 
 class FrontendApiClient:
@@ -222,6 +241,23 @@ class FrontendApiClient:
 
     def dashboard(self) -> DashboardResponse:
         return self.model("GET", "/api/dashboard", DashboardResponse)
+
+    def verify_operator(self) -> AuthenticationResponse:
+        result = self.model("GET", "/api/auth/operator", AuthenticationResponse, protected=True)
+        if not result.authenticated or result.role != "operator":
+            raise FrontendApiError("操作员身份验证响应不符合预期，请联系管理员。")
+        return result
+
+    def verify_approver(self, approver_key: str) -> AuthenticationResponse:
+        result = self.model(
+            "GET",
+            "/api/auth/approver",
+            AuthenticationResponse,
+            headers={"X-Approver-Key": approver_key},
+        )
+        if not result.authenticated or result.role != "approver":
+            raise FrontendApiError("审批员身份验证响应不符合预期，请联系管理员。")
+        return result
 
     def chat(
         self,

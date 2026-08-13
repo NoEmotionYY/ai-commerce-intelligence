@@ -6,12 +6,19 @@ function New-SecureToken {
     return (($bytes | ForEach-Object { $_.ToString("x2") }) -join "")
 }
 
+$erpToken = New-SecureToken
+$approverToken = New-SecureToken
+$operatorToken = New-SecureToken
+$crawlerToken = New-SecureToken
+
 @"
-ERP_SERVICE_TOKEN=$(New-SecureToken)
-APPROVER_API_KEY=$(New-SecureToken)
-OPERATOR_API_KEY=$(New-SecureToken)
-CRAWLER_SERVICE_TOKEN=$(New-SecureToken)
+ERP_SERVICE_TOKEN=$erpToken
+APPROVER_API_KEY=$approverToken
+OPERATOR_API_KEY=$operatorToken
+CRAWLER_SERVICE_TOKEN=$crawlerToken
+DEMO_OPERATOR_API_KEY=$operatorToken
+DEMO_APPROVER_API_KEY=$approverToken
 "@ | Set-Content -Encoding utf8 .env
 
 $generator.Dispose()
-Write-Host "Generated local .env. Copy operator and approver credentials into the UI."
+Write-Host "Generated local .env. Demo credentials will be loaded into masked UI controls."

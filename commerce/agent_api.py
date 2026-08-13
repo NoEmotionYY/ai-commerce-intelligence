@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import timedelta
 from typing import cast
 from uuid import uuid4
@@ -12,7 +13,13 @@ from commerce.config import get_settings
 from commerce.database import get_session
 from commerce.llm_agent import run_model_tool_loop
 from commerce.models import ApprovalStatus, ApprovalTask, CrawlerTask, OperationLog, Order
-from commerce.schemas import ChatRequest, ChatResponse, Evidence, ToolCallRecord
+from commerce.schemas import (
+    AuthenticationStatus,
+    ChatRequest,
+    ChatResponse,
+    Evidence,
+    ToolCallRecord,
+)
 from commerce.seed import AS_OF
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
 from commerce.services.marketing import competitor_products, negative_comment_topics
@@ -44,8 +51,14 @@ def require_operator(key: str) -> None:
     configured = get_settings().operator_api_key
     if not configured:
         raise HTTPException(503, "操作员凭据未配置")
-    if key != configured:
+    if not secrets.compare_digest(key, configured):
         raise HTTPException(403, "操作员凭据无效")
+
+
+@app.get("/api/auth/operator", response_model=AuthenticationStatus)
+def verify_operator(x_operator_key: str = Header(default="")) -> AuthenticationStatus:
+    require_operator(x_operator_key)
+    return AuthenticationStatus(role="operator")
 
 
 @app.get("/health")
@@ -311,8 +324,14 @@ def require_approver(key: str) -> None:
     configured = get_settings().approver_api_key
     if not configured:
         raise HTTPException(503, "审批凭据未配置")
-    if key != configured:
+    if not secrets.compare_digest(key, configured):
         raise HTTPException(403, "审批凭据无效")
+
+
+@app.get("/api/auth/approver", response_model=AuthenticationStatus)
+def verify_approver(x_approver_key: str = Header(default="")) -> AuthenticationStatus:
+    require_approver(x_approver_key)
+    return AuthenticationStatus(role="approver")
 
 
 @app.post("/api/approvals/{approval_id}/approve")

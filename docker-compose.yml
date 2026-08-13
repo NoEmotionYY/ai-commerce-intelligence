@@ -101,6 +101,8 @@ services:
     environment:
       AGENT_API_URL: http://agent-api:8000
       PYTHONPATH: /app
+      DEMO_OPERATOR_API_KEY: ${DEMO_OPERATOR_API_KEY:-}
+      DEMO_APPROVER_API_KEY: ${DEMO_APPROVER_API_KEY:-}
     command: ["streamlit", "run", "frontend/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
     ports: ["127.0.0.1:8501:8501"]
     depends_on:

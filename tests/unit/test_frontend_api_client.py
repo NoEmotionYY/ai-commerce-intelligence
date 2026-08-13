@@ -29,9 +29,9 @@ def response(status: int, payload: object = None, *, raw: bytes | None = None) -
     [
         (401, "身份验证失败"),
         (403, "身份验证失败"),
-        (404, "资源不存在"),
-        (422, "参数无效"),
-        (500, "后端服务暂时不可用"),
+        (404, "业务数据不存在"),
+        (422, "输入内容不符合要求"),
+        (500, "业务服务暂时不可用"),
     ],
 )
 def test_http_errors_are_controlled(status: int, message: str) -> None:
@@ -110,3 +110,50 @@ def test_operator_header_empty_invalid_and_valid() -> None:
     result = FrontendApiClient("http://agent.test", operator_key="valid", client=shared).chat("hi")
     assert result.answer == "ok"
     assert seen == ["", "invalid", "valid"]
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "method", "expected"),
+    [
+        ("/api/auth/operator", {"role": "approver", "authenticated": True}, "operator", "操作员"),
+        ("/api/auth/operator", {"role": "operator", "authenticated": False}, "operator", "操作员"),
+        ("/api/auth/approver", {"role": "operator", "authenticated": True}, "approver", "审批员"),
+        ("/api/auth/approver", {"role": "approver", "authenticated": False}, "approver", "审批员"),
+    ],
+)
+def test_authentication_response_must_match_role_and_state(
+    path: str, payload: object, method: str, expected: str
+) -> None:
+    transport = httpx.MockTransport(lambda request: response(200, payload))
+    client = FrontendApiClient(
+        "http://agent.test", operator_key="operator", client=httpx.Client(transport=transport)
+    )
+    with pytest.raises(FrontendApiError, match=expected):
+        if method == "operator":
+            client.verify_operator()
+        else:
+            client.verify_approver("approver")
+
+
+@pytest.mark.parametrize("bad_features", [None, 7, "快充"])
+def test_daily_report_rejects_wrong_nested_feature_type(bad_features: object) -> None:
+    payload = {
+        "competitor_price": {
+            "recent_price": 100,
+            "previous_price": 110,
+            "change_pct": -9.09,
+            "window": "最近7天",
+        },
+        "content_trend": {
+            "recent_average_likes": 200,
+            "previous_average_likes": 100,
+            "change_pct": 100,
+            "new_features": bad_features,
+            "window": "最近7天",
+        },
+        "recommendations": [],
+    }
+    transport = httpx.MockTransport(lambda request: response(200, payload))
+    client = FrontendApiClient("http://agent.test", client=httpx.Client(transport=transport))
+    with pytest.raises(FrontendApiError, match="缺少必要字段|类型错误"):
+        client.daily_report()

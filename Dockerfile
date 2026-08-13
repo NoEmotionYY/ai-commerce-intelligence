@@ -9,8 +9,8 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY scripts ./scripts
 COPY frontend ./frontend
+COPY .streamlit ./.streamlit
 COPY docs ./docs
 COPY README.md* ./
 
 CMD ["uvicorn", "commerce.agent_api:app", "--host", "0.0.0.0", "--port", "8000"]
-

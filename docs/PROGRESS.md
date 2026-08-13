@@ -2,11 +2,39 @@
 
 ## 当前状态
 
-- 当前阶段：后验收 UI 回归完成
-- 项目完成状态：COMPLETE
+- 当前阶段：第二次后验收 UI / 认证加固已完成
+- 项目完成状态：COMPLETE（以本轮重新执行证据为准）
 - 最后更新：2026-08-14
 
 ## 已完成里程碑
+
+### 2026-08-14：第二次人工 UI 验证重新打开
+
+- 人工验证发现审批角色仍不清晰，Approval Center 可收到“审批凭据无效”；导航、表格字段、状态、风险、操作类型和原始 JSON 仍暴露英文后端表示。
+- 运行态追踪确认两种凭据有意分离：聊天、审批列表、执行记录、采集代理使用 `X-Operator-Key`；批准/拒绝使用 `X-Approver-Key`。不能用有效 operator 代替 approver。
+- Streamlit 旧实现把 approver 控件放在审批页条件分支，切出该页后控件状态会被清理；操作员控件始终在侧栏，因此表现为只有审批员凭据丢失。加上无角色说明和验证状态，用户容易把 operator 值当 approver 值。
+- 五页大量把 Pydantic 模型直接 `model_dump()` 到 dataframe / JSON，导致 `id`、`action_type`、`CREATE_PURCHASE_ORDER`、`HIGH`、`SUCCESS`、Crawler task type、tool name 等内部稳定值直接进入用户界面。
+- 原 `FINAL_REPORT` 再次暂停生效；本轮所有 PASS 必须重新执行并记录。
+
+### 2026-08-14：第二次 UI / 认证加固实现与验证
+
+- 操作员和审批员凭据控件固定在侧栏，使用独立会话状态与密码模式；角色说明和四种验证状态均为中文。
+- 新增无副作用认证验证端点；操作员、审批员请求头继续严格分离，不能互相授权。
+- 本地生成脚本通过被 Git 忽略的 `.env` 向掩码控件加载随机演示凭据，源码没有固定秘密。
+- 新增集中式中文展示层，统一导航、字段、状态、风险、操作、采集类型、工具、来源和未知值降级；五页移除正常视图中的原始 JSON。
+- Streamlit 工具栏最小化并关闭详细错误；浏览器测试检查无 `Deploy`、无异常组件、无指定英文内部术语，页面可见文本不含凭据。
+
+本轮重新执行的当前证据：
+
+- 本地完整套件（最终嵌套契约修复后重跑）：`71 passed, 10 skipped in 18.18s`；10 项仅为显式环境门控的 5 项 Compose API 与 5 项浏览器验收，不计为普通套件通过项。
+- 前端展示、AppTest、认证契约定向套件：`44 passed in 10.74s`。
+- 干净 Compose API E2E：`5 passed in 24.32s`。
+- 干净 Compose Streamlit Playwright E2E：修复动态文本禁词后最终重跑 `5 passed in 26.41s`，覆盖五页中文与凭据保持、认证矩阵、A102/经营日报、B205 和四类采集。
+- Ruff、格式检查、Mypy（27 个源文件）、`git diff --check` 均通过。
+- 删除数据卷后迁移到 `0002_approval_idempotency`；MySQL 有 16 张业务表，种子为 50 商品、10000 订单。
+- 六个运行服务全部 healthy；六服务最近日志未检出 Traceback、KeyError、TypeError、Exception 或 ERROR。
+- 并发六目标无缓存导出曾使 Docker Desktop RPC 断开；引擎恢复后对六服务共用的唯一 Dockerfile 串行执行完整 `--no-cache` 构建，生成同一镜像内容并在干净卷成功启动。首次失败未记作 PASS，最终串行构建和启动记为 PASS。
+- 第四位总体审查者发现市场日报嵌套 `new_features=null` 会触发 TypeError；改为严格嵌套模型并补客户端/AppTest 后复现为受控中文错误。最终复核 Critical 0、High 0。
 
 ### 2026-08-14：人工 UI 验收重新打开
 

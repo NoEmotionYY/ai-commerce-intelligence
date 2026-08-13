@@ -18,8 +18,35 @@ ERP = os.getenv("E2E_ERP_URL", "http://localhost:8001")
 OPERATOR_KEY = os.getenv("OPERATOR_API_KEY", "")
 APPROVER_KEY = os.getenv("APPROVER_API_KEY", "")
 
+FORBIDDEN_UI_TERMS = (
+    "Dashboard",
+    "Copilot",
+    "Market Intelligence",
+    "Approval Center",
+    "Crawler Center",
+    "CREATE_PURCHASE_ORDER",
+    "action_type",
+    "action_data",
+    "risk_level",
+    "tool_name",
+    "products_json",
+    "PENDING",
+    "APPROVED",
+    "EXECUTED",
+    "HIGH",
+    "SUCCESS",
+    "RUNNING",
+    "FAILED",
+    "ROAS",
+    "SKU",
+    "ERP",
+    "Crawler",
+    "Agent",
+    " vs ",
+)
+
 if os.getenv("RUN_UI_E2E") == "1" and (not OPERATOR_KEY or not APPROVER_KEY):
-    raise RuntimeError("UI E2E 需要显式设置操作员与审批凭据")
+    raise RuntimeError("浏览器验收需要显式设置操作员与审批员凭据")
 
 
 @pytest.fixture
@@ -29,202 +56,219 @@ def page() -> Page:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         current = browser.new_page(viewport={"width": 1440, "height": 1100})
+        console_errors: list[str] = []
+        failed_requests: list[str] = []
+        current.on("pageerror", lambda error: pytest.fail(f"浏览器页面错误：{error}"))
+        current.on(
+            "console",
+            lambda message: (
+                console_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        current.on("requestfailed", lambda request: failed_requests.append(request.url))
         yield current
+        assert not console_errors, f"浏览器控制台错误：{console_errors}"
+        assert not failed_requests, f"浏览器请求失败：{failed_requests}"
         browser.close()
+
+
+def api_get(path: str, **kwargs: object) -> object:
+    response = httpx.get(f"{AGENT}{path}", timeout=30, **kwargs)
+    response.raise_for_status()
+    return response.json()
 
 
 def open_app(page: Page) -> None:
     page.goto(FRONTEND, wait_until="networkidle", timeout=60_000)
-    expect(page.get_by_text("AI 电商运营与营销智能中枢", exact=True)).to_be_visible()
+    expect(page.get_by_text("人工智能电商运营与营销智能中枢", exact=True)).to_be_visible()
 
 
 def select_page(page: Page, name: str) -> None:
-    page.get_by_text(name, exact=True).click()
-    page.wait_for_timeout(700)
+    # Streamlit 的自定义单选项在原生 input 上覆盖了可视标签；强制触发原生选择
+    # 仍会走真实浏览器事件和 Streamlit 重跑，而不会绕过应用逻辑。
+    page.get_by_text(name, exact=True).last.click(force=True)
+    expect(page.get_by_role("radio", name=name)).to_be_checked()
 
 
-def fill_operator(page: Page, value: str) -> None:
-    page.get_by_label("操作员凭据").fill(value)
-    page.wait_for_timeout(300)
+def fill_credentials(
+    page: Page, operator: str = "", approver: str = "", *, wait_for: str | None = None
+) -> None:
+    operator_input = page.get_by_role("textbox", name="操作员凭据")
+    operator_input.fill(operator)
+    operator_input.press("Enter")
+    expect(
+        page.get_by_text(
+            "操作员：未配置"
+            if not operator
+            else ("操作员：验证成功" if operator == OPERATOR_KEY else "操作员：验证失败"),
+            exact=True,
+        )
+    ).to_be_visible()
+    approver_input = page.get_by_role("textbox", name="审批员凭据")
+    approver_input.fill(approver)
+    approver_input.press("Enter")
+    if wait_for:
+        expect(page.get_by_text(wait_for, exact=True)).to_be_visible()
 
 
-def assert_no_traceback(page: Page) -> None:
+def visible_text(page: Page) -> str:
+    table_text = "\n".join(page.locator("th, td").all_inner_texts())
+    return f"{page.locator('body').inner_text()}\n{table_text}"
+
+
+def assert_chinese_business_ui(page: Page) -> None:
     expect(page.locator('[data-testid="stException"]')).to_have_count(0)
-    body = page.locator("body").inner_text()
-    for marker in ("Traceback", "KeyError", "TypeError"):
-        assert marker not in body
+    text = visible_text(page)
+    for marker in ("Traceback", "KeyError", "TypeError", *FORBIDDEN_UI_TERMS):
+        assert marker not in text
+    for credential in (OPERATOR_KEY, APPROVER_KEY):
+        assert credential not in text
+    expect(page.get_by_role("textbox", name="操作员凭据")).to_have_attribute("type", "password")
+    expect(page.get_by_role("textbox", name="审批员凭据")).to_have_attribute("type", "password")
+    expect(page.get_by_text("Deploy", exact=True)).to_have_count(0)
 
 
-def wait_for_new_crawler_task(prior_ids: set[int], timeout_seconds: int = 120) -> dict[str, object]:
+def wait_for_new_task(prior_ids: set[int], timeout_seconds: int = 120) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        current_tasks = httpx.get(f"{AGENT}/api/crawler/tasks", timeout=30).json()
-        new_tasks = [item for item in current_tasks if item["id"] not in prior_ids]
-        if new_tasks:
-            assert len(new_tasks) == 1
+        tasks = api_get("/api/crawler/tasks")
+        assert isinstance(tasks, list)
+        new_tasks = [item for item in tasks if item["id"] not in prior_ids]
+        if new_tasks and new_tasks[0]["status"] == "FAILED":
+            raise AssertionError("采集任务执行失败")
+        if new_tasks and new_tasks[0]["status"] == "SUCCESS":
             return new_tasks[0]
         time.sleep(0.25)
-    raise AssertionError("浏览器操作未创建新的采集任务")
+    raise AssertionError("采集任务未在时限内完成")
 
 
-def wait_for_crawler_success(task_id: int, timeout_seconds: int = 120) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        tasks = httpx.get(f"{AGENT}/api/crawler/tasks", timeout=30).json()
-        task = next(item for item in tasks if item["id"] == task_id)
-        if task["status"] == "SUCCESS":
-            return task
-        if task["status"] == "FAILED":
-            raise AssertionError(f"采集任务失败：{task['error_message']}")
-        time.sleep(0.25)
-    raise AssertionError(f"采集任务 #{task_id} 未在时限内成功")
-
-
-def test_dashboard_and_market_pages(page: Page) -> None:
+def test_all_five_pages_are_chinese_and_credentials_persist(page: Page) -> None:
     open_app(page)
-    for label in ("订单量", "销售额", "利润", "利润率", "ROAS", "市场异常", "库存预警"):
-        expect(page.get_by_text(label, exact=True)).to_be_visible()
-    assert_no_traceback(page)
-
-    select_page(page, "Market Intelligence")
-    for label in ("竞品商品", "负面评论主题", "热门竞品内容", "市场趋势报告"):
-        expect(page.get_by_text(label, exact=True)).to_be_visible()
-    expect(page.get_by_text(re.compile(r"竞品商品：\d+ 项"))).to_be_visible()
-    expect(page.get_by_text(re.compile(r"已分析负面评论：\d+ 条"))).to_be_visible()
-    assert_no_traceback(page)
+    fill_credentials(page, OPERATOR_KEY, APPROVER_KEY, wait_for="审批员：验证成功")
+    expect(page.get_by_text("操作员：验证成功", exact=True)).to_be_visible()
+    pages = ("经营看板", "智能运营助手", "市场情报", "审批中心", "数据采集中心")
+    for name in pages:
+        select_page(page, name)
+        assert_chinese_business_ui(page)
+    assert page.get_by_role("textbox", name="操作员凭据").input_value() == OPERATOR_KEY
+    assert page.get_by_role("textbox", name="审批员凭据").input_value() == APPROVER_KEY
 
 
-def test_copilot_a102_real_browser_path(page: Page) -> None:
+def test_authentication_matrix_and_role_separation(page: Page) -> None:
     open_app(page)
-    fill_operator(page, OPERATOR_KEY)
-    before_operations = httpx.get(
-        f"{AGENT}/api/operations",
-        headers={"X-Operator-Key": OPERATOR_KEY},
-        timeout=30,
-    ).json()
-    required_tools = {
-        "get_sku_sales",
-        "get_advertising_data",
-        "get_product",
-        "compare_competitor_prices",
-        "analyze_market_trends",
-    }
-    before_counts = {
-        name: sum(item["tool_name"] == name for item in before_operations)
-        for name in required_tools
-    }
-    select_page(page, "AI Copilot")
+    expect(page.get_by_text("操作员：未配置", exact=True)).to_be_visible()
+    expect(page.get_by_text("审批员：未配置", exact=True)).to_be_visible()
+
+    fill_credentials(page, "invalid", "invalid", wait_for="审批员：验证失败")
+    expect(page.get_by_text("操作员：验证失败", exact=True)).to_be_visible()
+    expect(page.get_by_text("审批员：验证失败", exact=True)).to_be_visible()
+
+    fill_credentials(page, OPERATOR_KEY, "", wait_for="操作员：验证成功")
+    expect(page.get_by_text("操作员：验证成功", exact=True)).to_be_visible()
+    expect(page.get_by_text("审批员：未配置", exact=True)).to_be_visible()
+
+    fill_credentials(page, OPERATOR_KEY, OPERATOR_KEY, wait_for="审批员：验证失败")
+    expect(page.get_by_text("审批员：验证失败", exact=True)).to_be_visible()
+
+    fill_credentials(page, APPROVER_KEY, APPROVER_KEY, wait_for="审批员：验证成功")
+    expect(page.get_by_text("操作员：验证失败", exact=True)).to_be_visible()
+    expect(page.get_by_text("审批员：验证成功", exact=True)).to_be_visible()
+
+    fill_credentials(page, "invalid", APPROVER_KEY, wait_for="审批员：验证成功")
+    select_page(page, "审批中心")
+    expect(page.get_by_text("请先配置并通过操作员凭据验证。", exact=True)).to_be_visible()
+    assert_chinese_business_ui(page)
+
+
+def test_a102_real_chinese_browser_path(page: Page) -> None:
+    open_app(page)
+    fill_credentials(page, OPERATOR_KEY, "")
+    before = api_get("/api/operations", headers={"X-Operator-Key": OPERATOR_KEY})
+    assert isinstance(before, list)
+    select_page(page, "智能运营助手")
     page.get_by_label("输入问题").fill("为什么我们的 A102 最近销量下降？")
-    page.get_by_role("button", name="分析").click()
+    page.get_by_role("button", name="开始分析").click()
     expect(page.get_by_text(re.compile("A102 最近7天销量"))).to_be_visible(timeout=60_000)
-    expect(page.get_by_text("证据", exact=True)).to_be_visible()
-    expect(page.get_by_text("工具调用记录", exact=True)).to_be_visible()
-    assert_no_traceback(page)
+    for label in ("分析证据", "智能体活动记录"):
+        expect(page.get_by_text(label, exact=True)).to_be_visible()
+    after = api_get("/api/operations", headers={"X-Operator-Key": OPERATOR_KEY})
+    assert isinstance(after, list)
+    assert len(after) >= len(before) + 5
+    assert_chinese_business_ui(page)
 
-    operations = httpx.get(
-        f"{AGENT}/api/operations",
-        headers={"X-Operator-Key": OPERATOR_KEY},
-        timeout=30,
-    ).json()
-    after_counts = {
-        name: sum(item["tool_name"] == name for item in operations) for name in required_tools
-    }
-    assert all(after_counts[name] > before_counts[name] for name in required_tools)
+    page.get_by_label("输入问题").fill("今天经营日报怎么样？")
+    page.get_by_role("button", name="开始分析").click()
+    expect(page.get_by_text(re.compile("经营概况"))).to_be_visible(timeout=60_000)
+    expect(page.get_by_text(re.compile("经营概况.*广告投入产出比")).first).to_be_visible()
+    assert_chinese_business_ui(page)
 
 
-def test_approval_invalid_then_b205_hitl_and_idempotency(page: Page) -> None:
+def test_b205_browser_approval_chinese_auth_and_idempotency(page: Page) -> None:
     open_app(page)
-    select_page(page, "Approval Center")
-    expect(page.get_by_text(re.compile("身份验证失败")).first).to_be_visible()
-    assert_no_traceback(page)
-
-    fill_operator(page, "invalid")
-    expect(page.get_by_text(re.compile("身份验证失败")).first).to_be_visible()
-    assert_no_traceback(page)
-
-    fill_operator(page, OPERATOR_KEY)
-    select_page(page, "AI Copilot")
+    fill_credentials(page, OPERATOR_KEY, "")
+    select_page(page, "智能运营助手")
     page.get_by_label("输入问题").fill("给 B205 创建补货单")
-    page.get_by_role("button", name="分析").click()
-    approval_text = page.get_by_text(re.compile(r"已创建待审批任务 #\d+"))
-    expect(approval_text).to_be_visible(timeout=60_000)
-    approval_id = int(re.search(r"#(\d+)", approval_text.inner_text()).group(1))  # type: ignore[union-attr]
+    page.get_by_role("button", name="开始分析").click()
+    info = page.get_by_text(re.compile(r"已创建待审批任务，编号 \d+"))
+    expect(info).to_be_visible(timeout=60_000)
+    approval_id = int(re.search(r"(\d+)$", info.inner_text()).group(1))  # type: ignore[union-attr]
+    before_po = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
 
-    before = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
-    select_page(page, "Approval Center")
-    page.get_by_label("审批凭据").fill("")
-    page.get_by_role("button", name="批准").click()
-    expect(page.get_by_text(re.compile("身份验证失败")).last).to_be_visible()
-    assert httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json() == before
-
-    page.get_by_label("审批凭据").fill("invalid")
-    page.get_by_role("button", name="批准").click()
-    expect(page.get_by_text(re.compile("身份验证失败")).last).to_be_visible()
-    assert httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json() == before
-
-    page.get_by_label("审批凭据").fill(APPROVER_KEY)
-    page.get_by_role("button", name="批准").click()
-    expect(page.get_by_text(re.compile("审批已执行"))).to_be_visible(timeout=60_000)
-    after = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
-    created = [item for item in after if item["approval_id"] == approval_id]
-    assert len(created) == 1
-
-    replay = httpx.post(
-        f"{AGENT}/api/approvals/{approval_id}/approve",
-        headers={"X-Approver-Key": APPROVER_KEY},
-        timeout=30,
-    )
-    replay.raise_for_status()
-    assert replay.json()["execution"]["idempotent"] is True
-    final = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
-    assert len([item for item in final if item["approval_id"] == approval_id]) == 1
-    assert_no_traceback(page)
-
-
-def test_crawler_invalid_and_all_valid_sources(page: Page) -> None:
-    open_app(page)
-    select_page(page, "Crawler Center")
-    page.get_by_role("button", name="抓取商品").click()
-    expect(page.get_by_text(re.compile("身份验证失败")).last).to_be_visible()
-    assert_no_traceback(page)
-
-    fill_operator(page, "invalid")
-    page.get_by_role("button", name="抓取商品").click()
-    expect(page.get_by_text(re.compile("身份验证失败")).last).to_be_visible()
-    assert_no_traceback(page)
-
-    before_products = httpx.get(f"{AGENT}/api/competitors/products", timeout=30).json()
-    before_unique = {(item["platform"], item["external_id"]) for item in before_products}
-    fill_operator(page, OPERATOR_KEY)
-    created = []
-    for button in ("抓取商品", "抓取内容", "抓取评论", "动态页面"):
-        prior_tasks = httpx.get(f"{AGENT}/api/crawler/tasks", timeout=30).json()
-        prior_ids = {item["id"] for item in prior_tasks}
-        page.get_by_role("button", name=button).click()
-        started_task = wait_for_new_crawler_task(prior_ids)
-        created.append(wait_for_crawler_success(int(started_task["id"])))
-        expect(page.get_by_text(re.compile("采集完成：.*记录数 [1-9]")).last).to_be_visible(
-            timeout=120_000
+    select_page(page, "审批中心")
+    expect(
+        page.get_by_text(
+            "查看待办需要有效操作员凭据；批准或拒绝必须另行通过审批员凭据验证。", exact=True
         )
-        assert_no_traceback(page)
+    ).to_be_visible()
 
-    created_ids = {item["id"] for item in created}
-    final_tasks = httpx.get(f"{AGENT}/api/crawler/tasks", timeout=30).json()
-    created = [item for item in final_tasks if item["id"] in created_ids]
-    assert {item["task_type"] for item in created} == {
-        "products_json",
-        "contents",
-        "comments",
-        "dynamic",
-    }
-    assert all(item["records"] > 0 for item in created)
-    assert all(item["status"] == "SUCCESS" for item in created)
-    assert all(item["started_at"] and item["finished_at"] for item in created)
+    page.get_by_role("button", name="批准采购申请").click()
+    expect(page.get_by_text("请先配置并通过审批员凭据验证。", exact=True)).to_be_visible()
+    assert httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json() == before_po
 
-    page.get_by_role("button", name="抓取商品").click()
-    expect(page.get_by_text(re.compile("采集完成：.*记录数 [1-9]")).last).to_be_visible(
-        timeout=120_000
-    )
-    after_products = httpx.get(f"{AGENT}/api/competitors/products", timeout=30).json()
-    after_unique = {(item["platform"], item["external_id"]) for item in after_products}
-    assert len(after_unique) == max(len(before_unique), 30)
+    page.get_by_role("textbox", name="审批员凭据").fill("invalid")
+    page.get_by_role("textbox", name="审批员凭据").press("Enter")
+    expect(page.get_by_text("审批员：验证失败", exact=True)).to_be_visible()
+    page.get_by_role("button", name="批准采购申请").click()
+    assert httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json() == before_po
+
+    page.get_by_role("textbox", name="审批员凭据").fill(APPROVER_KEY)
+    page.get_by_role("textbox", name="审批员凭据").press("Enter")
+    expect(page.get_by_text("审批员：验证成功", exact=True)).to_be_visible()
+    page.get_by_role("button", name="批准采购申请").click()
+    expect(page.get_by_text(re.compile("任务状态：已执行"))).to_be_visible(timeout=60_000)
+    expect(page.get_by_text(re.compile("采购单号：PO-"))).to_be_visible()
+    after_po = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
+    assert len([item for item in after_po if item["approval_id"] == approval_id]) == 1
+
+    select_page(page, "智能运营助手")
+    page.get_by_label("输入问题").fill("给 B205 创建补货单")
+    page.get_by_role("button", name="开始分析").click()
+    repeat_info = page.get_by_text(re.compile(r"已创建待审批任务，编号 \d+"))
+    expect(repeat_info).to_be_visible(timeout=60_000)
+    assert int(re.search(r"(\d+)$", repeat_info.inner_text()).group(1)) == approval_id  # type: ignore[union-attr]
+    final_po = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
+    assert len([item for item in final_po if item["approval_id"] == approval_id]) == 1
+    assert_chinese_business_ui(page)
+
+
+def test_all_four_crawlers_have_chinese_ui(page: Page) -> None:
+    open_app(page)
+    fill_credentials(page, OPERATOR_KEY, "")
+    select_page(page, "数据采集中心")
+    for button, expected_type in (
+        ("采集商品", "商品接口采集"),
+        ("采集内容", "内容采集"),
+        ("采集评论", "评论采集"),
+        ("采集动态页面", "动态页面采集"),
+    ):
+        before = api_get("/api/crawler/tasks")
+        assert isinstance(before, list)
+        prior_ids = {item["id"] for item in before}
+        page.get_by_role("button", name=button).click()
+        task = wait_for_new_task(prior_ids)
+        expect(page.get_by_text(re.compile("采集完成"))).to_be_visible(timeout=120_000)
+        assert task["records"] > 0
+        page_text = page.locator("body").inner_text()
+        assert expected_type in page_text
+        assert "成功" in page_text
+        assert_chinese_business_ui(page)

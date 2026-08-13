@@ -53,6 +53,29 @@ def test_valid_operator_can_read_protected_contracts(agent_client: TestClient) -
     assert chat.json()["answer"]
 
 
+@pytest.mark.parametrize(
+    ("path", "header", "valid", "wrong_role"),
+    [
+        ("/api/auth/operator", "X-Operator-Key", "valid-operator", "valid-approver"),
+        ("/api/auth/approver", "X-Approver-Key", "valid-approver", "valid-operator"),
+    ],
+)
+def test_authentication_roles_are_explicit_and_separate(
+    agent_client: TestClient,
+    path: str,
+    header: str,
+    valid: str,
+    wrong_role: str,
+) -> None:
+    assert agent_client.get(path).status_code == 403
+    assert agent_client.get(path, headers={header: "invalid"}).status_code == 403
+    wrong = agent_client.get(path, headers={header: wrong_role})
+    assert wrong.status_code == 403
+    accepted = agent_client.get(path, headers={header: valid})
+    assert accepted.status_code == 200
+    assert accepted.json()["authenticated"] is True
+
+
 def test_b205_chat_request_idempotency_reuses_draft(
     agent_client: TestClient, db_session: Session
 ) -> None:
