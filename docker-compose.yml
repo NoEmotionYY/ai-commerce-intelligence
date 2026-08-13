@@ -1,0 +1,117 @@
+name: ai-commerce-intelligence
+
+x-app: &app
+  build: .
+  depends_on:
+    init-db:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: commerce
+      MYSQL_USER: commerce
+      MYSQL_PASSWORD: commerce
+      MYSQL_ROOT_PASSWORD: root-local-only
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  init-db:
+    build: .
+    environment:
+      DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["python", "scripts/init_database.py"]
+    restart: "no"
+
+  agent-api:
+    <<: *app
+    environment:
+      DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
+      ERP_BASE_URL: http://mock-erp:8001
+      CRAWLER_BASE_URL: http://crawler-service:8002
+      ERP_SERVICE_TOKEN: ${ERP_SERVICE_TOKEN:?必须设置 ERP_SERVICE_TOKEN}
+      APPROVER_API_KEY: ${APPROVER_API_KEY:?必须设置 APPROVER_API_KEY}
+      OPERATOR_API_KEY: ${OPERATOR_API_KEY:?必须设置 OPERATOR_API_KEY}
+      CRAWLER_SERVICE_TOKEN: ${CRAWLER_SERVICE_TOKEN:?必须设置 CRAWLER_SERVICE_TOKEN}
+    command: ["uvicorn", "commerce.agent_api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mock-erp:
+    <<: *app
+    environment:
+      DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
+      ERP_SERVICE_TOKEN: ${ERP_SERVICE_TOKEN:?必须设置 ERP_SERVICE_TOKEN}
+    command: ["uvicorn", "commerce.erp_api:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["127.0.0.1:8001:8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mock-competitor-site:
+    <<: *app
+    environment: {}
+    command: ["uvicorn", "commerce.competitor_site:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports: ["127.0.0.1:8003:8003"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  crawler-service:
+    <<: *app
+    environment:
+      DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
+      COMPETITOR_BASE_URL: http://mock-competitor-site:8003
+      ALLOWED_CRAWLER_HOSTS: mock-competitor-site
+      CRAWLER_SERVICE_TOKEN: ${CRAWLER_SERVICE_TOKEN:?必须设置 CRAWLER_SERVICE_TOKEN}
+    command: ["uvicorn", "commerce.crawler_api:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports: ["127.0.0.1:8002:8002"]
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+      mock-competitor-site:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  frontend:
+    <<: *app
+    environment:
+      AGENT_API_URL: http://agent-api:8000
+    command: ["streamlit", "run", "frontend/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+    ports: ["127.0.0.1:8501:8501"]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+      crawler-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:
