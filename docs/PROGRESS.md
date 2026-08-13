@@ -29,7 +29,7 @@
 - 本地完整套件（最终嵌套契约修复后重跑）：`71 passed, 10 skipped in 18.18s`；10 项仅为显式环境门控的 5 项 Compose API 与 5 项浏览器验收，不计为普通套件通过项。
 - 前端展示、AppTest、认证契约定向套件：`44 passed in 10.74s`。
 - 干净 Compose API E2E：`5 passed in 24.32s`。
-- 干净 Compose Streamlit Playwright E2E：修复动态文本禁词后最终重跑 `5 passed in 26.41s`，覆盖五页中文与凭据保持、认证矩阵、A102/经营日报、B205 和四类采集。
+- 干净 Compose Streamlit Playwright E2E：嵌套响应契约最终修复后重跑 `5 passed in 25.88s`，覆盖五页中文与凭据保持、认证矩阵、A102/经营日报、B205 和四类采集。
 - Ruff、格式检查、Mypy（27 个源文件）、`git diff --check` 均通过。
 - 删除数据卷后迁移到 `0002_approval_idempotency`；MySQL 有 16 张业务表，种子为 50 商品、10000 订单。
 - 六个运行服务全部 healthy；六服务最近日志未检出 Traceback、KeyError、TypeError、Exception 或 ERROR。

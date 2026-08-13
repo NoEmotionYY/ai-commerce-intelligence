@@ -18,7 +18,7 @@
 - 本地完整套件：最终重跑 `71 passed, 10 skipped in 18.18s`。10 项仅为显式环境门控的 5 项 Compose API 和 5 项浏览器验收，不计为普通套件通过项；它们已在对应真实环境单独执行。
 - 前端展示、AppTest、认证契约定向套件：`44 passed in 10.74s`。
 - 干净 Compose API E2E：最终复跑 `5 passed in 21.50s`。
-- 干净 Compose Streamlit Playwright E2E：最终重跑 `5 passed in 26.41s`，真实访问 8501 并穿过 Streamlit → Agent API → ERP/Crawler → MySQL。
+- 干净 Compose Streamlit Playwright E2E：嵌套响应契约最终修复后重跑 `5 passed in 25.88s`，真实访问 8501 并穿过 Streamlit → Agent API → ERP/Crawler → MySQL。
 - 浏览器认证矩阵覆盖 operator/approver 的空、错误、正确值，以及角色密钥互换和 `invalid operator + valid approver`；错误均受控且不产生采购单。
 - A102 浏览器路径展示真实答案、证据和活动记录，本次调用增加至少五条必需内部/外部工具记录；经营日报显示“广告投入产出比”，不泄漏 ROAS。
 - B205 从浏览器创建待审批任务，空/错误审批凭据不执行；正确审批后为已执行且仅一张采购单；重复相同操作复用审批编号和采购单。
