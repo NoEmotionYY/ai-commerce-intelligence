@@ -1,4 +1,6 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -92,3 +94,24 @@ def test_b205_approval_e2e() -> None:
         result = approved.json()
         assert result["approval"]["status"] == "EXECUTED"
         assert result["execution"]["po_number"].startswith("PO-")
+
+
+def test_b205_concurrent_chat_idempotency() -> None:
+    action_key = f"compose-concurrent-{uuid4()}"
+    payload = {
+        "message": "给 B205 创建补货单。",
+        "idempotency_key": action_key,
+    }
+
+    def submit() -> httpx.Response:
+        return httpx.post(
+            f"{AGENT}/api/chat",
+            json=payload,
+            headers={"X-Operator-Key": OPERATOR_KEY},
+            timeout=60,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: submit(), range(2)))
+    assert [response.status_code for response in responses] == [200, 200]
+    assert len({response.json()["approval_id"] for response in responses}) == 1

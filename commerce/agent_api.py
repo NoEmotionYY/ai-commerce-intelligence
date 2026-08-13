@@ -5,13 +5,13 @@ from typing import cast
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from commerce.config import get_settings
 from commerce.database import get_session
 from commerce.llm_agent import run_model_tool_loop
-from commerce.models import ApprovalStatus, ApprovalTask, CrawlerTask, OperationLog
+from commerce.models import ApprovalStatus, ApprovalTask, CrawlerTask, OperationLog, Order
 from commerce.schemas import ChatRequest, ChatResponse, Evidence, ToolCallRecord
 from commerce.seed import AS_OF
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
@@ -86,7 +86,8 @@ def chat(
             tool_calls=[ToolCallRecord.model_validate(item) for item in tools.trace],
         )
     if "B205" in message and ("补货" in message or "采购" in message or "创建" in message):
-        approval = create_purchase_draft(session, "B205", AS_OF, "agent-user")
+        idempotency_key = payload.idempotency_key or f"chat:{session_id}:purchase:B205"
+        approval = create_purchase_draft(session, "B205", AS_OF, "agent-user", idempotency_key)
         data = approval.action_data
         return ChatResponse(
             session_id=session_id,
@@ -200,10 +201,17 @@ def chat(
 def dashboard(session: Session = Depends(get_session)) -> dict[str, object]:
     metrics = finance_summary(session, AS_OF - timedelta(days=1), AS_OF + timedelta(seconds=1))
     anomalies = business_anomalies(session, AS_OF)
+    order_count = session.scalar(
+        select(func.count(Order.id)).where(
+            Order.ordered_at >= AS_OF - timedelta(days=1),
+            Order.ordered_at < AS_OF + timedelta(seconds=1),
+        )
+    )
     return {
         **{k: float(v) for k, v in metrics.to_dict().items()},
         "inventory_alerts": inventory_alerts(session, AS_OF),
         "market_anomalies": len(anomalies),
+        "order_count": int(order_count or 0),
         "as_of": AS_OF,
     }
 
@@ -279,6 +287,8 @@ def crawler_tasks(session: Session = Depends(get_session)) -> list[dict[str, obj
             "target_url": row.target_url,
             "status": row.status.value,
             "records": row.records,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
             "error_message": row.error_message,
         }
         for row in session.scalars(select(CrawlerTask).order_by(CrawlerTask.id.desc()))
@@ -316,7 +326,7 @@ def approve(
         item = decide_approval(session, approval_id, "approve", "demo-approver")
         execution = (
             execute_approved_purchase(session, item)
-            if item.status is ApprovalStatus.APPROVED
+            if item.status in {ApprovalStatus.APPROVED, ApprovalStatus.EXECUTED}
             else None
         )
         session.rollback()
@@ -373,10 +383,28 @@ def run_crawler(
     settings = get_settings()
     import httpx
 
-    response = httpx.post(
-        f"{settings.crawler_base_url}/crawler/{source}",
-        headers={"X-Crawler-Token": settings.crawler_service_token},
-        timeout=120,
-    )
-    response.raise_for_status()
-    return cast(dict[str, object], response.json())
+    try:
+        response = httpx.post(
+            f"{settings.crawler_base_url}/crawler/{source}",
+            headers={"X-Crawler-Token": settings.crawler_service_token},
+            timeout=120,
+        )
+        response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, "Crawler 服务请求超时") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, "Crawler 服务拒绝或处理失败") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Crawler 服务当前不可达") from exc
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Crawler 服务返回无效 JSON") from exc
+    if not isinstance(payload, dict) or not {
+        "id",
+        "task_type",
+        "status",
+        "records",
+    }.issubset(payload):
+        raise HTTPException(502, "Crawler 服务响应契约无效")
+    return cast(dict[str, object], payload)

@@ -1,5 +1,8 @@
+import asyncio
+
 import httpx
 import pytest
+from sqlalchemy.orm import Session
 
 from commerce.config import Settings
 from commerce.crawler import CrawlerManager, parse_product_html, validate_target
@@ -45,3 +48,30 @@ async def test_crawler_failure_is_persisted(db_session: object) -> None:
     result = await manager.run(task)
     assert result.status is TaskStatus.FAILED
     assert "测试超时" in str(result.error_message)
+
+
+@pytest.mark.asyncio
+async def test_crawler_persists_running_before_work_finishes(db_session: Session) -> None:
+    settings = Settings(
+        allowed_crawler_hosts="mock-competitor-site",
+        competitor_base_url="http://mock-competitor-site:8003",
+    )
+    manager = CrawlerManager(db_session, settings)
+    task = manager.create_task("products_json", "http://mock-competitor-site:8003/api/products")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated(url: str, pages: int) -> list[dict[str, object]]:
+        entered.set()
+        await release.wait()
+        return []
+
+    manager._json_pages = gated  # type: ignore[method-assign]
+    running = asyncio.create_task(manager.run(task))
+    await entered.wait()
+    db_session.refresh(task)
+    assert task.status is TaskStatus.RUNNING
+    assert task.started_at is not None
+    release.set()
+    result = await running
+    assert result.status is TaskStatus.SUCCESS

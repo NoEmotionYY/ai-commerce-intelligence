@@ -35,7 +35,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["commerce*"]
+include = ["commerce*", "frontend*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

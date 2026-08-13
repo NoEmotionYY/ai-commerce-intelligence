@@ -2,6 +2,18 @@
 
 状态说明：`[ ]` 未开始，`[~]` 进行中，`[x]` 已完成且已验证。
 
+## 后验收 UI 回归（重新打开）
+
+- [x] 记录人工缺陷与全前端根因审计
+- [x] 集中式前端 API 契约与错误边界
+- [x] 空/错误/正确 operator 与 approver 凭据链路验证
+- [x] 修复 Copilot、Approval Center、Crawler Center 及同类页面风险
+- [x] 客户端负面测试与 Streamlit AppTest
+- [x] 真实 Streamlit Playwright Scenario A-F
+- [x] 全量本地/Compose/Docker 回归
+- [x] 四方向独立审查、修复 Critical/High
+- [x] 重写最终验收证据并恢复 COMPLETE
+
 ## Phase 0：规格与架构审计
 
 - [x] 完整读取 AGENTS、PROJECT_SPEC 和 ACCEPTANCE

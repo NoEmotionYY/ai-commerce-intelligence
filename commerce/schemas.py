@@ -40,6 +40,7 @@ class CrawlerTaskCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     session_id: str | None = Field(default=None, max_length=64)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class Evidence(BaseModel):

@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from commerce.analytics import recommend_reorder_quantity
@@ -86,13 +87,21 @@ def resume_purchase_graph(approval: ApprovalTask, decision: str) -> PurchaseStat
     except Exception:
         # 数据库审批状态是跨进程真实状态；内存 checkpoint 丢失时重建确定性图状态。
         begin_purchase_graph(approval)
-        begin_purchase_graph(approval)
         return purchase_graph.invoke(Command(resume=decision), config)  # type: ignore[attr-defined,no-any-return]
 
 
 def create_purchase_draft(
-    session: Session, sku: str, as_of: datetime, created_by: str
+    session: Session,
+    sku: str,
+    as_of: datetime,
+    created_by: str,
+    idempotency_key: str,
 ) -> ApprovalTask:
+    existing = session.scalar(
+        select(ApprovalTask).where(ApprovalTask.idempotency_key == idempotency_key)
+    )
+    if existing is not None:
+        return existing
     metrics = inventory_metrics(session, sku, as_of)
     item = product(session, sku)
     quantity = recommend_reorder_quantity(
@@ -101,6 +110,7 @@ def create_purchase_draft(
     if quantity <= 0:
         raise ValueError("当前无需补货")
     approval = ApprovalTask(
+        idempotency_key=idempotency_key,
         action_type="CREATE_PURCHASE_ORDER",
         action_data={
             "sku": sku,
@@ -114,7 +124,16 @@ def create_purchase_draft(
         expires_at=utcnow() + timedelta(minutes=get_settings().approval_ttl_minutes),
     )
     session.add(approval)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        winner = session.scalar(
+            select(ApprovalTask).where(ApprovalTask.idempotency_key == idempotency_key)
+        )
+        if winner is not None:
+            return winner
+        raise
     graph_state = begin_purchase_graph(approval)
     session.add(
         WorkflowCheckpoint(
@@ -160,7 +179,13 @@ def decide_approval(
         session.commit()
         raise ValueError("审批任务已过期")
     if approval.status is not ApprovalStatus.PENDING:
-        return approval
+        same_decision = (decision == "reject" and approval.status is ApprovalStatus.REJECTED) or (
+            decision == "approve"
+            and approval.status in {ApprovalStatus.APPROVED, ApprovalStatus.EXECUTED}
+        )
+        if same_decision:
+            return approval
+        raise ValueError(f"审批已处于 {approval.status.value}，不能执行相反决定")
     approval.approved_by, approval.approved_at, approval.version = actor, now, approval.version + 1
     if decision == "reject":
         graph_state = resume_purchase_graph(approval, "reject")
@@ -200,8 +225,6 @@ def decide_approval(
 
 
 def execute_approved_purchase(session: Session, approval: ApprovalTask) -> dict[str, object]:
-    if approval.status is not ApprovalStatus.APPROVED:
-        raise ValueError("采购尚未批准")
     existing = session.scalar(select(PurchaseOrder).where(PurchaseOrder.approval_id == approval.id))
     if existing:
         return {
@@ -209,6 +232,8 @@ def execute_approved_purchase(session: Session, approval: ApprovalTask) -> dict[
             "status": existing.status.value,
             "idempotent": True,
         }
+    if approval.status is not ApprovalStatus.APPROVED:
+        raise ValueError("采购尚未批准或尚未执行")
     settings = get_settings()
     with httpx.Client(timeout=settings.request_timeout_seconds) as client:
         response = client.post(

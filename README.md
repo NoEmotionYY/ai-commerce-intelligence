@@ -39,6 +39,16 @@ python -m ruff check .
 python -m mypy commerce
 ```
 
+真实 Streamlit 浏览器回归需要先启动 Compose，并显式加载 `.env` 中的操作员/审批凭据。宿主机已安装 Chromium 时可直接运行；否则可复用项目的 Playwright 镜像：
+
+```powershell
+docker run --rm --network ai-commerce-intelligence_default --env-file .env `
+  -e RUN_UI_E2E=1 -e E2E_FRONTEND_URL=http://frontend:8501 `
+  -e E2E_AGENT_URL=http://agent-api:8000 -e E2E_ERP_URL=http://mock-erp:8001 `
+  -v "${PWD}\tests:/app/tests:ro" ai-commerce-intelligence-frontend `
+  bash -lc "pip install --quiet pytest==8.3.5 && python -m pytest tests/e2e/test_streamlit_browser.py -q"
+```
+
 数据库迁移与种子：
 
 ```bash

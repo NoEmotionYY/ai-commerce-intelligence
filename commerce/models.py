@@ -234,6 +234,7 @@ class AgentSession(Base):
 class ApprovalTask(Base):
     __tablename__ = "approval_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     action_type: Mapped[str] = mapped_column(String(50), index=True)
     action_data: Mapped[dict[str, Any]] = mapped_column(JSON)
     risk_level: Mapped[str] = mapped_column(String(20), default="HIGH")

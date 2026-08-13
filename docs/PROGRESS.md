@@ -2,11 +2,37 @@
 
 ## 当前状态
 
-- 当前阶段：Phase 10 独立审查与最终验收
-- 项目完成状态：功能完成，最终证据已复核
+- 当前阶段：后验收 UI 回归完成
+- 项目完成状态：COMPLETE
 - 最后更新：2026-08-14
 
 ## 已完成里程碑
+
+### 2026-08-14：人工 UI 验收重新打开
+
+- 人工 Streamlit 验证复现 Copilot `KeyError`、Approval Center `TypeError` 与受保护 Crawler 操作错误渲染。
+- 确认根因是前端没有 HTTP 状态/JSON/响应 shape 契约，旧 E2E 又绕过了 Streamlit。
+- 旧 `FINAL_REPORT` 的完成结论暂停生效，详见 `POST_ACCEPTANCE_REGRESSION.md`。
+
+### 2026-08-14：后验收 UI 回归修复与实际验证
+
+- 建立 `FrontendApiClient`，统一校验 HTTP 401/403/404/422/500、超时、网络、非法 JSON、缺失字段和错误对象/列表类型。
+- 五个 Streamlit 页面全部只消费已验证 Pydantic 模型；受控错误显示中文提示，未知错误写日志且不向用户泄漏 traceback。
+- 修复 Copilot 缺失 `answer`、Approval 错误字典迭代、Crawler 鉴权错误误当成功，以及 Dashboard/Market 同类契约风险。
+- 操作员凭据贯穿 Copilot、Approval 列表/日志和 Crawler 代理；审批凭据独立传给批准/拒绝端点；空、错误和正确凭据均有 AppTest 与浏览器证据。
+- 采购增加请求级幂等键和 `0002_approval_idempotency` 迁移；顺序/并发同键请求复用草稿，同一审批重放复用 ERP 采购单，相反决定返回 409。
+- 新增 Streamlit AppTest、前端客户端负面测试、Agent 契约测试、Crawler RUNNING 持久化测试和真实 8501 Playwright E2E。
+
+本轮实际验证：
+
+- 普通本地套件：`56 passed, 9 skipped`；9 项均为显式环境门控的 5 项 Compose 与 4 项浏览器 E2E。
+- 干净 Compose API E2E：`5 passed in 24.62s`，含真实 MySQL 并发采购幂等。
+- 干净 Compose 浏览器 E2E：`4 passed in 25.68s`，覆盖五页、A102、B205、凭据和四类 Crawler。
+- `ruff check`、`ruff format --check`、`mypy commerce frontend` 全部通过。
+- `docker compose down -v` 后 `docker compose build --pull --no-cache` 成功；全栈 6 个运行服务均 healthy。
+- 干净 MySQL 迁移版本 `0002_approval_idempotency`，seed 后 50 商品、10000 订单；E2E 后审批/采购数据真实持久化。
+- Frontend 日志未发现 `Traceback`、`KeyError`、`TypeError` 或 `streamlit_unexpected_error`。
+- Reviewer 1/2/3/4 最终均报告 Critical 0、High 0；总体审查确认可恢复 `COMPLETE`。
 
 ### 2026-08-13：权威文档读取与初始审计
 

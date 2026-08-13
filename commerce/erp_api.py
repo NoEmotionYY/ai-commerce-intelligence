@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from commerce.config import get_settings
@@ -196,6 +197,9 @@ def execute_purchase(
         raise HTTPException(503, "ERP 服务令牌未配置")
     if x_service_token != get_settings().erp_service_token:
         raise HTTPException(403, "仅允许受信业务服务执行采购")
+    approval = session.scalar(
+        select(ApprovalTask).where(ApprovalTask.id == payload.approval_id).with_for_update()
+    )
     existing = session.scalar(
         select(PurchaseOrder).where(PurchaseOrder.approval_id == payload.approval_id)
     )
@@ -205,7 +209,6 @@ def execute_purchase(
             "status": existing.status.value,
             "idempotent": True,
         }
-    approval = session.get(ApprovalTask, payload.approval_id)
     if approval is None or approval.status is not ApprovalStatus.APPROVED:
         raise HTTPException(409, "采购尚未批准")
     data = approval.action_data
@@ -247,7 +250,20 @@ def execute_purchase(
             status="SUCCESS",
         )
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = session.scalar(
+            select(PurchaseOrder).where(PurchaseOrder.approval_id == payload.approval_id)
+        )
+        if existing is None:
+            raise
+        return {
+            "po_number": existing.po_number,
+            "status": existing.status.value,
+            "idempotent": True,
+        }
     return {"po_number": po.po_number, "status": po.status.value, "idempotent": False}
 
 

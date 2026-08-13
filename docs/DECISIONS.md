@@ -47,3 +47,21 @@
 - 状态：已接受
 - 决策：Crawler Center 通过受控 source id 提供手动 Run Now。APScheduler 保留为可选单实例部署组件，默认 Compose 不自动启动，避免多副本重复调度；日报/市场报告由 API 随取随算。
 - 原因：Demo 不需要引入 Celery/Redis 的额外复杂度。
+
+## ADR-009：前端使用集中式、失败关闭的 API 契约
+
+- 状态：已接受
+- 决策：Streamlit 不再直接调用 `httpx` 或读取任意 JSON；所有请求进入 `FrontendApiClient`，统一处理 HTTP 状态、超时、网络错误、非法 JSON，并用 Pydantic 验证对象或列表 shape。页面只消费已验证模型，失败时显示中文用户错误并记录意外异常。
+- 原因：FastAPI 的错误对象与业务对象都可由 `.json()` 返回，若页面不先验证状态和 shape，会把 `{"detail": ...}` 当成正常答案或集合，造成真实 UI 崩溃。
+
+## ADR-010：采购操作采用请求级和执行级双重幂等
+
+- 状态：已接受
+- 决策：前端为具体采购消息保存操作键；`approval_tasks.idempotency_key` 唯一。顺序或并发的同键请求复用同一草稿，唯一冲突方回滚后读取赢家。ERP 以 `approval_id` 唯一，并在审批行锁内返回已有采购单。相反审批决定返回 409，同决定重放返回同一结果。
+- 原因：浏览器重试、重复点击与并发请求都不能生成重复采购单，也不能让冲突决定获得误导性的成功响应。
+
+## ADR-011：用户界面验收必须穿过真实浏览器
+
+- 状态：已接受
+- 决策：AppTest 与 MockTransport 用于快速组件/负面契约测试；最终验收另用 Playwright 从真实浏览器访问 Compose 中的 8501，覆盖五页、A102、B205 和四类 Crawler。测试容器使用 Compose 网络与真实 Agent/ERP/Crawler/MySQL 通信。
+- 原因：直接请求后端 API 无法发现 Streamlit 组件、凭据输入、重跑和错误渲染问题。
