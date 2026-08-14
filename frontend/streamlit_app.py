@@ -178,6 +178,14 @@ elif page == "智能运营助手":
             if chat_result is not None:
                 st.session_state["chat_session_id"] = chat_result.session_id
                 st.markdown(localized_business_text(chat_result.answer))
+                if chat_result.llm_provider == "deepseek":
+                    st.caption(f"云模型：DeepSeek（{chat_result.llm_model or '未提供型号'}）")
+                elif chat_result.llm_provider == "offline":
+                    st.caption("处理模式：离线确定性路由")
+                else:
+                    st.caption(
+                        f"云模型：{chat_result.llm_provider}（{chat_result.llm_model or '未提供型号'}）"
+                    )
                 st.subheader("分析证据")
                 st.dataframe(
                     localized_rows(

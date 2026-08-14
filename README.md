@@ -24,6 +24,17 @@ docker compose up -d --build --wait
 
 默认是离线确定性意图路由，所有指标仍来自真实数据库查询和 Python 计算，不依赖外部 LLM 密钥。生产式部署必须替换 `.env.example` 中的演示令牌，并限制服务端口。
 
+如需使用 DeepSeek 官方云模型 Tool Calling，在被 Git 忽略的 `.env` 中设置：
+
+```dotenv
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=你的本地密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
+```
+
+仅 `agent-api` 容器会接收 DeepSeek 配置；Streamlit、Crawler、ERP 和模拟站均不会获得云模型密钥。切回 `LLM_PROVIDER=offline` 即恢复离线确定性路由。
+
 ## 核心演示
 
 1. 在智能运营助手输入“为什么我们的 A102 最近销量下降？”，响应会展示内部销量、广告、售价，以及外部竞品价格历史和内容热度证据。

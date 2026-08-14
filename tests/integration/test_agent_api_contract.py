@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from commerce.agent_api import app
 from commerce.config import get_settings
 from commerce.database import get_session
+from commerce.llm_agent import AgentStructuredResult
+from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
 from commerce.models import ApprovalTask
 from commerce.seed import reset_and_seed
 
@@ -128,3 +130,107 @@ def test_crawler_proxy_rejects_malformed_contract(
     )
     assert result.status_code == 502
     assert "响应契约无效" in result.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("exception", "status", "expected_detail"),
+    [
+        (LLMConfigurationError("secret-value"), 503, "云模型配置不可用，请联系管理员"),
+        (LLMTimeoutError("secret-value"), 504, "云模型请求超时，请稍后重试"),
+        (LLMServiceError("secret-value"), 502, "云模型当前不可用，请稍后重试"),
+        (RuntimeError("secret-value"), 502, "云模型当前不可用，请稍后重试"),
+    ],
+)
+def test_cloud_failure_is_controlled_and_does_not_create_workflow_state(
+    agent_client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    exception: Exception,
+    status: int,
+    expected_detail: str,
+) -> None:
+    monkeypatch.setattr(
+        "commerce.agent_api.run_model_tool_loop",
+        lambda *args, **kwargs: (_ for _ in ()).throw(exception),
+    )
+    response = agent_client.post(
+        "/api/chat",
+        json={"message": "给 B205 创建补货单。"},
+        headers={"X-Operator-Key": "valid-operator"},
+    )
+    assert response.status_code == status
+    assert response.json() == {"detail": expected_detail}
+    assert "secret-value" not in response.text
+    assert db_session.query(ApprovalTask).count() == 0
+
+
+def test_cloud_a102_uses_deterministic_composer_not_model_claims(
+    agent_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_result = AgentStructuredResult(
+        intent="model_claim",
+        answer="UNTRUSTED_MODEL_CALCULATION",
+        evidence=[],
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        tool_results={
+            "get_sku_sales": {
+                "recent": {"units": 30, "revenue": "3870"},
+                "previous": {"units": 44, "revenue": "5676"},
+            },
+            "get_advertising_data": {
+                "recent": {"impressions": 27600},
+                "previous": {"impressions": 37600},
+            },
+            "get_product": {"price": "129.00"},
+            "compare_competitor_prices": {
+                "change_pct": -21.6,
+                "window": "最近7天 与 前7天",
+            },
+            "analyze_market_trends": {
+                "change_pct": 47.0,
+                "window": "最近7天 与 前7天",
+                "new_features": ["15W快充"],
+            },
+        },
+    )
+    monkeypatch.setattr("commerce.agent_api.run_model_tool_loop", lambda *args: model_result)
+    response = agent_client.post(
+        "/api/chat",
+        json={"message": "为什么我们的 A102 最近销量下降？"},
+        headers={"X-Operator-Key": "valid-operator"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent"] == "combined_analysis"
+    assert "UNTRUSTED_MODEL_CALCULATION" not in data["answer"]
+    assert {item["source"] for item in data["evidence"]} == {
+        "ERP订单",
+        "ERP广告",
+        "ERP商品",
+        "Crawler竞品价格历史",
+        "Crawler竞品内容",
+    }
+
+
+def test_cloud_purchase_uses_deterministic_draft_not_model_claims(
+    agent_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_result = AgentStructuredResult(
+        intent="purchase_draft",
+        answer="UNTRUSTED_QUANTITY_999999",
+        evidence=[],
+        provider="deepseek",
+        model="deepseek-v4-pro",
+    )
+    monkeypatch.setattr("commerce.agent_api.run_model_tool_loop", lambda *args: model_result)
+    response = agent_client.post(
+        "/api/chat",
+        json={"message": "给 B205 创建补货单。", "idempotency_key": "cloud-draft-safe"},
+        headers={"X-Operator-Key": "valid-operator"},
+    )
+    assert response.status_code == 200
+    assert "UNTRUSTED_QUANTITY_999999" not in response.json()["answer"]
+    assert response.json()["approval_id"] is not None

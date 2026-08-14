@@ -44,6 +44,13 @@ services:
       APPROVER_API_KEY: ${APPROVER_API_KEY:?必须设置 APPROVER_API_KEY}
       OPERATOR_API_KEY: ${OPERATOR_API_KEY:?必须设置 OPERATOR_API_KEY}
       CRAWLER_SERVICE_TOKEN: ${CRAWLER_SERVICE_TOKEN:?必须设置 CRAWLER_SERVICE_TOKEN}
+      LLM_PROVIDER: ${LLM_PROVIDER:-offline}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-60}
+      LLM_MAX_TOOL_ROUNDS: ${LLM_MAX_TOOL_ROUNDS:-12}
+      LLM_MAX_TOOL_CALLS: ${LLM_MAX_TOOL_CALLS:-24}
     command: ["uvicorn", "commerce.agent_api:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["127.0.0.1:8000:8000"]
     healthcheck:

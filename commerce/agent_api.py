@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import timedelta
 from typing import cast
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from commerce.config import get_settings
 from commerce.database import get_session
 from commerce.llm_agent import run_model_tool_loop
+from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
 from commerce.models import ApprovalStatus, ApprovalTask, CrawlerTask, OperationLog, Order
 from commerce.schemas import (
     AuthenticationStatus,
@@ -22,6 +24,7 @@ from commerce.schemas import (
 )
 from commerce.seed import AS_OF
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
+from commerce.services.combined import compose_a102
 from commerce.services.marketing import competitor_products, negative_comment_topics
 from commerce.services.report import daily_report
 from commerce.tools import CommerceTools
@@ -77,14 +80,91 @@ def chat(
     session_id = payload.session_id or str(uuid4())
     message = payload.message
     tools = CommerceTools(session, AS_OF, session_id, use_service_apis=True)
-    model_result = run_model_tool_loop(message, tools.langchain_tools())
+    model_tools = [
+        item for item in tools.langchain_tools() if getattr(item, "name", "") != "run_crawler"
+    ]
+    try:
+        model_result = run_model_tool_loop(message, model_tools)
+    except LLMConfigurationError as exc:
+        raise HTTPException(503, "云模型配置不可用，请联系管理员") from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(504, "云模型请求超时，请稍后重试") from exc
+    except LLMServiceError as exc:
+        raise HTTPException(502, "云模型当前不可用，请稍后重试") from exc
+    except Exception as exc:
+        raise HTTPException(502, "云模型当前不可用，请稍后重试") from exc
     if model_result is not None:
+        if "A102" in message.upper() and ("下降" in message or "下滑" in message):
+            required = model_result.tool_results
+            sales = cast(dict[str, object], required["get_sku_sales"])
+            ads = cast(dict[str, object], required["get_advertising_data"])
+            own = cast(dict[str, object], required["get_product"])
+            combined = compose_a102(
+                recent_sales=cast(dict[str, object], sales["recent"]),
+                previous_sales=cast(dict[str, object], sales["previous"]),
+                recent_ads=cast(dict[str, object], ads["recent"]),
+                previous_ads=cast(dict[str, object], ads["previous"]),
+                own_price=own["price"],
+                price=cast(dict[str, object], required["compare_competitor_prices"]),
+                trend=cast(dict[str, object], required["analyze_market_trends"]),
+            )
+            return ChatResponse(
+                session_id=session_id,
+                intent="combined_analysis",
+                answer=str(combined["answer"]),
+                evidence=[
+                    Evidence.model_validate(item)
+                    for item in cast(list[dict[str, object]], combined["evidence"])
+                ],
+                tool_calls=[ToolCallRecord.model_validate(item) for item in tools.trace],
+                llm_provider=model_result.provider,
+                llm_model=model_result.model,
+            )
+        if model_result.intent == "purchase_draft":
+            sku_match = re.search(r"[A-Z]\d{3}", message.upper())
+            if sku_match is None or not any(word in message for word in ("补货", "采购", "创建")):
+                raise HTTPException(422, "采购草稿请求缺少有效商品编码或明确操作")
+            idempotency_key = payload.idempotency_key or (
+                f"chat:{session_id}:purchase:{sku_match.group(0)}"
+            )
+            approval = create_purchase_draft(
+                session,
+                sku_match.group(0),
+                AS_OF,
+                f"{model_result.provider}-agent",
+                idempotency_key,
+            )
+            data = approval.action_data
+            return ChatResponse(
+                session_id=session_id,
+                intent="purchase_draft",
+                answer=(
+                    f"DeepSeek 已完成 {data['sku']} 的库存、商品与销量查询。\n\n"
+                    f"已生成 {data['sku']} 补货草稿："
+                    f"{data['quantity']} 件，金额 ¥{data['total_amount']}。"
+                    "当前状态为待审批，批准前不会创建采购单。"
+                ),
+                approval_id=approval.id,
+                evidence=[
+                    Evidence(
+                        source="确定性采购服务",
+                        metric="补货草稿数量",
+                        value=int(data["quantity"]),
+                        period="人工审批前",
+                    ),
+                ],
+                tool_calls=[ToolCallRecord.model_validate(item) for item in tools.trace],
+                llm_provider=model_result.provider,
+                llm_model=model_result.model,
+            )
         return ChatResponse(
             session_id=session_id,
             intent=model_result.intent,
             answer=model_result.answer,
-            evidence=[Evidence.model_validate(item) for item in model_result.evidence],
+            evidence=model_result.evidence,
             tool_calls=[ToolCallRecord.model_validate(item) for item in tools.trace],
+            llm_provider=model_result.provider,
+            llm_model=model_result.model,
         )
     if "A102" in message and ("下降" in message or "为什么" in message):
         result = tools.combined_a102()
@@ -172,8 +252,6 @@ def chat(
             ],
         )
     if "订单" in message or "卖了多少" in message or "销售额" in message or "退款" in message:
-        import re
-
         sku_match = re.search(r"[A-Z]\d{3}", message.upper())
         sku = sku_match.group(0) if sku_match else ""
         days_match = re.search(r"(?:近|最近)(\d+)天", message)

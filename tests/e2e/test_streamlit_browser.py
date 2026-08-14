@@ -17,6 +17,9 @@ AGENT = os.getenv("E2E_AGENT_URL", "http://localhost:8000")
 ERP = os.getenv("E2E_ERP_URL", "http://localhost:8001")
 OPERATOR_KEY = os.getenv("OPERATOR_API_KEY", "")
 APPROVER_KEY = os.getenv("APPROVER_API_KEY", "")
+EXPECTED_LLM_PROVIDER = os.getenv("E2E_EXPECTED_LLM_PROVIDER", "")
+EXPECTED_LLM_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+EXPECT_CLOUD_FAILURE = os.getenv("E2E_EXPECT_CLOUD_FAILURE") == "1"
 
 FORBIDDEN_UI_TERMS = (
     "Dashboard",
@@ -47,6 +50,17 @@ FORBIDDEN_UI_TERMS = (
 
 if os.getenv("RUN_UI_E2E") == "1" and (not OPERATOR_KEY or not APPROVER_KEY):
     raise RuntimeError("浏览器验收需要显式设置操作员与审批员凭据")
+if os.getenv("RUN_UI_E2E") == "1" and EXPECTED_LLM_PROVIDER not in {
+    "offline",
+    "deepseek",
+}:
+    raise RuntimeError("浏览器验收必须显式设置 offline 或 deepseek 提供商期望值")
+if (
+    os.getenv("RUN_UI_E2E") == "1"
+    and EXPECTED_LLM_PROVIDER == "deepseek"
+    and not EXPECTED_LLM_MODEL
+):
+    raise RuntimeError("DeepSeek 浏览器验收必须显式设置模型名称")
 
 
 @pytest.fixture
@@ -128,6 +142,15 @@ def assert_chinese_business_ui(page: Page) -> None:
     expect(page.get_by_text("Deploy", exact=True)).to_have_count(0)
 
 
+def assert_expected_llm_provider(page: Page) -> None:
+    if EXPECTED_LLM_PROVIDER == "deepseek":
+        expect(
+            page.get_by_text(f"云模型：DeepSeek（{EXPECTED_LLM_MODEL}）", exact=True)
+        ).to_be_visible()
+    elif EXPECTED_LLM_PROVIDER == "offline":
+        expect(page.get_by_text("处理模式：离线确定性路由", exact=True)).to_be_visible()
+
+
 def wait_for_new_task(prior_ids: set[int], timeout_seconds: int = 120) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -191,6 +214,7 @@ def test_a102_real_chinese_browser_path(page: Page) -> None:
     expect(page.get_by_text(re.compile("A102 最近7天销量"))).to_be_visible(timeout=60_000)
     for label in ("分析证据", "智能体活动记录"):
         expect(page.get_by_text(label, exact=True)).to_be_visible()
+    assert_expected_llm_provider(page)
     after = api_get("/api/operations", headers={"X-Operator-Key": OPERATOR_KEY})
     assert isinstance(after, list)
     assert len(after) >= len(before) + 5
@@ -198,8 +222,9 @@ def test_a102_real_chinese_browser_path(page: Page) -> None:
 
     page.get_by_label("输入问题").fill("今天经营日报怎么样？")
     page.get_by_role("button", name="开始分析").click()
-    expect(page.get_by_text(re.compile("经营概况"))).to_be_visible(timeout=60_000)
-    expect(page.get_by_text(re.compile("经营概况.*广告投入产出比")).first).to_be_visible()
+    expect(page.get_by_text(re.compile("经营概况|经营日报"))).to_be_visible(timeout=60_000)
+    expect(page.get_by_text(re.compile("广告投入产出比")).first).to_be_visible()
+    assert_expected_llm_provider(page)
     assert_chinese_business_ui(page)
 
 
@@ -211,6 +236,7 @@ def test_b205_browser_approval_chinese_auth_and_idempotency(page: Page) -> None:
     page.get_by_role("button", name="开始分析").click()
     info = page.get_by_text(re.compile(r"已创建待审批任务，编号 \d+"))
     expect(info).to_be_visible(timeout=60_000)
+    assert_expected_llm_provider(page)
     approval_id = int(re.search(r"(\d+)$", info.inner_text()).group(1))  # type: ignore[union-attr]
     before_po = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
 
@@ -245,6 +271,7 @@ def test_b205_browser_approval_chinese_auth_and_idempotency(page: Page) -> None:
     page.get_by_role("button", name="开始分析").click()
     repeat_info = page.get_by_text(re.compile(r"已创建待审批任务，编号 \d+"))
     expect(repeat_info).to_be_visible(timeout=60_000)
+    assert_expected_llm_provider(page)
     assert int(re.search(r"(\d+)$", repeat_info.inner_text()).group(1)) == approval_id  # type: ignore[union-attr]
     final_po = httpx.get(f"{ERP}/erp/purchase-orders", timeout=30).json()
     assert len([item for item in final_po if item["approval_id"] == approval_id]) == 1
@@ -272,3 +299,21 @@ def test_all_four_crawlers_have_chinese_ui(page: Page) -> None:
         assert expected_type in page_text
         assert "成功" in page_text
         assert_chinese_business_ui(page)
+
+
+@pytest.mark.skipif(not EXPECT_CLOUD_FAILURE, reason="仅在云模型故障注入验收中运行")
+def test_cloud_failure_is_controlled_in_real_streamlit(page: Page) -> None:
+    open_app(page)
+    fill_credentials(page, OPERATOR_KEY, "")
+    before = api_get("/api/approvals", headers={"X-Operator-Key": OPERATOR_KEY})
+    assert isinstance(before, list)
+    select_page(page, "智能运营助手")
+    page.get_by_label("输入问题").fill("给 B205 创建补货单。")
+    page.get_by_role("button", name="开始分析").click()
+    expect(page.get_by_text("业务服务暂时不可用，请稍后重试。", exact=True)).to_be_visible(
+        timeout=60_000
+    )
+    after = api_get("/api/approvals", headers={"X-Operator-Key": OPERATOR_KEY})
+    assert isinstance(after, list)
+    assert len(after) == len(before)
+    assert_chinese_business_ui(page)

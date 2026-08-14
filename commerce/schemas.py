@@ -63,6 +63,8 @@ class ChatResponse(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     approval_id: int | None = None
+    llm_provider: str = "offline"
+    llm_model: str | None = None
 
 
 class AuthenticationStatus(BaseModel):

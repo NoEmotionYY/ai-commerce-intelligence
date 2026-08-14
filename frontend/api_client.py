@@ -51,6 +51,8 @@ class ChatResponse(BaseModel):
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     tool_calls: list[ToolCallResponse] = Field(default_factory=list)
     approval_id: int | None = None
+    llm_provider: str = "offline"
+    llm_model: str | None = None
 
 
 class ApprovalResponse(BaseModel):

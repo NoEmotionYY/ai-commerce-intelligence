@@ -2,11 +2,34 @@
 
 ## 当前状态
 
-- 当前阶段：第二次后验收 UI / 认证加固已完成
-- 项目完成状态：COMPLETE（以本轮重新执行证据为准）
+- 当前阶段：DeepSeek 云模型 Tool Calling 最终验收完成
+- 项目完成状态：COMPLETE
 - 最后更新：2026-08-14
 
 ## 已完成里程碑
+
+### 2026-08-14：DeepSeek 真实云 Tool Calling 完成
+
+- 新增 `offline` / `deepseek` Provider 抽象；DeepSeek 只从环境读取密钥，并限定官方 HTTPS 端点、已验证模型、超时与工具调用预算。离线确定性路径保持不变。
+- DeepSeek 使用真实 LangChain `bind_tools → tool_calls → ToolMessage`。A102 强制核验五类工具及实体参数，最终指标和证据由真实工具结果交给共享 Python 组合器生成，不信任模型自报数据。
+- B205 的云模型只能调用只读库存、商品与销量工具；采购数量、金额和草稿由确定性业务服务生成，状态停在 `PENDING`。只有独立审批员凭据可批准，ERP 执行保持唯一与幂等。
+- 本地完整套件：`93 passed, 18 skipped in 26.47s`。跳过项均是需要显式 Compose、云凭据、浏览器或故障注入开关的环境门控用例，已在对应真实环境单独执行。
+- 真实 DeepSeek 云套件：`7 passed in 59.37s`；使用模型 `deepseek-v4-pro`，没有 mock 云响应。
+- DeepSeek Compose 浏览器套件：`5 passed, 1 skipped in 48.50s`；跳过项仅为单独执行的故障注入场景。浏览器断言当前提供商与模型，不能在离线模式假通过。
+- 离线 Compose API：`5 passed in 21.61s`；离线浏览器：`5 passed, 1 skipped in 22.72s`。验证新增云路径没有削弱原确定性路径。
+- 无效密钥、极短超时和真实网络不可达分别得到受控中文 `502`、`504`、`502`；浏览器故障场景分别为 `1 passed in 4.37s` 与 `1 passed in 4.02s`，没有新增审批、前端 traceback 或凭据泄漏。
+- 最终无缓存构建和全栈重建成功，耗时 `265.2s`；六服务 healthy。干净数据卷迁移到 `0002_approval_idempotency`，16 张表、50 商品、10000 订单。
+- 安全边界收尾后再次从当前工作树重建全栈，耗时 `239.5s`；容器源码哈希与工作树一致。最终 Compose API `5 passed in 45.23s`，DeepSeek 浏览器 `5 passed, 1 skipped in 46.97s`。
+- Ruff、格式检查、Mypy（28 个源文件）和 `git diff --check` 全部通过。
+- 三方向独立复审发现的密钥 repr、工具参数校验、模型证据可信边界、确定性计算、云浏览器假通过与异常边界问题均已修复；最终 Critical 0、High 0。
+
+### 2026-08-14：DeepSeek 云模型验收重新打开
+
+- 用户提供本地 `.env` DeepSeek 配置；审计仅确认配置项存在且非空，没有输出或记录密钥值。
+- 现有离线确定性路径保持不变；现有云代码只支持 OpenAI 特判，尚未执行 DeepSeek。
+- 官方文档当前标准端点为 `https://api.deepseek.com`，当前 Tool Calling 模型为 `deepseek-v4-pro` / `deepseek-v4-flash`；旧 `deepseek-chat` 已退役。
+- 现有云返回位于 B205 确定性草稿分支之前，必须增加安全的云意图后处理，确保模型只选择/调用只读工具，正式采购单仍只能经人工审批创建。
+- 本轮旧 FINAL_REPORT 暂停生效；DeepSeek 云连接、真实工具调用、A102、B205 和故障处理必须分别给出新证据。
 
 ### 2026-08-14：第二次人工 UI 验证重新打开
 
@@ -104,10 +127,10 @@
 - Crawler 需要防 SSRF、禁止凭据 URL 和非 HTTP(S) scheme，并校验重定向目标。
 - Tool 日志只记录调用信息，不记录模型私有推理或敏感配置。
 
-## 未完成与阻塞
+## 外部阻塞与未执行项
 
 - 当前没有真实外部阻塞。
-- 未配置外部 OpenAI 凭据，因此真实云模型联网调用未执行；离线路由、LangChain Tools 与真实服务链路已验证。
+- DeepSeek 真实云模型联网 Tool Calling 已执行并通过；OpenAI 未配置、未执行，也不报告为 PASS。
 
 ## 2026-08-14：Phase 1 至 Phase 8 实现里程碑
 

@@ -2,6 +2,18 @@
 
 状态说明：`[ ]` 未开始，`[~]` 进行中，`[x]` 已完成且已验证。
 
+## DeepSeek 云模型 Tool Calling
+
+- [x] 审计现有离线路由、云模型特判、工具边界和本地环境配置
+- [x] 建立 Offline / DeepSeek Provider 抽象及官方端点配置
+- [x] 让 DeepSeek A102 使用五类真实工具并输出结构化证据
+- [x] 让 DeepSeek B205 经只读工具形成建议，再由受控服务创建 PENDING 草稿
+- [x] 验证空/错误密钥、超时、网络不可达的受控中文错误
+- [x] 增加真实 DeepSeek 云 E2E 和离线回归
+- [x] 重跑本地、Compose、浏览器、Docker、健康与日志门禁
+- [x] 独立复审并修复全部 Critical / High
+- [x] 更新最终报告、提交 Git 检查点并恢复 COMPLETE
+
 ## 第二次后验收 UI / 认证加固（重新打开）
 
 - [x] 读取人工反馈并审计 operator / approver 完整凭据链路

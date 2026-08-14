@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,9 +18,15 @@ class Settings(BaseSettings):
     competitor_base_url: str = "http://localhost:8003"
     allowed_crawler_hosts: str = "localhost,127.0.0.1,mock-competitor-site"
     agent_api_url: str = "http://localhost:8000"
-    llm_provider: str = "offline"
+    llm_provider: Literal["offline", "deepseek", "openai"] = "offline"
     openai_api_key: str | None = Field(default=None, repr=False)
     openai_model: str = "gpt-4o-mini"
+    deepseek_api_key: str | None = Field(default=None, repr=False)
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-v4-pro"
+    llm_request_timeout_seconds: float = 60.0
+    llm_max_tool_rounds: int = 12
+    llm_max_tool_calls: int = 24
     request_timeout_seconds: float = 10.0
     crawler_rate_limit_seconds: float = 0.05
     crawler_max_retries: int = 3

@@ -12,6 +12,10 @@ $operatorToken = New-SecureToken
 $crawlerToken = New-SecureToken
 
 @"
+LLM_PROVIDER=offline
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
 ERP_SERVICE_TOKEN=$erpToken
 APPROVER_API_KEY=$approverToken
 OPERATOR_API_KEY=$operatorToken
