@@ -2,11 +2,17 @@
 
 ## 当前状态
 
-- 当前阶段：DeepSeek 云模型 Tool Calling 最终验收完成
+- 当前阶段：Apache-2.0 开源许可证发布完成
 - 项目完成状态：COMPLETE
-- 最后更新：2026-08-14
+- 最后更新：2026-08-16
 
 ## 已完成里程碑
+
+### 2026-08-16：Apache-2.0 开源许可证发布
+
+- 新增 Apache License 2.0 官方完整许可证文本，并在 Python 包元数据中声明 `LICENSE` 文件。
+- README 增加许可证说明和入口，GitHub 可识别仓库许可证。
+- 当前工作树验证：`93 passed, 18 skipped`；Ruff、格式检查、Mypy（28 个源文件）、许可证元数据检查和 `git diff --check` 全部通过。
 
 ### 2026-08-14：DeepSeek 真实云 Tool Calling 完成
 

@@ -77,3 +77,7 @@ python scripts/seed.py
 - 本项目不实现登录、验证码或访问控制绕过。
 
 详见 [系统架构](docs/ARCHITECTURE.md)、[架构决策](docs/DECISIONS.md) 和 [验收标准](docs/ACCEPTANCE.md)。
+
+## 许可证
+
+本项目基于 [Apache License 2.0](LICENSE) 开源。
