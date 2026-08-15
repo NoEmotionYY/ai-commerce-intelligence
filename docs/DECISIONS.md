@@ -1,85 +1,38 @@
-# 架构决策记录
+- # Architecture & Product Decisions
 
-## ADR-001：共享领域内核，保留独立服务入口
+  This file records decisions that materially affect the project.
 
-- 状态：已接受
-- 决策：数据库模型、Schema 和确定性业务逻辑放入共享包；Agent API、Mock ERP、Crawler Service 保持独立 FastAPI 进程。
-- 原因：满足服务边界，同时避免三套重复模型、迁移和业务计算。
+  Do not record trivial implementation details.
 
-## ADR-002：MySQL 用于运行环境，SQLite 用于快速测试
+  ---
 
-- 状态：已接受
-- 决策：通过 SQLAlchemy 使用数据库无关模型，Docker 使用 MySQL 8，测试使用临时 SQLite；关键 MySQL 行为另做 Compose E2E。
-- 原因：缩短反馈周期，最终仍真实验证 MySQL。
+  # Decision Template
 
-## ADR-003：离线确定性路由与真实 LLM Tool Calling 共用工具
+  ## ADR-XXX — Title
 
-- 状态：已接受
-- 决策：模型配置存在时使用 LangChain Tool Calling；无密钥时使用本地意图路由，但始终执行真实业务工具和数据查询。
-- 原因：验收环境不可假设外部 LLM 密钥或网络，同时禁止硬编码演示答案。
+  Date:
 
-## ADR-004：审批由双层防线强制执行
+  Status:
+  ACCEPTED / SUPERSEDED / REJECTED
 
-- 状态：已接受
-- 决策：LangGraph 在采购草稿后中断；ERP 采购执行 API 还必须收到已批准审批的可信引用并在服务端校验。
-- 原因：仅靠 Agent 提示或前端按钮无法构成安全边界。
+  Context:
 
-## ADR-005：竞品价格历史单独建表
+  Options considered:
 
-- 状态：已接受
-- 决策：在规格列出的 `competitor_products` 之外增加 `competitor_price_history`。
-- 原因：单条商品快照无法可靠计算“最近降价”，而验收明确要求价格历史。
+  1.
+  2.
+  3.
 
-## ADR-006：演示数据规模可配置
+  Decision:
 
-- 状态：已接受
-- 决策：默认生成规格要求的数据量，测试 profile 使用小规模数据；异常模式和关键 SKU 保持一致。
-- 原因：兼顾真实演示与自动化测试速度。
+  Reasoning:
 
-## ADR-007：爬虫目标采用允许列表
+  Consequences:
 
-- 状态：已接受
-- 决策：默认只允许模拟竞品站；公开站适配器必须在配置中显式注册域名，不开放任意 URL 抓取。
-- 原因：避免 SSRF 和越权采集，并满足“目标来源受控”。
+  Affected files/modules:
 
-## ADR-008：日报调度内置于 Agent API
+  ---
 
-- 状态：已接受
-- 决策：Crawler Center 通过受控 source id 提供手动 Run Now。APScheduler 保留为可选单实例部署组件，默认 Compose 不自动启动，避免多副本重复调度；日报/市场报告由 API 随取随算。
-- 原因：Demo 不需要引入 Celery/Redis 的额外复杂度。
+  # Existing Decisions
 
-## ADR-009：前端使用集中式、失败关闭的 API 契约
-
-- 状态：已接受
-- 决策：Streamlit 不再直接调用 `httpx` 或读取任意 JSON；所有请求进入 `FrontendApiClient`，统一处理 HTTP 状态、超时、网络错误、非法 JSON，并用 Pydantic 验证对象或列表 shape。页面只消费已验证模型，失败时显示中文用户错误并记录意外异常。
-- 原因：FastAPI 的错误对象与业务对象都可由 `.json()` 返回，若页面不先验证状态和 shape，会把 `{"detail": ...}` 当成正常答案或集合，造成真实 UI 崩溃。
-
-## ADR-010：采购操作采用请求级和执行级双重幂等
-
-- 状态：已接受
-- 决策：前端为具体采购消息保存操作键；`approval_tasks.idempotency_key` 唯一。顺序或并发的同键请求复用同一草稿，唯一冲突方回滚后读取赢家。ERP 以 `approval_id` 唯一，并在审批行锁内返回已有采购单。相反审批决定返回 409，同决定重放返回同一结果。
-- 原因：浏览器重试、重复点击与并发请求都不能生成重复采购单，也不能让冲突决定获得误导性的成功响应。
-
-## ADR-011：用户界面验收必须穿过真实浏览器
-
-- 状态：已接受
-- 决策：AppTest 与 MockTransport 用于快速组件/负面契约测试；最终验收另用 Playwright 从真实浏览器访问 Compose 中的 8501，覆盖五页、A102、B205 和四类 Crawler。测试容器使用 Compose 网络与真实 Agent/ERP/Crawler/MySQL 通信。
-- 原因：直接请求后端 API 无法发现 Streamlit 组件、凭据输入、重跑和错误渲染问题。
-
-## ADR-012：操作员与审批员凭据保持角色隔离
-
-- 状态：已接受
-- 决策：分析、采购草稿、审批列表、操作记录和采集使用 `X-Operator-Key`；批准或拒绝只使用 `X-Approver-Key`。两种密码控件始终放在侧栏并使用独立 `session_state`，避免切页清理；本地演示可通过 `DEMO_OPERATOR_API_KEY`、`DEMO_APPROVER_API_KEY` 注入掩码输入框，但服务端密钥仍分别由 `OPERATOR_API_KEY`、`APPROVER_API_KEY` 校验。
-- 原因：此前只提供操作员凭据且审批员控件切页丢失，导致用户误以为一个凭据可完成审批。明确角色和验证状态可以修复体验，同时不削弱高风险操作的授权边界。
-
-## ADR-013：中文业务展示采用集中式白名单转换
-
-- 状态：已接受
-- 决策：导航、字段、状态、风险、操作、采集类型、工具和数据来源统一由 `frontend/presentation.py` 映射；各页面只展示显式字段白名单和结构化中文表格/卡片。未知枚举返回“未知状态/未知类型”等安全文案，不回显原始值；正常业务界面不展示原始 JSON。
-- 原因：直接渲染 `model_dump()` 会把内部字段、英文枚举和后续新增字段泄漏给用户。展示层与内部 API 稳定值分离，既保持兼容性，也让中文界面可集中审计和测试。
-
-## ADR-014：DeepSeek 与离线路由共享受控工具和确定性业务组合器
-
-- 状态：已接受
-- 决策：LLM Provider 抽象支持 `offline` 和 `deepseek`。DeepSeek 仅使用环境中的 `DEEPSEEK_API_KEY`，并限定官方 HTTPS 主机、模型白名单、请求超时、轮次和工具调用总量。云模型只获得意图所需的只读工具；必需场景校验工具名及实体参数。A102 的指标/证据由真实工具输出交给共享 Python 组合器生成；B205 的推荐、金额与 PENDING 草稿由确定性服务生成，审批和 ERP 执行工具不暴露给模型。
-- 原因：真实 Tool Calling 不能把确定性财务计算、证据真实性或高风险写入授权交给概率模型。Provider 抽象保留离线可重复性，同时允许对官方 DeepSeek 云服务进行真实验证，而不复制业务逻辑或削弱人工审批边界。
+  Codex should preserve valid existing decisions and update/supersede obsolete ones rather than silently deleting important history.

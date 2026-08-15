@@ -1,154 +1,362 @@
+# AI Commerce Operations Copilot
 # Acceptance Criteria
 
-## Infrastructure
+## A. Demo Removal
 
-- [ ] Docker images build successfully
-- [ ] Docker Compose starts successfully
-- [ ] MySQL becomes healthy
-- [ ] Agent API becomes healthy
-- [ ] Mock ERP becomes healthy
-- [ ] Crawler Service becomes healthy
-- [ ] Streamlit UI becomes reachable
-- [ ] Mock competitor website becomes reachable
+- [ ] Production behavior does not depend on A102.
+- [ ] Production behavior does not depend on B205.
+- [ ] Production behavior does not depend on COMP-B.
+- [ ] No fixed business answer exists only to satisfy demo tests.
+- [ ] Mock ERP remains available for dev/test if useful.
+- [ ] Production path does not require Mock ERP.
 
-## Database
+---
 
-- [ ] Database initializes from a clean state
-- [ ] Migrations work
-- [ ] Seed data generation works
-- [ ] Required business tables exist
-- [ ] Required competitor tables exist
+## B. Catalog
 
-## Mock ERP
+- [ ] MasterProduct implemented.
+- [ ] MasterSKU implemented.
+- [ ] PlatformSKU implemented.
+- [ ] Multiple PlatformSKUs may map to one MasterSKU.
+- [ ] Mapping supports manual correction.
+- [ ] Integrity constraints exist.
+- [ ] Migration is tested.
 
-- [ ] Product query works
-- [ ] Order query works
-- [ ] Inventory query works
-- [ ] Advertising query works
-- [ ] Purchase draft works
-- [ ] Purchase approval works
-- [ ] Approved purchase execution works
-- [ ] Rejected purchase does not execute
+---
 
-## Business Intelligence
+## C. Stores
 
-- [ ] Revenue calculation works
-- [ ] Cost calculation works
-- [ ] Profit calculation works
-- [ ] Profit margin calculation works
-- [ ] ROAS calculation works
-- [ ] Refund rate calculation works
-- [ ] Inventory days calculation works
-- [ ] Inventory risk classification works
-- [ ] Business anomaly detection works
+- [ ] Multiple Shops supported.
+- [ ] Platform recorded.
+- [ ] Country/region recorded.
+- [ ] Currency recorded.
+- [ ] Timezone recorded.
+- [ ] Credentials are encrypted.
+- [ ] Credential state supported.
+- [ ] Platform capabilities supported.
+- [ ] Disabled/revoked store handled.
 
-## Crawler
+---
 
-- [ ] HTTPX crawler works
-- [ ] JSON parsing works
-- [ ] HTML parsing works
-- [ ] Playwright dynamic crawling works
-- [ ] Pagination works
-- [ ] Retry works
-- [ ] Timeout handling works
-- [ ] Rate limiting exists
-- [ ] Data validation works
-- [ ] Deduplication works
-- [ ] MySQL persistence works
-- [ ] Crawler task status works
-- [ ] Failure logging works
+## D. Orders
 
-## Marketing Intelligence
+- [ ] Unified Order implemented.
+- [ ] OrderItem implemented.
+- [ ] Platform states normalized.
+- [ ] Imports idempotent.
+- [ ] Duplicate events do not duplicate orders.
+- [ ] Platform filtering works.
+- [ ] Shop filtering works.
+- [ ] Date filtering works.
+- [ ] Status filtering works.
 
-- [ ] Competitor product analysis works
-- [ ] Competitor price comparison works
-- [ ] Competitor content analysis works
-- [ ] Negative review analysis works
-- [ ] Comment topic analysis works
+---
 
-## Agent
+## E. Inventory
 
-- [ ] Natural-language business query works
-- [ ] LangChain Tool Calling works
-- [ ] Multiple sequential Tool calls work
-- [ ] Structured Output works
-- [ ] ERP tools work
-- [ ] Competitor tools work
-- [ ] Crawler tools work
-- [ ] Internal and external data can be combined
+- [ ] Warehouse implemented.
+- [ ] WarehouseInventory implemented.
+- [ ] ChannelInventory implemented.
+- [ ] Available stock supported.
+- [ ] Reserved stock supported where applicable.
+- [ ] Incoming stock supported.
+- [ ] Stockout risk is deterministic.
+- [ ] Inventory reconciliation has a defined path.
 
-## LangGraph
+---
 
-- [ ] Workflow state works
-- [ ] Routing works
-- [ ] Purchase workflow works
-- [ ] Human interrupt works
-- [ ] Approval works
-- [ ] Resume works
-- [ ] Reject works
-- [ ] Purchase cannot execute before approval
+## F. Cost & Profit
 
-## Key Demo 1
+- [ ] SKU cost history implemented.
+- [ ] Effective dates supported.
+- [ ] Estimated profit implemented.
+- [ ] Actual profit distinguished from estimated profit.
+- [ ] Platform fees representable.
+- [ ] Shipping costs representable.
+- [ ] Refund losses representable.
+- [ ] Deterministic calculations tested.
 
-Question:
+---
 
-为什么我们的 A102 最近销量下降？
+## G. Refunds
 
-The answer must actually use:
+- [ ] Unified Refund implemented.
+- [ ] RefundItem implemented where needed.
+- [ ] SKU refund rate calculable.
+- [ ] Shop refund rate calculable.
+- [ ] Platform refund rate calculable.
+- [ ] Refund spike detection implemented.
 
-- internal sales data
-- advertising data
-- internal price
-- competitor price history
-- competitor content trend
+---
 
-and generate an evidence-grounded explanation.
+## H. Suppliers & Purchasing
 
-## Key Demo 2
+- [ ] Supplier implemented.
+- [ ] SupplierProduct implemented.
+- [ ] Purchase cost supported.
+- [ ] MOQ supported.
+- [ ] Lead time supported.
+- [ ] PurchaseOrder implemented.
+- [ ] PurchaseOrderItem implemented.
+- [ ] InboundShipment implemented.
+- [ ] Purchase lifecycle implemented.
+- [ ] Incoming stock affects replenishment.
+- [ ] Replenishment recommendation is deterministic.
+- [ ] High-impact purchase execution requires approval.
+- [ ] Purchase execution is idempotent.
 
-Question:
+---
 
-哪些 SKU 未来三天可能缺货？
+## I. Alerts
 
-The system must calculate inventory risk from real seeded data.
+At minimum:
 
-## Key Demo 3
+- [ ] SALES_DROP
+- [ ] SALES_SPIKE
+- [ ] STOCKOUT_RISK
+- [ ] REFUND_SPIKE
+- [ ] MARGIN_DROP
 
-Question:
+Additionally where justified:
 
-给 B205 创建补货单。
+- [ ] PRICE_ANOMALY
+- [ ] ORDER_ANOMALY
+- [ ] FINANCE_ANOMALY
 
-Expected:
+- [ ] Alert lifecycle exists.
+- [ ] Alerts link to relevant business entities.
+- [ ] Alerts can produce BusinessTasks.
 
-Agent
-→ inventory analysis
-→ purchase recommendation
-→ draft
-→ human approval
-→ ERP execution
+---
 
-No purchase may execute before approval.
+## J. Business Tasks
 
-## Quality
+- [ ] BusinessTask implemented.
+- [ ] TODO supported.
+- [ ] IN_PROGRESS supported.
+- [ ] WAITING_APPROVAL supported.
+- [ ] DONE supported.
+- [ ] DISMISSED supported.
+- [ ] Tasks link to business context.
+- [ ] Task history is auditable.
 
-- [ ] pytest passes
-- [ ] lint passes
-- [ ] type checking passes where configured
-- [ ] Docker build passes
-- [ ] Docker smoke tests pass
-- [ ] required E2E tests pass
-- [ ] no mandatory TODO remains
-- [ ] README matches the real project
-- [ ] final code review completed
-- [ ] all Critical findings fixed
-- [ ] all High findings fixed
+---
 
-## Completion
+## K. Agent
 
-The project is only COMPLETE when every mandatory item above is either:
+- [ ] Metrics read only through validated tools/services.
+- [ ] No arbitrary SQL.
+- [ ] No direct high-impact platform write.
+- [ ] Agent can analyze shop performance.
+- [ ] Agent can compare platforms.
+- [ ] Agent can compare Master SKUs.
+- [ ] Agent can explain alerts.
+- [ ] Agent can create BusinessTasks.
+- [ ] Agent can create purchase drafts.
+- [ ] Agent cannot bypass approval.
+- [ ] Important numeric answers are grounded in deterministic calculations.
+- [ ] Tests cover fabricated/invalid numeric claims where practical.
 
-- PASS
+---
 
-or explicitly documented as blocked by a genuine external dependency.
+## L. Data Ingestion
 
-Incomplete implementation must never be reported as complete.
+- [ ] Raw events can be persisted.
+- [ ] Raw events are replayable where appropriate.
+- [ ] SyncJob implemented.
+- [ ] Sync status visible.
+- [ ] Duplicate events handled idempotently.
+- [ ] Failed synchronization visible.
+- [ ] Retry behavior exists.
+- [ ] Reconciliation path exists.
+- [ ] CSV import supported.
+- [ ] Excel import supported where feasible.
+- [ ] Import validation and preview exist.
+
+---
+
+## M. Platform 1
+
+Initial target:
+
+Douyin
+
+Implementation:
+
+- [ ] authentication architecture;
+- [ ] product synchronization;
+- [ ] SKU synchronization;
+- [ ] order synchronization;
+- [ ] inventory synchronization;
+- [ ] refunds where API supports;
+- [ ] event/webhook path where applicable;
+- [ ] retries;
+- [ ] pagination;
+- [ ] rate-limit handling;
+- [ ] idempotency;
+- [ ] contract tests;
+- [ ] errors observable.
+
+Verification state must explicitly state one of:
+
+IMPLEMENTED_UNVERIFIED
+VERIFIED_MOCK
+VERIFIED_SANDBOX
+VERIFIED_REAL
+BLOCKED_EXTERNAL
+
+---
+
+## N. Platform 2
+
+Initial target:
+
+TikTok Shop
+
+- [ ] authentication architecture;
+- [ ] token refresh;
+- [ ] product synchronization;
+- [ ] SKU synchronization;
+- [ ] order synchronization;
+- [ ] inventory synchronization;
+- [ ] refund synchronization;
+- [ ] finance synchronization where available;
+- [ ] webhook path;
+- [ ] retries;
+- [ ] pagination;
+- [ ] rate-limit handling;
+- [ ] idempotency;
+- [ ] contract tests;
+- [ ] errors observable.
+
+Verification state must be explicit.
+
+---
+
+## O. Dashboard
+
+- [ ] GMV.
+- [ ] Orders.
+- [ ] Estimated profit.
+- [ ] Actual profit when data exists.
+- [ ] Refund rate.
+- [ ] Stockout risks.
+- [ ] Alerts.
+- [ ] Pending tasks.
+- [ ] Platform comparison.
+- [ ] Shop comparison.
+- [ ] Trend view.
+
+---
+
+## P. Roles & Security
+
+- [ ] OWNER.
+- [ ] OPERATOR.
+- [ ] APPROVER.
+- [ ] Authentication.
+- [ ] Authorization.
+- [ ] Credential encryption.
+- [ ] Audit logging.
+- [ ] Webhook validation where supported.
+- [ ] Request validation.
+- [ ] No committed secrets.
+- [ ] No LLM arbitrary production SQL.
+- [ ] Consequential writes follow approval rules.
+
+---
+
+## Q. Reliability
+
+- [ ] Database migrations verified.
+- [ ] Retry behavior tested.
+- [ ] Idempotency tested.
+- [ ] Restart/recovery behavior tested.
+- [ ] Sync recovery tested.
+- [ ] Health endpoint exists.
+- [ ] Backup procedure documented.
+- [ ] Failure logs are usable.
+
+---
+
+## R. Deployment
+
+- [ ] Production-oriented Docker build works.
+- [ ] Docker Compose deployment works.
+- [ ] Configuration documented.
+- [ ] Secrets externalized.
+- [ ] Database persistence configured.
+- [ ] Redis/worker configured when required.
+- [ ] Health checks documented.
+- [ ] HTTPS reverse-proxy deployment documented.
+
+---
+
+## S. Verification
+
+Before COMPLETE:
+
+- [ ] Ruff PASS.
+- [ ] Format PASS.
+- [ ] MyPy PASS.
+- [ ] Full pytest PASS.
+- [ ] Migration validation PASS.
+- [ ] API integration tests PASS.
+- [ ] Workflow tests PASS.
+- [ ] Platform contract tests PASS.
+- [ ] Docker build PASS.
+- [ ] Docker Compose smoke PASS.
+- [ ] Critical UI/browser flows PASS.
+- [ ] git diff --check PASS.
+- [ ] Security review has no unresolved Critical issue.
+- [ ] Security review has no unresolved High issue.
+
+---
+
+## T. Complete Business Loop
+
+At least one complete flow must work:
+
+real or faithfully imported commerce data
+→ normalized model
+→ deterministic metric
+→ anomaly
+→ Agent explanation
+→ BusinessTask
+→ approval when required
+→ execution
+→ audit log
+→ measurable resulting state
+
+---
+
+# Definition of COMPLETE
+
+The project may be declared COMPLETE only when every mandatory criterion is:
+
+PASS
+
+or genuinely:
+
+BLOCKED_EXTERNAL
+
+BLOCKED_EXTERNAL may only represent external requirements such as:
+
+- developer account approval;
+- real platform credentials;
+- seller authorization;
+- unavailable paid/private APIs.
+
+The following must never be marked BLOCKED_EXTERNAL:
+
+- unfinished code;
+- failing tests;
+- migrations;
+- bugs;
+- architectural problems;
+- missing UI;
+- refactoring.
+
+No unresolved internal P0 or P1 task may remain at COMPLETE.
+
+A final independent review must be completed before declaring COMPLETE.
