@@ -414,7 +414,12 @@ class ShopConnectionService:
         )
 
     def assert_sync_ready(
-        self, shop_id: int, capability_code: str, *, for_update: bool = False
+        self,
+        shop_id: int,
+        capability_code: str,
+        *,
+        for_update: bool = False,
+        allow_douyin_token_refresh: bool = False,
     ) -> ShopCapability:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         shop = self._shop(shop_id, require_active=False, for_update=for_update)
@@ -437,9 +442,18 @@ class ShopConnectionService:
             ) from exc
         normalized_code = self._normalize_capability(capability_code)
         connection = self._connection(shop, create=False, for_update=for_update)
-        if (
-            connection is None
-            or connection.authorization_status is not ShopAuthorizationStatus.AUTHORIZED
+        douyin_refresh_path = (
+            allow_douyin_token_refresh and shop.platform.strip().upper() == "DOUYIN"
+        )
+        refreshable_reauth = (
+            douyin_refresh_path
+            and connection is not None
+            and connection.authorization_status is ShopAuthorizationStatus.REAUTH_REQUIRED
+            and connection.authorization_error_code == "CREDENTIAL_EXPIRED"
+        )
+        if connection is None or (
+            connection.authorization_status is not ShopAuthorizationStatus.AUTHORIZED
+            and not refreshable_reauth
         ):
             raise ShopConnectionUnavailableError(
                 "店铺连接尚未授权", error_code="CONNECTION_NOT_AUTHORIZED"
@@ -467,19 +481,29 @@ class ShopConnectionService:
             raise ShopConnectionUnavailableError(
                 "店铺同步所需凭据不可用", error_code="CREDENTIAL_MISSING"
             )
-        if credential.status is not CredentialStatus.ACTIVE:
+        expires_at = credential.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        token_expired = expires_at is not None and expires_at <= utcnow()
+        refreshable_status = (
+            douyin_refresh_path
+            and required_type == "OAUTH"
+            and credential.status in {CredentialStatus.ACTIVE, CredentialStatus.EXPIRED}
+            and (credential.status is CredentialStatus.EXPIRED or token_expired)
+        )
+        if credential.status is not CredentialStatus.ACTIVE and not refreshable_status:
             raise ShopConnectionUnavailableError(
                 "店铺同步所需凭据不可用",
                 error_code=f"CREDENTIAL_{credential.status.value}",
             )
-        if credential.expires_at is not None:
-            expires_at = credential.expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=UTC)
-            if expires_at <= utcnow():
-                raise ShopConnectionUnavailableError(
-                    "店铺同步所需凭据已过期", error_code="CREDENTIAL_EXPIRED"
-                )
+        if token_expired and not refreshable_status:
+            raise ShopConnectionUnavailableError(
+                "店铺同步所需凭据已过期", error_code="CREDENTIAL_EXPIRED"
+            )
+        if refreshable_reauth and not refreshable_status:
+            raise ShopConnectionUnavailableError(
+                "店铺连接尚未授权", error_code="CONNECTION_NOT_AUTHORIZED"
+            )
         return capability
 
     def invalidate_sync_jobs(self, shop_id: int, *, error_code: str) -> int:

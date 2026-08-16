@@ -30,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from commerce.authorization import Principal  # noqa: E402
+from commerce.config import DouyinWebhookApplication  # noqa: E402
 from commerce.credentials import CredentialCipher, CredentialService  # noqa: E402
 from commerce.database import Base  # noqa: E402
 from commerce.models import (  # noqa: E402
@@ -74,11 +75,16 @@ from commerce.models import (  # noqa: E402
 from commerce.platforms.douyin import (  # noqa: E402
     DouyinAPIClient,
     DouyinCredentials,
+    DouyinOrderPage,
+    DouyinProductPage,
     DouyinTokenSet,
     sign_webhook,  # noqa: E402
 )
 from commerce.schemas import BusinessTaskCreate, WarehouseInventorySnapshotInput  # noqa: E402
 from commerce.services.alerts import AlertTaskService  # noqa: E402
+from commerce.services.credential_backfill import (  # noqa: E402
+    DouyinCredentialIdentifierBackfill,
+)
 from commerce.services.douyin_sync import DouyinSyncService  # noqa: E402
 from commerce.services.douyin_webhook import DouyinWebhookService  # noqa: E402
 from commerce.services.ingestion import IngestionService, IngestionTransitionError  # noqa: E402
@@ -1829,8 +1835,17 @@ def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
             slug="mysql-douyin-webhook-race",
             name="MySQL Douyin Webhook Race",
         )
-        session.add(organization)
+        user = User(
+            email="mysql-douyin-webhook@example.com",
+            display_name="MySQL Douyin Webhook",
+        )
+        session.add_all([organization, user])
         session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OWNER,
+        )
         shop = Shop(
             organization_id=organization.id,
             name="MySQL Douyin Webhook Shop",
@@ -1840,8 +1855,16 @@ def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
             currency="CNY",
             timezone="Asia/Shanghai",
         )
-        session.add(shop)
+        session.add_all([membership, shop])
         session.flush()
+        session.add(
+            ShopConnection(
+                organization_id=organization.id,
+                shop_id=shop.id,
+                authorization_status=ShopAuthorizationStatus.AUTHORIZED,
+                authorization_verified_at=utcnow(),
+            )
+        )
         encrypted = cipher.encrypt(
             {
                 "app_key": app_id,
@@ -1851,19 +1874,34 @@ def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
             shop_id=shop.id,
             credential_type="OAUTH",
         )
-        session.add(
-            ShopCredential(
-                shop_id=shop.id,
-                credential_type="OAUTH",
-                public_identifier_hash=hashlib.sha256(app_id.encode()).hexdigest(),
-                key_id=encrypted.key_id,
-                nonce=encrypted.nonce,
-                encrypted_payload=encrypted.ciphertext,
-                status=CredentialStatus.ACTIVE,
-            )
+        credential = ShopCredential(
+            shop_id=shop.id,
+            credential_type="OAUTH",
+            public_identifier_hash=None,
+            key_id=encrypted.key_id,
+            nonce=encrypted.nonce,
+            encrypted_payload=encrypted.ciphertext,
+            status=CredentialStatus.ACTIVE,
         )
+        session.add(credential)
         session.commit()
         shop_id = shop.id
+        credential_id = credential.id
+        encrypted_before_backfill = bytes(credential.encrypted_payload)
+        result = DouyinCredentialIdentifierBackfill(session, cipher).run_batch(
+            after_id=credential.id - 1,
+            limit=1,
+        )
+        if (result.scanned, result.updated, result.failed) != (1, 1, 0):
+            raise RuntimeError(f"MySQL Douyin credential backfill failed: {result}")
+        session.expire_all()
+        backfilled = session.get(ShopCredential, credential_id)
+        if (
+            backfilled is None
+            or backfilled.public_identifier_hash != hashlib.sha256(app_id.encode()).hexdigest()
+            or bytes(backfilled.encrypted_payload) != encrypted_before_backfill
+        ):
+            raise RuntimeError("MySQL Douyin credential backfill changed encrypted evidence")
 
     raw_body = json.dumps(
         [
@@ -1882,12 +1920,18 @@ def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
         separators=(",", ":"),
     ).encode()
     signature = sign_webhook(app_id=app_id, app_secret=app_secret, raw_body=raw_body)
+    applications = {
+        app_id: DouyinWebhookApplication(
+            app_secret=app_secret,
+            shop_organizations={"mysql-douyin-webhook-shop": "mysql-douyin-webhook-race"},
+        )
+    }
     barrier = Barrier(2)
 
     def ingest() -> tuple[int, int]:
         with Session(engine) as session:
             barrier.wait(timeout=10)
-            result = DouyinWebhookService(session, cipher).ingest(
+            result = DouyinWebhookService(session, cipher, applications).ingest(
                 raw_body=raw_body,
                 event_sign=signature,
                 app_id=app_id,
@@ -1978,6 +2022,17 @@ def _verify_douyin_token_refresh_race(engine: Engine) -> None:
                 status=ShopCapabilityStatus.ENABLED,
             )
         connection_service.record_authorized(shop.id)
+        connection = session.scalar(
+            sa.select(ShopConnection).where(ShopConnection.shop_id == shop.id)
+        )
+        if connection is None:
+            raise RuntimeError("MySQL Douyin refresh connection was not created")
+        credential.status = CredentialStatus.EXPIRED
+        credential.expires_at = utcnow() - timedelta(seconds=1)
+        connection.authorization_status = ShopAuthorizationStatus.REAUTH_REQUIRED
+        connection.authorization_verified_at = None
+        connection.authorization_error_code = "CREDENTIAL_EXPIRED"
+        session.commit()
         context = (principal, shop.id, shop.external_shop_id, credential.id)
 
     refresh_count = {"value": 0}
@@ -1985,7 +2040,8 @@ def _verify_douyin_token_refresh_race(engine: Engine) -> None:
     barrier = Barrier(2)
 
     class RefreshClient(DouyinAPIClient):
-        def __init__(self, external_shop_id: str) -> None:
+        def __init__(self, credentials: DouyinCredentials, external_shop_id: str) -> None:
+            self.credentials = credentials
             self.external_shop_id = external_shop_id
 
         def __enter__(self) -> RefreshClient:
@@ -1995,6 +2051,8 @@ def _verify_douyin_token_refresh_race(engine: Engine) -> None:
             return None
 
         def refresh_access_token(self) -> DouyinTokenSet:
+            if self.credentials.refresh_token != "mysql-one-time-refresh":
+                raise RuntimeError("MySQL refresh used an unexpected refresh token")
             with refresh_lock:
                 refresh_count["value"] += 1
             time.sleep(0.1)
@@ -2007,35 +2065,47 @@ def _verify_douyin_token_refresh_race(engine: Engine) -> None:
                 scope="PRODUCT_READ ORDER_READ",
             )
 
-    principal, shop_id, external_shop_id, credential_id = context
-    previous = DouyinCredentials.from_mapping(old_payload)
+        def list_products(self, **_kwargs: object) -> DouyinProductPage:
+            return DouyinProductPage((), None, 0)
 
-    def refresh() -> str:
+        def search_orders(self, *, page: int, **_kwargs: object) -> DouyinOrderPage:
+            return DouyinOrderPage((), page, 0)
+
+    principal, shop_id, external_shop_id, credential_id = context
+
+    def refresh(job_type: str) -> str:
         with Session(engine) as session:
-            shop = session.get(Shop, shop_id)
-            if shop is None:
-                raise RuntimeError("MySQL refresh race shop missing")
             service = DouyinSyncService(
                 session,
                 principal,
                 cipher,
-                client_factory=lambda _credentials: RefreshClient(external_shop_id),
+                client_factory=lambda credentials: RefreshClient(credentials, external_shop_id),
             )
             barrier.wait(timeout=10)
-            refreshed = service._refresh_credentials(
-                shop,
-                credential_id,
-                previous,
-                deadline_at=service.monotonic_clock() + 10,
+            run_kwargs: dict[str, Any] = {}
+            if job_type == "ORDERS.PULL":
+                run_kwargs = {
+                    "window_start": utcnow() - timedelta(days=1),
+                    "window_end": utcnow(),
+                }
+            result = service.run(
+                shop_id=shop_id,
+                job_type=job_type,
+                idempotency_key=f"mysql-expired-refresh-{job_type.lower()}",
+                **run_kwargs,
             )
-            return refreshed.access_token
+            return result.status.value
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        access_tokens = [
-            future.result(timeout=30) for future in [executor.submit(refresh) for _ in range(2)]
+        statuses = [
+            future.result(timeout=30)
+            for future in [
+                executor.submit(refresh, "PRODUCTS.PULL"),
+                executor.submit(refresh, "ORDERS.PULL"),
+            ]
         ]
-    if access_tokens != ["mysql-rotated-access", "mysql-rotated-access"]:
-        raise RuntimeError("MySQL Douyin concurrent refresh returned inconsistent credentials")
+    if statuses != ["SUCCESS", "SUCCESS"]:
+        raise RuntimeError(f"MySQL Douyin concurrent refresh jobs failed: {statuses}")
     if refresh_count["value"] != 1:
         raise RuntimeError(
             f"MySQL Douyin concurrent refresh called platform {refresh_count['value']} times"

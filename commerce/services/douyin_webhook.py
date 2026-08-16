@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from commerce.config import DouyinWebhookApplication
 from commerce.credentials import (
     CredentialCipher,
     CredentialDecryptionError,
@@ -21,9 +22,13 @@ from commerce.credentials import (
 from commerce.models import (
     CredentialStatus,
     OperationLog,
+    Organization,
     PlatformRawEvent,
     Shop,
+    ShopAuthorizationStatus,
+    ShopConnection,
     ShopCredential,
+    ShopStatus,
     utcnow,
 )
 from commerce.platforms.douyin import sign_webhook
@@ -59,20 +64,40 @@ class DouyinWebhookResult:
 @dataclass(frozen=True)
 class _VerifiedCredential:
     shop: Shop
-    app_secret: str
 
 
 class DouyinWebhookService:
     """Authenticate Douyin callbacks and durably enqueue their raw events."""
 
-    def __init__(self, session: Session, cipher: CredentialCipher) -> None:
+    def __init__(
+        self,
+        session: Session,
+        cipher: CredentialCipher,
+        applications: dict[str, DouyinWebhookApplication],
+    ) -> None:
         self.session = session
         self.cipher = cipher
+        self.applications = dict(applications)
 
     def ingest(self, *, raw_body: bytes, event_sign: str, app_id: str) -> DouyinWebhookResult:
         if not raw_body or len(raw_body) > MAX_WEBHOOK_BYTES:
             raise DouyinWebhookValidationError("抖音回调请求体无效")
-        if not app_id.strip() or len(app_id) > 128 or _HEX_SIGNATURE.fullmatch(event_sign) is None:
+        normalized_app_id = app_id.strip()
+        if (
+            not normalized_app_id
+            or len(normalized_app_id) > 128
+            or _HEX_SIGNATURE.fullmatch(event_sign) is None
+        ):
+            raise DouyinWebhookAuthenticationError("抖音回调认证失败")
+        application = self.applications.get(normalized_app_id)
+        if application is None:
+            raise DouyinWebhookAuthenticationError("抖音回调认证失败")
+        expected = sign_webhook(
+            app_id=normalized_app_id,
+            app_secret=application.app_secret,
+            raw_body=raw_body,
+        )
+        if not hmac.compare_digest(expected, event_sign.lower()):
             raise DouyinWebhookAuthenticationError("抖音回调认证失败")
         try:
             decoded = raw_body.decode("utf-8")
@@ -86,24 +111,25 @@ class DouyinWebhookService:
         ):
             raise DouyinWebhookValidationError("抖音回调事件批次无效")
         parsed = [self._parse_envelope(item) for item in envelopes]
-        shop_ids = {
-            str(item["data"]["shop_id"])
-            for item in parsed
-            if isinstance(item["data"], dict) and item["data"].get("shop_id") is not None
-        }
-        credentials = self._verified_credentials(
-            app_id=app_id.strip(),
-            event_sign=event_sign.lower(),
-            raw_body=raw_body,
-            external_shop_ids=shop_ids,
-        )
         ordinary = [item for item in parsed if item["tag"] != "0" or item["msg_id"] != "0"]
         if not ordinary:
-            if not credentials:
-                raise DouyinWebhookAuthenticationError("抖音回调认证失败")
             return DouyinWebhookResult(
                 received=len(parsed), inserted=0, duplicates=0, challenge=True
             )
+        shop_ids: set[str] = set()
+        for item in ordinary:
+            data = item["data"]
+            if not isinstance(data, dict) or data.get("shop_id") is None:
+                raise DouyinWebhookValidationError("抖音回调缺少店铺标识")
+            shop_ids.add(str(data["shop_id"]))
+        if not shop_ids.issubset(application.shop_organizations):
+            raise DouyinWebhookAuthenticationError("抖音回调店铺认证失败")
+        credentials = self._verified_credentials(
+            app_id=normalized_app_id,
+            external_shop_organizations={
+                shop_id: application.shop_organizations[shop_id] for shop_id in shop_ids
+            },
+        )
 
         inserted = 0
         duplicates = 0
@@ -157,62 +183,63 @@ class DouyinWebhookService:
         self,
         *,
         app_id: str,
-        event_sign: str,
-        raw_body: bytes,
-        external_shop_ids: set[str],
+        external_shop_organizations: dict[str, str],
     ) -> list[_VerifiedCredential]:
         app_hash = hashlib.sha256(app_id.encode()).hexdigest()
+        route_conditions = [
+            and_(
+                Shop.external_shop_id == external_shop_id,
+                Organization.slug == organization_slug,
+            )
+            for external_shop_id, organization_slug in external_shop_organizations.items()
+        ]
         statement = (
             select(ShopCredential, Shop)
             .join(Shop, Shop.id == ShopCredential.shop_id)
+            .join(Organization, Organization.id == Shop.organization_id)
+            .join(ShopConnection, ShopConnection.shop_id == Shop.id)
             .where(
                 func.upper(Shop.platform) == "DOUYIN",
+                Shop.status == ShopStatus.ACTIVE,
+                or_(
+                    ShopConnection.authorization_status == ShopAuthorizationStatus.AUTHORIZED,
+                    and_(
+                        ShopConnection.authorization_status
+                        == ShopAuthorizationStatus.REAUTH_REQUIRED,
+                        ShopConnection.authorization_error_code == "CREDENTIAL_EXPIRED",
+                    ),
+                ),
                 ShopCredential.credential_type == "OAUTH",
-                ShopCredential.status == CredentialStatus.ACTIVE,
-            )
-        )
-        if external_shop_ids:
-            statement = statement.where(
-                Shop.external_shop_id.in_(external_shop_ids),
+                ShopCredential.status.in_((CredentialStatus.ACTIVE, CredentialStatus.EXPIRED)),
+                or_(*route_conditions),
                 or_(
                     ShopCredential.public_identifier_hash == app_hash,
                     ShopCredential.public_identifier_hash.is_(None),
                 ),
             )
-        else:
-            statement = statement.where(ShopCredential.public_identifier_hash == app_hash)
-        candidates = list(self.session.execute(statement.limit(MAX_CREDENTIAL_CANDIDATES + 1)))
+        )
+        candidates = list(self.session.execute(statement))
         if len(candidates) > MAX_CREDENTIAL_CANDIDATES:
             raise DouyinWebhookAuthenticationError("抖音回调认证失败")
         verified: list[_VerifiedCredential] = []
-        now = utcnow()
         for credential, shop in candidates:
-            if credential.expires_at is not None:
-                expiry = credential.expires_at
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=UTC)
-                if expiry <= now:
+            if credential.public_identifier_hash is None:
+                try:
+                    payload = self.cipher.decrypt(
+                        EncryptedCredential(
+                            key_id=credential.key_id,
+                            nonce=credential.nonce,
+                            ciphertext=credential.encrypted_payload,
+                        ),
+                        shop_id=credential.shop_id,
+                        credential_type=credential.credential_type,
+                    )
+                except CredentialDecryptionError:
                     continue
-            try:
-                payload = self.cipher.decrypt(
-                    EncryptedCredential(
-                        key_id=credential.key_id,
-                        nonce=credential.nonce,
-                        ciphertext=credential.encrypted_payload,
-                    ),
-                    shop_id=credential.shop_id,
-                    credential_type=credential.credential_type,
-                )
-            except CredentialDecryptionError:
-                continue
-            secret = payload.get("app_secret")
-            if payload.get("app_key") != app_id or not secret:
-                continue
-            expected = sign_webhook(app_id=app_id, app_secret=secret, raw_body=raw_body)
-            if hmac.compare_digest(expected, event_sign):
-                if credential.public_identifier_hash is None:
-                    credential.public_identifier_hash = app_hash
-                verified.append(_VerifiedCredential(shop=shop, app_secret=secret))
+                if payload.get("app_key") != app_id:
+                    continue
+                credential.public_identifier_hash = app_hash
+            verified.append(_VerifiedCredential(shop=shop))
         return verified
 
     def _store_event(

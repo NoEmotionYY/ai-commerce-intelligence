@@ -74,9 +74,10 @@ centralized OWNER/OPERATOR/APPROVER permission matrix, and refuses shops outside
 organization. V2 shop routes authenticate signed bearer tokens before resolving the requested
 organization. Production rejects unscoped legacy `/api/*` routes; V2 shop reads/writes apply
 membership and permission checks. Agent Tool schemas do not expose organization/shop selectors
-to the LLM, but there is not yet a tenant-aware V2 commerce service behind them; production
-Agent tools therefore return a controlled unavailable error. Unified commerce domain APIs and
-end-to-end Agent tenant context remain TARGET.
+to the LLM, but the production Agent runtime is not yet wired to the implemented tenant-aware V2
+catalog/order/inventory/finance/purchasing/alert/task services; its commerce tools therefore return
+a controlled unavailable error. Those V2 domain services and APIs are CURRENT; end-to-end Agent
+tenant context remains TARGET.
 
 ## 3.2 CURRENT: Encrypted Shop Credentials
 
@@ -101,8 +102,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0013_data_imports`. Revisions `0003`
-through `0013`
+The repository has one Alembic head at `0014_douyin_webhook_lookup`. Revisions `0003`
+through `0014`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -130,6 +131,10 @@ Revision `0013` adds tenant-scoped DataImportJob and DataImportRecord staging/ev
 SQLite and disposable official MySQL 8.4 checks cover fresh install, `0012 -> 0013 -> 0012 ->
 0013`, count/status/file-format constraints, exact source/idempotency uniqueness, composite tenant
 foreign keys, and preservation of prior Shop/RawEvent data.
+Revision `0014` adds the non-reversible Douyin credential identifier lookup hash and supporting
+index. SQLite and disposable MySQL 8.4 checks cover `0013 -> 0014 -> 0013 -> 0014`, legacy
+identifier backfill behavior, credential ciphertext preservation, and existing tenant/raw-event
+data preservation. The explicit deployment backfill remains required for legacy NULL hashes.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -348,9 +353,13 @@ The Douyin-specific adapter implements the currently documented official Open Pl
 contract for product, order, after-sale, SKU stock, and token refresh. It pins the official HTTPS
 origin, signs canonical JSON with HMAC-SHA256, bounds response size, timeout, attempts,
 Retry-After, total request duration, and admission. Credential material remains encrypted and is
-never serialized in job/API results. Refresh holds the credential row lock, detects an already
-rotated token, otherwise refreshes once and updates encrypted material without resetting an
-authorized ShopConnection.
+never serialized in job/API results. Refresh uses a consistent shop/credential lock order, detects
+an already rotated token, otherwise refreshes once and updates encrypted material without resetting
+an authorized ShopConnection. When access-token expiry requires recovery, the connector creates
+and starts the SyncJob before refreshing; credential rotation, connection authorization, and
+audits commit atomically, while any failed refresh is recorded on that job. The request deadline
+bounds each HTTP timeout and retry/sleep and rejects a response received after the deadline; it
+does not hard-cancel a synchronous OS-level read.
 
 ```text
 authenticated bounded pull
@@ -379,11 +388,16 @@ fail closed. Orders, inventory, and refunds reuse their existing stale/idempoten
 
 The public webhook verifies `HMAC-SHA256(app_id + exact raw body + app_secret)`, accepts at most
 50 events, bounds body/depth/candidate/concurrency, rejects sensitive credential fields, and
-deduplicates `msg_id` per Shop. It persists immutable `RECEIVED` RawEvents and returns the official
-success envelope. Webhook-to-domain background consumption remains TARGET; pull reconciliation is
-the current authoritative update path. Legacy NULL app-key lookup hashes require the explicit,
-bounded `scripts/backfill_douyin_credential_identifiers.py` deployment step; ordinary callbacks
-retain only an external-shop-bounded compatibility lookup.
+deduplicates `msg_id` per Shop. Authentication uses the interim deployment-owned
+`DOUYIN_WEBHOOK_APPLICATIONS` application-secret registry and explicit external-shop-to-organization
+routes; it does not trust client-provided organization identity. A configuration change, new Shop,
+or Organization slug change requires synchronized deployment configuration and process restart.
+Only active shops and authorized connections (or re-authentication caused solely by token expiry)
+receive callbacks. It persists immutable `RECEIVED` RawEvents and returns the official success
+envelope. Webhook-to-domain background consumption remains TARGET; pull reconciliation is the
+current authoritative update path. Legacy NULL app-key lookup hashes require the explicit, bounded
+`scripts/backfill_douyin_credential_identifiers.py` deployment step; ordinary callbacks retain only
+an external-shop-bounded compatibility lookup.
 
 Verification state: `Implementation: PASS`; `Contract/Mock: PASS` at `L2 VERIFIED_LOCAL`;
 `Real Platform: IMPLEMENTED_UNVERIFIED`. No sandbox, real seller credential, developer approval,

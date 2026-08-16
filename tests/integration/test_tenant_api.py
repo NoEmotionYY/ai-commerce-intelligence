@@ -24,6 +24,7 @@ from commerce.models import (
     ShopCredential,
     User,
 )
+from commerce.platforms.douyin import sign_webhook
 
 
 class TenantClientContext(TypedDict):
@@ -216,6 +217,8 @@ def test_every_v2_business_route_rejects_missing_identity(tenant_client: TenantC
         for method in sorted(getattr(route, "methods", set())):
             if method in {"HEAD", "OPTIONS"}:
                 continue
+            if (method, path) == ("POST", "/api/v2/platforms/douyin/webhook"):
+                continue
             if method in {"POST", "PUT", "PATCH"}:
                 payload: object
                 if path.endswith("/status"):
@@ -232,6 +235,59 @@ def test_every_v2_business_route_rejects_missing_identity(tenant_client: TenantC
             checked.add((method, path))
 
     assert checked
+
+
+def test_douyin_webhook_uses_platform_signature_instead_of_bearer_identity(
+    tenant_client: TenantClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = tenant_client
+    settings = get_settings()
+    raw_body = b'{"event":"challenge","challenge":"signed-platform-callback"}'
+    monkeypatch.setattr(
+        settings,
+        "douyin_webhook_applications",
+        json.dumps(
+            {
+                "tenant-webhook-app": {
+                    "app_secret": "tenant-webhook-secret",
+                    "shop_organizations": {"a-shop": "tenant-api-a"},
+                }
+            }
+        ),
+    )
+
+    missing_signature = client.post(
+        "/api/v2/platforms/douyin/webhook",
+        content=raw_body,
+        headers={"app-id": "tenant-webhook-app", "content-type": "application/json"},
+    )
+    invalid_signature = client.post(
+        "/api/v2/platforms/douyin/webhook",
+        content=raw_body,
+        headers={
+            "app-id": "tenant-webhook-app",
+            "event-sign": "invalid-signature",
+            "content-type": "application/json",
+        },
+    )
+    assert missing_signature.status_code == 401
+    assert invalid_signature.status_code == 401
+
+    monkeypatch.setattr(settings, "douyin_webhook_applications", "{}")
+    unavailable = client.post(
+        "/api/v2/platforms/douyin/webhook",
+        content=raw_body,
+        headers={
+            "app-id": "unconfigured-app",
+            "event-sign": sign_webhook(
+                app_id="unconfigured-app",
+                app_secret="not-a-configured-secret",
+                raw_body=raw_body,
+            ),
+            "content-type": "application/json",
+        },
+    )
+    assert unavailable.status_code == 503
 
 
 def test_production_legacy_chat_denial_has_no_model_or_write_side_effect(

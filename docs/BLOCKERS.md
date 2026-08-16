@@ -27,6 +27,10 @@ are internal future scope and therefore remain `MISSING`, not `BLOCKED_EXTERNAL`
 developer approval, seller authorization, or platform access have not been confirmed unavailable
 and are not recorded as active blockers. `COM-P1-009` is the next internal implementation task.
 
+As of the final `COM-P1-008` Exit Review, active `BLOCKED_EXTERNAL` count is `0`. The final local
+and mock evidence does not substitute for real-platform verification; absence of a confirmed
+credential/approval/environment denial is intentionally not recorded as an external blocker.
+
 ---
 
 # Resolved Blockers

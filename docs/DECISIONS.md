@@ -555,3 +555,38 @@ focused/full, SQLite, and disposable MySQL 8.4 migration, data-preservation, web
 and token-refresh race gates. Real Douyin status is `IMPLEMENTED_UNVERIFIED`, not sandbox/real
 PASS. Scheduler/Worker, webhook domain consumption, and live seller validation remain future or
 external verification work. Phase 8 and `COM-P1-009` are next.
+
+## ADR-025 — Douyin Webhook Registry and Atomic Expired-Token Recovery
+
+Date: 2026-08-17
+Status: ACCEPTED
+
+Context: Anonymous platform callbacks cannot safely choose a tenant by trusting a shop or
+organization value in the request. The prior per-shop credential scan also made challenge
+authentication dependent on access-token freshness and did not provide a bounded server-owned
+route for shared applications. Separately, refreshing an expired token before creating a SyncJob
+could hide a failed refresh and could commit an ACTIVE credential before restoring the connection.
+
+Decision: Use the deployment-owned `DOUYIN_WEBHOOK_APPLICATIONS` registry. Each configured app
+contains an app secret and an explicit `external_shop_id -> organization_slug` route. Verify the
+exact raw-body signature first, then resolve the mapped Shop and Organization together; client
+identity claims are never authoritative. Accept only active Shops with authorized connections or
+`REAUTH_REQUIRED/CREDENTIAL_EXPIRED` connections. This registry is an interim deployment contract:
+configuration drift, new shops, and organization slug changes require coordinated configuration
+updates and process restart; it is not a replacement for a future persisted connection registry.
+
+For access-token expiry, create and start the SyncJob before attempting refresh. Hold shop and
+credential locks in a consistent order. Rotate encrypted credentials with `commit=False`, then
+record connection authorization and all operation audits in the same commit. Any refresh or
+authorization failure rolls back the rotation and finishes the started job as `FAILED`. The HTTP
+deadline is enforced as per-request timeout plus retry/sleep budget and rejects late responses; it
+does not claim hard cancellation of a synchronous network read.
+
+Reasoning: Server-owned routing closes cross-tenant forgery and avoids scanning arbitrary tenant
+credentials. A single transaction prevents half-authorized state and makes failures observable in
+the existing SyncJob lifecycle. The bounded deadline semantics are honest about synchronous HTTP
+limitations while protecting shared worker time.
+
+Consequences: Webhook contract/mock verification remains `PASS` / `VERIFIED_MOCK`; real Douyin
+verification remains `IMPLEMENTED_UNVERIFIED`; no external blocker is recorded. A future persisted
+application/route registry and asynchronous webhook consumer are separate internal work.

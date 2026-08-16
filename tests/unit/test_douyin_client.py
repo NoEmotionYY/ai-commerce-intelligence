@@ -234,6 +234,55 @@ def test_read_retry_classifies_platform_errors_and_honors_retry_after() -> None:
     assert retry_after_sleeps == [1.5]
 
 
+def test_request_timeout_and_retry_sleep_are_bounded_by_total_deadline() -> None:
+    requests: list[httpx.Request] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(429, headers={"Retry-After": "0.6"})
+
+    client = DouyinAPIClient(
+        _credentials(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        max_attempts=2,
+        sleeper=sleeps.append,
+        clock=lambda: float(TIMESTAMP),
+        monotonic_clock=lambda: 10.0,
+    )
+    client.set_request_deadline(10.5)
+    with pytest.raises(DouyinTransportError) as error:
+        client.search_orders(page=0)
+    assert error.value.error_code == "DOUYIN_SYNC_DEADLINE_EXCEEDED"
+    assert len(requests) == 1
+    timeout = requests[0].extensions["timeout"]
+    assert isinstance(timeout, dict)
+    assert 0 < timeout["read"] <= 0.5
+    assert sleeps == []
+
+
+def test_success_response_arriving_after_total_deadline_is_rejected() -> None:
+    monotonic = {"value": 10.0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        monotonic["value"] = 10.6
+        return _response({"code": 10000, "data": {"data": [], "total": 0}})
+
+    client = DouyinAPIClient(
+        _credentials(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        max_attempts=1,
+        clock=lambda: float(TIMESTAMP),
+        monotonic_clock=lambda: monotonic["value"],
+    )
+    client.set_request_deadline(10.5)
+
+    with pytest.raises(DouyinTransportError) as error:
+        client.search_orders(page=0)
+
+    assert error.value.error_code == "DOUYIN_SYNC_DEADLINE_EXCEEDED"
+
+
 def test_auth_and_transport_errors_do_not_leak_tokens_or_platform_messages() -> None:
     secret_message = f"expired {ACCESS_TOKEN} {REFRESH_TOKEN}"
     auth_client = DouyinAPIClient(

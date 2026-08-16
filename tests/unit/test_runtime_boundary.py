@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from commerce.authorization import TenantContext
 from commerce.competitor_site import app as competitor_app
-from commerce.config import RuntimeConfigurationError, get_settings
+from commerce.config import RuntimeConfigurationError, Settings, get_settings
 from commerce.crawler_api import app as crawler_app
 from commerce.erp_api import app as erp_app
 from commerce.models import Product, utcnow
@@ -102,6 +103,26 @@ def test_production_rejects_mock_service_urls() -> None:
         settings.require_service("erp")
     with pytest.raises(RuntimeConfigurationError, match="真实 crawler"):
         settings.require_service("crawler")
+
+
+def test_douyin_webhook_application_registry_is_explicit_and_secret_safe() -> None:
+    with pytest.raises(RuntimeConfigurationError, match="Webhook 应用配置"):
+        _ = Settings(douyin_webhook_applications="").douyin_webhook_registry
+    settings = Settings(
+        douyin_webhook_applications=json.dumps(
+            {
+                "public-app-id": {
+                    "app_secret": "never-render-this-secret",
+                    "shop_organizations": {
+                        "external-shop-1": "merchant-one",
+                    },
+                }
+            }
+        )
+    )
+    application = settings.douyin_webhook_registry["public-app-id"]
+    assert application.shop_organizations == {"external-shop-1": "merchant-one"}
+    assert "never-render-this-secret" not in repr(application)
 
 
 def test_production_agent_tools_do_not_fall_back_to_legacy_services(

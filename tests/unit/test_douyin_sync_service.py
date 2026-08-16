@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from commerce.credentials import CredentialCipher, CredentialService
 from commerce.models import (
     ChannelInventory,
     CommerceOrder,
+    CredentialStatus,
     MasterProduct,
     MembershipRole,
     Organization,
@@ -21,11 +22,14 @@ from commerce.models import (
     RawEventStatus,
     Refund,
     Shop,
+    ShopAuthorizationStatus,
     ShopCapabilityStatus,
+    ShopConnection,
     ShopCredential,
     SyncJob,
     SyncJobStatus,
     User,
+    utcnow,
 )
 from commerce.platforms.douyin import (
     DouyinAPIClient,
@@ -39,7 +43,11 @@ from commerce.platforms.douyin import (
 )
 from commerce.services.catalog import CatalogService
 from commerce.services.douyin_sync import DouyinSyncExecutionError, DouyinSyncService
-from commerce.services.ingestion import IngestionConflictError, IngestionService
+from commerce.services.ingestion import (
+    IngestionConflictError,
+    IngestionService,
+    IngestionTransitionError,
+)
 from commerce.services.shop_connection import ShopConnectionService
 
 WINDOW_START = datetime.fromtimestamp(1_699_999_000, UTC)
@@ -607,6 +615,181 @@ def test_authentication_failure_refreshes_and_encrypts_rotated_token(
     serialized = f"{credential.encrypted_payload!r} {result.checkpoint!r}"
     assert old_payload["access_token"] not in serialized
     assert "rotated-access-token" not in serialized
+
+
+def test_expired_access_token_refreshes_before_sync_readiness_check(
+    db_session: Session,
+) -> None:
+    cipher = CredentialCipher({"v1": b"r" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    credential = db_session.query(ShopCredential).one()
+    credential.expires_at = utcnow() - timedelta(seconds=1)
+    db_session.commit()
+
+    class RefreshClient(StubDouyinClient):
+        def refresh_access_token(self) -> DouyinTokenSet:
+            return DouyinTokenSet(
+                access_token="preflight-access-token",
+                refresh_token="preflight-refresh-token",
+                expires_in=3600,
+                shop_id=shop.external_shop_id,
+                shop_name=shop.name,
+                scope="PRODUCT_READ",
+            )
+
+    clients: list[DouyinAPIClient] = [
+        RefreshClient(),
+        StubDouyinClient(products=[DouyinProductPage((), None, 0)]),
+    ]
+
+    result = DouyinSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=lambda _credentials: clients.pop(0),
+    ).run(
+        shop_id=shop.id,
+        job_type="PRODUCTS.PULL",
+        idempotency_key="douyin-expired-preflight-refresh",
+    )
+    assert result.status is SyncJobStatus.SUCCESS
+    db_session.refresh(credential)
+    assert credential.status is CredentialStatus.ACTIVE
+    assert credential.expires_at is not None
+    expires_at = credential.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    assert expires_at > utcnow()
+    connection = db_session.query(ShopConnection).filter_by(shop_id=shop.id).one()
+    assert connection.authorization_status is ShopAuthorizationStatus.AUTHORIZED
+    assert clients == []
+
+
+def test_expired_access_token_without_refresh_token_fails_closed(
+    db_session: Session,
+) -> None:
+    cipher = CredentialCipher({"v1": b"n" * 32}, "v1")
+    principal, shop, _, payload = _tenant(db_session, cipher)
+    payload.pop("refresh_token")
+    credential = db_session.query(ShopCredential).one()
+    encrypted = cipher.encrypt(payload, shop_id=shop.id, credential_type="OAUTH")
+    credential.key_id = encrypted.key_id
+    credential.nonce = encrypted.nonce
+    credential.encrypted_payload = encrypted.ciphertext
+    credential.expires_at = utcnow() - timedelta(seconds=1)
+    db_session.commit()
+
+    class MissingRefreshClient(StubDouyinClient):
+        def refresh_access_token(self) -> DouyinTokenSet:
+            raise DouyinAuthenticationError(
+                "missing refresh token",
+                error_code="DOUYIN_REFRESH_TOKEN_MISSING",
+            )
+
+    def factory(credentials: DouyinCredentials) -> DouyinAPIClient:
+        assert credentials.refresh_token is None
+        return MissingRefreshClient()
+
+    with pytest.raises(DouyinSyncExecutionError) as error:
+        DouyinSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=factory,
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="douyin-expired-without-refresh",
+        )
+    assert error.value.error_code == "DOUYIN_REFRESH_TOKEN_MISSING"
+    job = db_session.query(SyncJob).one()
+    assert job.status is SyncJobStatus.FAILED
+    assert job.last_error == "PLATFORM.FAILURE"
+
+
+def test_expired_token_rotation_and_connection_recovery_are_atomic(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cipher = CredentialCipher({"v1": b"a" * 32}, "v1")
+    principal, shop, _, original_payload = _tenant(db_session, cipher)
+    credential = db_session.query(ShopCredential).one()
+    connection = db_session.query(ShopConnection).filter_by(shop_id=shop.id).one()
+    credential.status = CredentialStatus.EXPIRED
+    credential.expires_at = utcnow() - timedelta(seconds=1)
+    connection.authorization_status = ShopAuthorizationStatus.REAUTH_REQUIRED
+    connection.authorization_verified_at = None
+    connection.authorization_error_code = "CREDENTIAL_EXPIRED"
+    original_ciphertext = credential.encrypted_payload
+    db_session.commit()
+
+    class RefreshClient(StubDouyinClient):
+        def refresh_access_token(self) -> DouyinTokenSet:
+            return DouyinTokenSet(
+                access_token="must-rollback-access-token",
+                refresh_token="must-rollback-refresh-token",
+                expires_in=3600,
+                shop_id=shop.external_shop_id,
+                shop_name=shop.name,
+                scope="PRODUCT_READ",
+            )
+
+    def fail_connection_recovery(_service: ShopConnectionService, _shop_id: int) -> None:
+        raise RuntimeError("simulated authorization recovery failure")
+
+    monkeypatch.setattr(ShopConnectionService, "record_authorized", fail_connection_recovery)
+
+    with pytest.raises(DouyinSyncExecutionError) as error:
+        DouyinSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=lambda _credentials: RefreshClient(),
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="douyin-atomic-refresh-rollback",
+        )
+
+    assert error.value.error_code == "DOUYIN_SYNC_INTERNAL"
+    db_session.refresh(credential)
+    db_session.refresh(connection)
+    assert credential.status is CredentialStatus.EXPIRED
+    assert credential.encrypted_payload == original_ciphertext
+    assert connection.authorization_status is ShopAuthorizationStatus.REAUTH_REQUIRED
+    assert connection.authorization_error_code == "CREDENTIAL_EXPIRED"
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
+    restored = CredentialService(db_session, principal, cipher).decrypt_for_platform_refresh(
+        credential.id
+    )
+    assert restored["access_token"] == original_payload["access_token"]
+
+
+@pytest.mark.parametrize("status", [CredentialStatus.REVOKED, CredentialStatus.INVALID])
+def test_revoked_or_invalid_credential_never_enters_refresh(
+    db_session: Session,
+    status: CredentialStatus,
+) -> None:
+    cipher = CredentialCipher({"v1": b"v" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    credential = db_session.query(ShopCredential).one()
+    credential.status = status
+    credential.expires_at = utcnow() - timedelta(seconds=1)
+    db_session.commit()
+
+    def forbidden_factory(_credentials: DouyinCredentials) -> DouyinAPIClient:
+        raise AssertionError("revoked/invalid credentials must not reach the platform client")
+
+    with pytest.raises(IngestionTransitionError):
+        DouyinSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=forbidden_factory,
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key=f"douyin-{status.value.lower()}-no-refresh",
+        )
 
 
 def test_product_snapshot_deactivates_missing_skus_and_ignores_stale_events(

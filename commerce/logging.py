@@ -7,11 +7,11 @@ from typing import Any
 
 REDACTED = "***REDACTED***"
 SENSITIVE_FIELD_PATTERN = re.compile(
-    r"(^|_)(authorization|credential|credentials|password|secret|token|api_key|signing_key|encryption_key|private_key)($|_)",
+    r"(^|_)(authorization|credential|credentials|password|secret|token|api_key|sign|signature|signing_key|encryption_key|private_key)($|_)",
     re.IGNORECASE,
 )
 SENSITIVE_TEXT_PATTERN = re.compile(
-    r"(?i)((?:access|refresh|service|api)?_?(?:token|secret|password|authorization|credential)\s*[=:]\s*)([^\s,;]+)"
+    r"(?i)((?:access|refresh|service|api|event)?_?(?:token|secret|password|authorization|credential|sign|signature)\s*[=:]\s*)([^&\s,;]+)"
 )
 
 
@@ -32,9 +32,13 @@ class SecretRedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, dict):
             record.msg = redact_sensitive(record.msg)
-        elif isinstance(record.msg, str):
-            record.msg = SENSITIVE_TEXT_PATTERN.sub(rf"\1{REDACTED}", record.msg)
         record.args = redact_sensitive(record.args)
+        try:
+            rendered = record.getMessage()
+        except Exception:
+            rendered = "log message redacted after unsafe formatting"
+        record.msg = SENSITIVE_TEXT_PATTERN.sub(rf"\1{REDACTED}", rendered)
+        record.args = ()
         return True
 
 
@@ -47,3 +51,5 @@ def configure_logging(level: str = "INFO") -> None:
     )
     for handler in logging.getLogger().handlers:
         handler.addFilter(SecretRedactionFilter())
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

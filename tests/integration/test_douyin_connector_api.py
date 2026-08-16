@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from collections.abc import Generator
 
@@ -13,18 +14,22 @@ import commerce.agent_api as agent_api
 from commerce.agent_api import app
 from commerce.authentication import issue_access_token
 from commerce.authorization import Principal
-from commerce.config import get_settings
+from commerce.config import Settings, get_settings
 from commerce.credentials import CredentialCipher, CredentialService
 from commerce.database import get_session
 from commerce.models import (
+    CredentialStatus,
     MembershipRole,
     OperationLog,
     Organization,
     OrganizationMembership,
     PlatformRawEvent,
     Shop,
+    ShopAuthorizationStatus,
     ShopCapabilityStatus,
+    ShopConnection,
     ShopCredential,
+    ShopStatus,
     User,
 )
 from commerce.platforms.douyin import (
@@ -68,6 +73,18 @@ def douyin_api_client(
         json.dumps({"v1": base64.b64encode(key).decode()}),
     )
     monkeypatch.setattr(settings, "credential_active_key_id", "v1")
+    monkeypatch.setattr(
+        settings,
+        "douyin_webhook_applications",
+        json.dumps(
+            {
+                "api-app-key": {
+                    "app_secret": "api-app-secret",
+                    "shop_organizations": {"douyin-api-shop": "douyin-api"},
+                }
+            }
+        ),
+    )
     organization = Organization(slug="douyin-api", name="Douyin API")
     other_organization = Organization(slug="douyin-api-other", name="Douyin API Other")
     owner = User(email="douyin-api-owner@example.com", display_name="Owner")
@@ -146,6 +163,9 @@ def douyin_api_client(
             "owner_token": issue_access_token(owner.id, settings.auth_signing_key),
             "operator_token": issue_access_token(operator.id, settings.auth_signing_key),
             "failing": failing,
+            "principal": principal,
+            "cipher": cipher,
+            "settings": settings,
         },
     )
     app.dependency_overrides.clear()
@@ -288,6 +308,187 @@ def test_douyin_webhook_verifies_exact_body_and_deduplicates_raw_events(
     serialized = f"{raw_event.payload} {audit.tool_input} {audit.tool_output}"
     for secret in ("api-app-key", "api-app-secret", "api-access-token", "api-refresh-token"):
         assert secret not in serialized
+
+
+def test_douyin_application_challenge_scales_beyond_fifty_authorized_shops(
+    douyin_api_client: tuple[TestClient, dict[str, object]], db_session: Session
+) -> None:
+    client, context = douyin_api_client
+    cipher = context["cipher"]
+    assert isinstance(cipher, CredentialCipher)
+    organization_id = context["organization_id"]
+    assert isinstance(organization_id, int)
+    base_credential = db_session.query(ShopCredential).one()
+    base_credential.status = CredentialStatus.EXPIRED
+    extra_shops = [
+        Shop(
+            organization_id=organization_id,
+            name=f"Douyin Challenge Shop {index}",
+            platform="DOUYIN",
+            external_shop_id=f"douyin-challenge-shop-{index}",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        )
+        for index in range(50)
+    ]
+    db_session.add_all(extra_shops)
+    db_session.flush()
+    app_hash = hashlib.sha256(b"api-app-key").hexdigest()
+    for index, shop in enumerate(extra_shops):
+        encrypted = cipher.encrypt(
+            {
+                "app_key": "api-app-key",
+                "app_secret": "wrong-tenant-secret" if index == 0 else "api-app-secret",
+                "access_token": f"challenge-access-{shop.id}",
+                "refresh_token": f"challenge-refresh-{shop.id}",
+            },
+            shop_id=shop.id,
+            credential_type="OAUTH",
+        )
+        db_session.add(
+            ShopCredential(
+                shop_id=shop.id,
+                credential_type="OAUTH",
+                public_identifier_hash=app_hash,
+                key_id=encrypted.key_id,
+                nonce=encrypted.nonce,
+                encrypted_payload=encrypted.ciphertext,
+                status=CredentialStatus.ACTIVE,
+            )
+        )
+    db_session.commit()
+    settings = context["settings"]
+    assert isinstance(settings, Settings)
+    shop_organizations = {
+        "douyin-api-shop": "douyin-api",
+        **{shop.external_shop_id: "douyin-api" for shop in extra_shops},
+        **{f"configured-shop-{index}": "douyin-api" for index in range(449)},
+    }
+    settings.douyin_webhook_applications = json.dumps(
+        {
+            "api-app-key": {
+                "app_secret": "api-app-secret",
+                "shop_organizations": shop_organizations,
+            }
+        }
+    )
+    assert len(settings.douyin_webhook_registry["api-app-key"].shop_organizations) == 500
+
+    challenge = _webhook_request(
+        client,
+        [{"tag": "0", "msg_id": "0", "data": "2026-08-16T20:00:00+08:00"}],
+    )
+    assert challenge.status_code == 200
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+
+def test_douyin_webhook_server_owned_route_ignores_cross_tenant_forgery(
+    douyin_api_client: tuple[TestClient, dict[str, object]], db_session: Session
+) -> None:
+    client, context = douyin_api_client
+    cipher = context["cipher"]
+    other_organization_id = context["other_organization_id"]
+    assert isinstance(cipher, CredentialCipher)
+    assert isinstance(other_organization_id, int)
+    forged_shop = Shop(
+        organization_id=other_organization_id,
+        name="Forged Douyin Route",
+        platform="DOUYIN",
+        external_shop_id="douyin-api-shop",
+        country_code="CN",
+        currency="CNY",
+        timezone="Asia/Shanghai",
+    )
+    db_session.add(forged_shop)
+    db_session.flush()
+    encrypted = cipher.encrypt(
+        {
+            "app_key": "api-app-key",
+            "app_secret": "forged-app-secret",
+            "access_token": "forged-access-token",
+            "refresh_token": "forged-refresh-token",
+        },
+        shop_id=forged_shop.id,
+        credential_type="OAUTH",
+    )
+    db_session.add_all(
+        [
+            ShopConnection(
+                organization_id=other_organization_id,
+                shop_id=forged_shop.id,
+                authorization_status=ShopAuthorizationStatus.AUTHORIZED,
+            ),
+            ShopCredential(
+                shop_id=forged_shop.id,
+                credential_type="OAUTH",
+                public_identifier_hash=hashlib.sha256(b"api-app-key").hexdigest(),
+                key_id=encrypted.key_id,
+                nonce=encrypted.nonce,
+                encrypted_payload=encrypted.ciphertext,
+                status=CredentialStatus.ACTIVE,
+            ),
+        ]
+    )
+    db_session.commit()
+    event = [
+        {
+            "tag": "106",
+            "msg_id": "douyin-server-owned-route",
+            "data": json.dumps(
+                {"shop_id": "douyin-api-shop", "order_id": "ORDER-ROUTED"},
+                separators=(",", ":"),
+            ),
+        }
+    ]
+    assert _webhook_request(client, event).status_code == 200
+    raw_event = db_session.query(PlatformRawEvent).one()
+    assert raw_event.organization_id == context["organization_id"]
+    assert raw_event.shop_id == context["shop_id"]
+
+
+def test_douyin_webhook_rejects_disabled_revoked_or_unverified_shop_routes(
+    douyin_api_client: tuple[TestClient, dict[str, object]], db_session: Session
+) -> None:
+    client, context = douyin_api_client
+    event = [
+        {
+            "tag": "105",
+            "msg_id": "douyin-disabled-shop-event",
+            "data": json.dumps(
+                {"shop_id": "douyin-api-shop", "order_id": "ORDER-DISABLED"},
+                separators=(",", ":"),
+            ),
+        }
+    ]
+    shop_id = context["shop_id"]
+    assert isinstance(shop_id, int)
+    shop = db_session.get(Shop, shop_id)
+    assert shop is not None
+    shop.status = ShopStatus.DISABLED
+    db_session.commit()
+    assert _webhook_request(client, event).status_code == 401
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+    shop.status = ShopStatus.ACTIVE
+    connection = db_session.query(ShopConnection).filter_by(shop_id=shop.id).one()
+    connection.authorization_status = ShopAuthorizationStatus.REVOKED
+    db_session.commit()
+    assert _webhook_request(client, event).status_code == 401
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+    connection.authorization_status = ShopAuthorizationStatus.REAUTH_REQUIRED
+    connection.authorization_error_code = "CREDENTIAL_INVALID"
+    db_session.commit()
+    assert _webhook_request(client, event).status_code == 401
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+    credential = db_session.query(ShopCredential).filter_by(shop_id=shop.id).one()
+    credential.status = CredentialStatus.EXPIRED
+    connection.authorization_error_code = "CREDENTIAL_EXPIRED"
+    db_session.commit()
+    assert _webhook_request(client, event).status_code == 200
+    assert db_session.query(PlatformRawEvent).count() == 1
 
 
 def test_douyin_webhook_rejects_invalid_signature_and_conflicting_replay(

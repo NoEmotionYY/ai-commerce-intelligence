@@ -231,6 +231,7 @@ class DouyinAPIClient:
         transport: httpx.BaseTransport | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not 1 <= max_attempts <= 5:
             raise ValueError("max_attempts must be between 1 and 5")
@@ -266,6 +267,9 @@ class DouyinAPIClient:
         self.max_attempts = max_attempts
         self.sleeper = sleeper
         self.clock = clock
+        self.monotonic_clock = monotonic_clock
+        self.timeout_seconds = timeout_seconds
+        self.request_deadline_at: float | None = None
         self._owns_client = client is None
         self._client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
@@ -283,6 +287,29 @@ class DouyinAPIClient:
     def close(self) -> None:
         if self._owns_client:
             self._client.close()
+
+    def set_request_deadline(
+        self,
+        deadline_at: float,
+        *,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if not math.isfinite(deadline_at):
+            raise ValueError("deadline_at must be finite")
+        self.request_deadline_at = deadline_at
+        if clock is not None:
+            self.monotonic_clock = clock
+
+    def _remaining_timeout(self) -> float | None:
+        if self.request_deadline_at is None:
+            return None
+        remaining = self.request_deadline_at - self.monotonic_clock()
+        if remaining <= 0:
+            raise DouyinTransportError(
+                "抖音同步超过总耗时限制",
+                error_code="DOUYIN_SYNC_DEADLINE_EXCEEDED",
+            )
+        return min(self.timeout_seconds, remaining)
 
     def request(
         self,
@@ -320,12 +347,15 @@ class DouyinAPIClient:
             if include_access_token:
                 query["access_token"] = self.credentials.access_token
             try:
+                request_timeout = self._remaining_timeout() or self.timeout_seconds
                 response = self._client.post(
                     self._base_url + path,
                     params=query,
                     content=body.encode("utf-8"),
                     headers={"Content-Type": "application/json; charset=utf-8"},
+                    timeout=request_timeout,
                 )
+                self._remaining_timeout()
                 return self._parse_response(response)
             except DouyinConnectorError as exc:
                 last_error = exc
@@ -340,9 +370,17 @@ class DouyinAPIClient:
                 )
                 if attempt == self.max_attempts:
                     raise last_error from None
-            self.sleeper(
+            delay = (
                 retry_delay if retry_delay is not None else min(0.25 * (2 ** (attempt - 1)), 2.0)
             )
+            if self.request_deadline_at is not None:
+                remaining = self.request_deadline_at - self.monotonic_clock()
+                if delay >= remaining:
+                    raise DouyinTransportError(
+                        "抖音同步超过总耗时限制",
+                        error_code="DOUYIN_SYNC_DEADLINE_EXCEEDED",
+                    )
+            self.sleeper(delay)
         assert last_error is not None
         raise last_error
 

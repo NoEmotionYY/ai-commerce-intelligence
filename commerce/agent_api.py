@@ -877,6 +877,7 @@ def douyin_sync_http_error(exc: Exception) -> HTTPException:
         elif exc.error_code in {
             "DOUYIN_CREDENTIAL_MISSING",
             "DOUYIN_CREDENTIAL_UNAVAILABLE",
+            "DOUYIN_REFRESH_TOKEN_MISSING",
         }:
             status = 503
         else:
@@ -908,11 +909,13 @@ def _douyin_sync_service(session: Session, principal: Principal) -> DouyinSyncSe
 
 
 def _douyin_webhook_service(session: Session) -> DouyinWebhookService:
+    settings = get_settings()
     try:
-        cipher = CredentialCipher.from_settings(get_settings())
-    except CredentialConfigurationError as exc:
-        raise HTTPException(503, "店铺凭据加密服务未配置") from exc
-    return DouyinWebhookService(session, cipher)
+        cipher = CredentialCipher.from_settings(settings)
+        applications = settings.douyin_webhook_registry
+    except (CredentialConfigurationError, RuntimeConfigurationError) as exc:
+        raise HTTPException(503, "抖音回调认证服务未配置") from exc
+    return DouyinWebhookService(session, cipher, applications)
 
 
 def order_import_http_error(exc: Exception) -> HTTPException:

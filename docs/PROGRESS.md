@@ -7,7 +7,7 @@ Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`)
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
 Last completed top-level task: `COM-P1-008` — Douyin Connector
 Current verification slice: `COM-P1-009A` — TikTok Shop Contract Discovery (`TODO`)
-Last verified checkpoint: `COM-P1-008` (local commit follows this evidence record)
+Last verified checkpoint: `COM-P1-008` final Exit Review (local checkpoint recorded with this evidence)
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1179,7 +1179,7 @@ Status:
 - The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not prove or block
   file-import behavior and will be executed at the corresponding productization/release phases.
 
-## 2026-08-16 — COM-P1-008 Douyin Connector Exit
+## 2026-08-16 — COM-P1-008 Douyin Connector Initial Exit Evidence
 
 Scope completed:
 
@@ -1222,8 +1222,7 @@ Formal Exit Review:
 
 Commands and evidence:
 
-- Focused Douyin/credential/catalog/ingestion/migration suite: `96 passed, 1 warning`.
-- `python -m pytest -q`: `325 passed, 18 skipped, 1 warning`.
+- Initial focused/full evidence in this section was superseded by the final re-run below.
 - `ruff check .`: PASS; `ruff format --check .`: PASS (`132 files already formatted`).
 - `mypy .`: PASS (`103 source files`).
 - `alembic heads`: one head, `0014_douyin_webhook_lookup`; `git diff --check`: PASS.
@@ -1242,3 +1241,55 @@ Status:
 - P0 remaining: 0; P1 remaining: 2; active `BLOCKED_EXTERNAL`: 0.
 - The 18 Compose/browser/DeepSeek environment-gated skips remain not PASS and will be reevaluated in
   their corresponding productization/release phases.
+
+## 2026-08-17 — COM-P1-008 Final Exit Review and State Reconciliation
+
+Exit review scope:
+
+- Product: Douyin product/SKU/order/inventory/refund pulls operate on arbitrary tenant shops and
+  real-shaped payloads; no fixed Demo identity or Mock ERP participates. Real seller verification is
+  intentionally separate.
+- Architecture: `SyncJob -> PlatformRawEvent -> normalization -> trusted domain service` remains
+  the production data path. Douyin remains a platform-specific adapter; scheduler/Worker and
+  webhook domain consumer remain TARGET. Alembic has one head at `0014_douyin_webhook_lookup`.
+- Security: credentials are encrypted and redacted; tenant/shop routing is server-owned; disabled,
+  revoked, invalid, and cross-tenant routes fail closed; only authorized or token-expiry reauth
+  connections accept callbacks; no unresolved Critical/High finding remains.
+- Reliability: expired-token refresh is performed after a `SyncJob` is created and started. Shop,
+  credential, connection, and refresh audits commit atomically, while refresh failures leave a
+  visible `FAILED` job. Pulls use bounded per-request deadline budgets and reject late responses;
+  synchronous HTTP is not claimed to have Worker-level hard cancellation. Duplicate/retry/stale
+  event behavior, high-water/checkpoint continuation, and webhook replay are covered.
+- Testing: inventory/order/refund/catalog normalization, API/tenant/permission boundaries,
+  credential leakage, stale/idempotent events, migration, webhook, and concurrency evidence all
+  pass. Product, Architecture, Security, and Testing reviews found no unresolved Critical/High.
+
+Commands and final evidence:
+
+```powershell
+python -m pytest -q tests/unit/test_douyin_client.py tests/unit/test_douyin_sync_service.py tests/integration/test_douyin_connector_api.py tests/integration/test_tenant_api.py
+```
+
+- Focused result: `52 passed, 1 warning`.
+- Broader connector-adjacent SQLite slice (catalog/order/inventory/finance/ingestion/credentials/
+  migration plus Douyin/API suites): `180 passed, 1 warning`.
+- `python -m pytest -q`: `338 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`132 files already formatted`); `mypy .`:
+  PASS (`103 source files`); `alembic heads`: one head, `0014_douyin_webhook_lookup`;
+  `git diff --check`: PASS.
+- Disposable MySQL 8.4 root verifier: PASS for fresh install, `0013 -> 0014 -> 0013 -> 0014`,
+  constraints, data preservation, webhook idempotency race, and cross-job-type single-refresh
+  race. An initial least-privileged test-user attempt was rejected by MySQL because the verifier
+  reads `performance_schema.data_lock_waits`; the isolated rerun used only the temporary instance
+  root account and passed. Both temporary containers were removed; the existing Compose database
+  was not touched.
+
+Status:
+
+- `COM-P1-008`: `DONE`; Implementation `PASS`; Contract/Mock `PASS` / `VERIFIED_MOCK`; Real
+  Platform `IMPLEMENTED_UNVERIFIED`.
+- Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`; current task: `COM-P1-009` (`TODO`); next task:
+  `COM-P1-010`.
+- P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.
+- The 18 Compose/browser/DeepSeek skips are not PASS and do not block Douyin local/mock exit; they
+  will be reevaluated at their corresponding productization/release phases.

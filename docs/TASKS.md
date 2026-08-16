@@ -9,8 +9,9 @@ Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
 Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
 `COM-P1-008` passed Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. The current full suite is `325 passed, 18 skipped, 1 warning`; focused Douyin/credential/
-ingestion/catalog/migration tests are `96 passed`; Ruff, format, MyPy, `git diff --check`, SQLite,
+Review. The current full suite is `338 passed, 18 skipped, 1 warning`; the focused connector/API
+boundary slice is `52 passed, 1 warning`; the broader connector-adjacent SQLite slice is
+`180 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite,
 and MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus webhook/token concurrency
 gates pass. Implementation and contract/mock verification pass; real-platform verification is
 `IMPLEMENTED_UNVERIFIED`, not `VERIFIED_REAL`.
@@ -699,9 +700,15 @@ Acceptance: contract behavior passes; real verification is separately labelled.
 Verification: official endpoint/signature contract fixtures, normalization, tenant/permission,
 credential rotation/leakage, request identity, bounded continuation/deadline/admission, RawEvent
 dedupe, stale/equal-time product reconciliation, API, SQLite migration, and MySQL webhook/token
-concurrency pass. `Implementation: PASS`; `Contract/Mock: PASS`; `Real Platform:
-IMPLEMENTED_UNVERIFIED`. Pull execution remains bounded request-time chunks with explicit
-continuation; webhook callbacks durably enqueue RawEvents and do not claim an implemented worker.
+concurrency pass. The final focused slice is `52 passed, 1 warning`; full pytest is `338 passed,
+18 skipped, 1 warning`; `ruff check .`, `ruff format --check .`, `mypy .`, `alembic heads`, and
+`git diff --check` pass. The disposable MySQL 8.4 verifier passes fresh install,
+`0013 -> 0014 -> 0013 -> 0014`, data preservation, webhook deduplication race, and cross-job-type
+single-refresh race. `Implementation: PASS`; `Contract/Mock: PASS`; `Real Platform:
+IMPLEMENTED_UNVERIFIED`. Pull execution remains bounded request-time chunks; expired-token refresh
+runs inside a started SyncJob and atomically commits credential/connection/audit state or leaves a
+FAILED job. Webhook authentication uses the interim deployment-owned registry and durably enqueues
+RawEvents; it does not claim an implemented worker.
 
 ### COM-P1-009 — TikTok Shop Connector
 Priority: P1

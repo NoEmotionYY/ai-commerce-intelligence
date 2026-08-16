@@ -183,11 +183,19 @@ class IngestionService:
         self.principal = principal
 
     def _assert_sync_ready(
-        self, shop_id: int, capability_code: str, *, for_update: bool = False
+        self,
+        shop_id: int,
+        capability_code: str,
+        *,
+        for_update: bool = False,
+        allow_douyin_token_refresh: bool = False,
     ) -> None:
         try:
             ShopConnectionService(self.session, self.principal).assert_sync_ready(
-                shop_id, capability_code, for_update=for_update
+                shop_id,
+                capability_code,
+                for_update=for_update,
+                allow_douyin_token_refresh=allow_douyin_token_refresh,
             )
         except ShopConnectionUnavailableError as exc:
             raise IngestionTransitionError(str(exc)) from exc
@@ -225,7 +233,11 @@ class IngestionService:
         )
 
     def _locked_ready_job(
-        self, job_id: int, *, expected_shop_id: int | None = None
+        self,
+        job_id: int,
+        *,
+        expected_shop_id: int | None = None,
+        allow_douyin_token_refresh: bool = False,
     ) -> tuple[SyncJob, Shop]:
         snapshot = self._job(job_id)
         if expected_shop_id is not None and snapshot.shop_id != expected_shop_id:
@@ -246,7 +258,10 @@ class IngestionService:
             raise IngestionTransitionError("同步任务能力策略无效") from exc
         try:
             ShopConnectionService(self.session, self.principal).assert_sync_ready(
-                shop.id, expected_capability, for_update=True
+                shop.id,
+                expected_capability,
+                for_update=True,
+                allow_douyin_token_refresh=allow_douyin_token_refresh,
             )
         except ShopConnectionUnavailableError as exc:
             job = self._job(job_id, for_update=True)
@@ -275,6 +290,7 @@ class IngestionService:
         max_attempts: int = 3,
         request_fingerprint: str | None = None,
         single_flight: bool = False,
+        allow_douyin_token_refresh: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         normalized_type = _token(job_type, label="同步任务类型", max_length=64)
@@ -282,7 +298,12 @@ class IngestionService:
             required_capability = required_capability_for_job_type(normalized_type)
         except ShopConnectionValidationError as exc:
             raise IngestionValidationError(str(exc)) from exc
-        self._assert_sync_ready(shop_id, required_capability, for_update=True)
+        self._assert_sync_ready(
+            shop_id,
+            required_capability,
+            for_update=True,
+            allow_douyin_token_refresh=allow_douyin_token_refresh,
+        )
         shop = resolve_shop(
             self.session,
             self.principal,
@@ -395,9 +416,17 @@ class IngestionService:
         require_permission(self.principal, Permission.READ_COMMERCE)
         return self._job(job_id)
 
-    def start_job(self, job_id: int, *, claim_token: str) -> SyncJob:
+    def start_job(
+        self,
+        job_id: int,
+        *,
+        claim_token: str,
+        allow_douyin_token_refresh: bool = False,
+    ) -> SyncJob:
         require_permission(self.principal, Permission.OPERATE_SYNC)
-        job, _ = self._locked_ready_job(job_id)
+        job, _ = self._locked_ready_job(
+            job_id, allow_douyin_token_refresh=allow_douyin_token_refresh
+        )
         if job.status is SyncJobStatus.RUNNING:
             if self._claim_matches(job.lease_token_hash, claim_token):
                 self._require_unexpired(job.lease_expires_at, label="同步任务")
@@ -499,6 +528,7 @@ class IngestionService:
         status: SyncJobStatus,
         claim_token: str,
         error_code: str | None = None,
+        allow_douyin_token_refresh: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.OPERATE_SYNC)
         try:
@@ -509,7 +539,9 @@ class IngestionService:
             raise IngestionValidationError("成功的同步任务不得包含 error_code")
         snapshot = self._job(job_id)
         if snapshot.status is SyncJobStatus.RUNNING:
-            job, _ = self._locked_ready_job(job_id)
+            job, _ = self._locked_ready_job(
+                job_id, allow_douyin_token_refresh=allow_douyin_token_refresh
+            )
         else:
             job = self._job(job_id, for_update=True)
         self._require_job_claim(job, claim_token, allow_terminal=True)

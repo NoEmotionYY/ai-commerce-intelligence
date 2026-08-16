@@ -19,6 +19,7 @@
 - [ ] Fresh install works.
 - [ ] Upgrade path tested.
 - [ ] Integrity constraints reviewed.
+- [ ] `scripts/backfill_douyin_credential_identifiers.py` completed with `failed=0` after `0014`.
 - [ ] Backup documented.
 
 ## Security
@@ -29,6 +30,7 @@
 - [ ] Roles work.
 - [ ] Approval boundaries work.
 - [ ] Webhook security reviewed.
+- [ ] `DOUYIN_WEBHOOK_APPLICATIONS` uses deployment-managed app secrets and explicit shop routes.
 - [ ] Audit logs work.
 - [ ] Security review has no unresolved Critical/High findings.
 

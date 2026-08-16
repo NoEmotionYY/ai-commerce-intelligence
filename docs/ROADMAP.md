@@ -9,7 +9,7 @@ Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
 Phase 7 Exit Review passed. The platform-specific Douyin adapter, bounded pull continuation,
 credential refresh rotation, webhook RawEvent ingress, normalization, reconciliation, and
 SQLite/MySQL migration/concurrency evidence are verified locally. The current full suite is
-`325 passed, 18 skipped, 1 warning`;
+`338 passed, 18 skipped, 1 warning`;
 the 18 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
@@ -145,7 +145,13 @@ request signing and endpoint shapes, token refresh, tenant-scoped bounded pulls,
 checkpoint continuation, request idempotency, product/SKU/order/inventory/refund normalization,
 webhook signature/deduplication, stale/equal-time reconciliation, failure visibility, and
 credential redaction pass local and MySQL gates. Pulls are explicit bounded request-time chunks;
-scheduled workers and webhook domain consumers remain TARGET. Real seller/platform verification is
+expired-token refresh is created and run within a `SyncJob`; credential rotation, connection
+authorization, and refresh audits commit atomically, and failed refreshes leave a visible `FAILED`
+job. Webhook authentication uses the interim deployment-owned `DOUYIN_WEBHOOK_APPLICATIONS`
+registry with explicit external-shop-to-organization routes; configuration drift requires a
+configuration update and process restart. Per-request timeout/retry budgets reject late responses,
+but do not provide Worker-level hard cancellation. Scheduled workers and webhook domain consumers
+remain TARGET. Real seller/platform verification is
 `IMPLEMENTED_UNVERIFIED` and is not counted as PASS or recorded as `BLOCKED_EXTERNAL` without a
 confirmed unavailable external prerequisite.
 

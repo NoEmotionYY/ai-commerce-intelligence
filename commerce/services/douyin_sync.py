@@ -64,6 +64,7 @@ from commerce.services.order_import import (
     OrderImportService,
     OrderImportValidationError,
 )
+from commerce.services.shop_connection import ShopConnectionService
 
 ClientFactory = Callable[[DouyinCredentials], DouyinAPIClient]
 PULL_JOB_TYPES = frozenset({"PRODUCTS.PULL", "ORDERS.PULL", "INVENTORY.PULL", "REFUNDS.PULL"})
@@ -170,7 +171,7 @@ class DouyinSyncService:
             page_size=page_size,
             max_pages=max_pages,
         )
-
+        deadline_at = self.monotonic_clock() + self.deadline_seconds
         ingestion = IngestionService(self.session, self.principal)
         job = ingestion.create_job(
             shop_id=shop.id,
@@ -179,6 +180,7 @@ class DouyinSyncService:
             max_attempts=10,
             request_fingerprint=request_fingerprint,
             single_flight=True,
+            allow_douyin_token_refresh=True,
         )
         if job.status in {SyncJobStatus.SUCCESS, SyncJobStatus.PARTIAL}:
             return self._result_from_job(job)
@@ -189,10 +191,13 @@ class DouyinSyncService:
             )
 
         job_claim = secrets.token_urlsafe(32)
-        ingestion.start_job(job.id, claim_token=job_claim)
-        deadline_at = self.monotonic_clock() + self.deadline_seconds
+        ingestion.start_job(
+            job.id,
+            claim_token=job_claim,
+            allow_douyin_token_refresh=True,
+        )
         try:
-            credential, credentials = self._credentials(shop)
+            credential, credentials = self._credentials(shop, deadline_at=deadline_at)
             try:
                 counters = self._execute_pull(
                     credentials=credentials,
@@ -307,6 +312,7 @@ class DouyinSyncService:
     ) -> dict[str, int]:
         self._check_deadline(deadline_at)
         with self.client_factory(credentials) as client:
+            client.set_request_deadline(deadline_at, clock=self.monotonic_clock)
             if job_type == "PRODUCTS.PULL":
                 return self._pull_products(
                     client,
@@ -862,21 +868,52 @@ class DouyinSyncService:
             snapshot=normalized.snapshot,
         )
 
-    def _credentials(self, shop: Shop) -> tuple[ShopCredential, DouyinCredentials]:
+    def _credentials(
+        self,
+        shop: Shop,
+        *,
+        deadline_at: float,
+    ) -> tuple[ShopCredential, DouyinCredentials]:
+        shop = resolve_shop(
+            self.session,
+            self.principal,
+            shop.id,
+            for_update=True,
+        )
         credential = self.session.scalar(
-            select(ShopCredential).where(
+            select(ShopCredential)
+            .where(
                 ShopCredential.shop_id == shop.id,
                 ShopCredential.credential_type == "OAUTH",
-                ShopCredential.status == CredentialStatus.ACTIVE,
+                ShopCredential.status.in_((CredentialStatus.ACTIVE, CredentialStatus.EXPIRED)),
             )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if credential is None:
             raise DouyinSyncExecutionError(
                 "抖音店铺凭据不可用", error_code="DOUYIN_CREDENTIAL_MISSING"
             )
-        payload = CredentialService(self.session, self.principal, self.cipher).decrypt_for_platform(
-            credential.id
+        credential_service = CredentialService(self.session, self.principal, self.cipher)
+        expires_at = credential.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        refresh_required = (
+            credential.status is CredentialStatus.EXPIRED
+            or expires_at is not None
+            and expires_at <= utcnow()
         )
+        if refresh_required:
+            payload = credential_service.decrypt_for_platform_refresh(credential.id)
+            refreshed = self._refresh_credentials(
+                shop,
+                credential.id,
+                DouyinCredentials.from_mapping(payload),
+                deadline_at=deadline_at,
+                credential_locked=True,
+            )
+            return credential, refreshed
+        payload = credential_service.decrypt_for_platform(credential.id)
         return credential, DouyinCredentials.from_mapping(payload)
 
     def _refresh_credentials(
@@ -886,15 +923,19 @@ class DouyinSyncService:
         previous: DouyinCredentials,
         *,
         deadline_at: float,
+        credential_locked: bool = False,
     ) -> DouyinCredentials:
         credential_service = CredentialService(self.session, self.principal, self.cipher)
-        locked_payload = credential_service.decrypt_for_platform(credential_id)
-        locked = DouyinCredentials.from_mapping(locked_payload)
+        locked = previous
+        if not credential_locked:
+            locked_payload = credential_service.decrypt_for_platform_refresh(credential_id)
+            locked = DouyinCredentials.from_mapping(locked_payload)
         if locked.access_token != previous.access_token:
             self.session.commit()
             return locked
         self._check_deadline(deadline_at)
         with self.client_factory(locked) as refresh_client:
+            refresh_client.set_request_deadline(deadline_at, clock=self.monotonic_clock)
             token_set = refresh_client.refresh_access_token()
         if token_set.shop_id != shop.external_shop_id:
             raise DouyinSyncExecutionError(
@@ -916,7 +957,9 @@ class DouyinSyncService:
             credential_id,
             payload=payload,
             expires_at=utcnow() + timedelta(seconds=token_set.expires_in),
+            commit=False,
         )
+        ShopConnectionService(self.session, self.principal).record_authorized(shop.id)
         return DouyinCredentials.from_mapping(payload)
 
     def _default_client(self, credentials: DouyinCredentials) -> DouyinAPIClient:
@@ -944,6 +987,7 @@ class DouyinSyncService:
             status=SyncJobStatus.FAILED,
             claim_token=job_claim,
             error_code=self._persisted_error_code(error_code),
+            allow_douyin_token_refresh=True,
         )
 
     def _yield_continuation(

@@ -210,6 +210,31 @@ class CredentialService:
         comparable = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
         return comparable <= now
 
+    def _decrypt_payload(self, credential: ShopCredential, *, audit_action: str) -> dict[str, str]:
+        try:
+            payload = self.cipher.decrypt(
+                EncryptedCredential(
+                    key_id=credential.key_id,
+                    nonce=credential.nonce,
+                    ciphertext=credential.encrypted_payload,
+                ),
+                shop_id=credential.shop_id,
+                credential_type=credential.credential_type,
+            )
+            self._audit(audit_action, credential, buffered=True)
+        except CredentialDecryptionError as exc:
+            previous_status = credential.status
+            credential.status = CredentialStatus.INVALID
+            ShopConnectionService(self.session, self.principal).credential_unavailable(
+                credential.shop_id,
+                credential.credential_type,
+                credential.status,
+            )
+            self._audit("invalidate", credential, previous_status=previous_status)
+            self.session.commit()
+            raise CredentialUnavailableError("店铺凭据不可用") from exc
+        return payload
+
     def upsert(
         self,
         *,
@@ -311,29 +336,14 @@ class CredentialService:
             self._audit("expire", credential, previous_status=previous_status)
             self.session.commit()
             raise CredentialUnavailableError("店铺凭据不可用")
-        try:
-            payload = self.cipher.decrypt(
-                EncryptedCredential(
-                    key_id=credential.key_id,
-                    nonce=credential.nonce,
-                    ciphertext=credential.encrypted_payload,
-                ),
-                shop_id=credential.shop_id,
-                credential_type=credential.credential_type,
-            )
-            self._audit("access", credential, buffered=True)
-        except CredentialDecryptionError as exc:
-            previous_status = credential.status
-            credential.status = CredentialStatus.INVALID
-            ShopConnectionService(self.session, self.principal).credential_unavailable(
-                credential.shop_id,
-                credential.credential_type,
-                credential.status,
-            )
-            self._audit("invalidate", credential, previous_status=previous_status)
-            self.session.commit()
-            raise CredentialUnavailableError("店铺凭据不可用") from exc
-        return payload
+        return self._decrypt_payload(credential, audit_action="access")
+
+    def decrypt_for_platform_refresh(self, credential_id: int) -> dict[str, str]:
+        """Decrypt an active or access-token-expired credential only for token refresh."""
+        credential = self._resolve_credential(credential_id)
+        if credential.status not in {CredentialStatus.ACTIVE, CredentialStatus.EXPIRED}:
+            raise CredentialUnavailableError("店铺凭据不可用")
+        return self._decrypt_payload(credential, audit_action="refresh_access")
 
     def rotate_for_platform(
         self,
@@ -341,13 +351,15 @@ class CredentialService:
         *,
         payload: dict[str, str],
         expires_at: datetime,
+        commit: bool = True,
     ) -> ShopCredential:
         """Rotate a platform token under the credential lock without resetting authorization."""
         if expires_at.tzinfo is None or expires_at <= utcnow():
             raise ValueError("平台凭据有效期无效")
         credential = self._resolve_credential(credential_id)
-        if credential.status is not CredentialStatus.ACTIVE:
+        if credential.status not in {CredentialStatus.ACTIVE, CredentialStatus.EXPIRED}:
             raise CredentialUnavailableError("店铺凭据不可用")
+        previous_status = credential.status
         encrypted = self.cipher.encrypt(
             payload,
             shop_id=credential.shop_id,
@@ -364,8 +376,17 @@ class CredentialService:
         )
         credential.expires_at = expires_at
         credential.last_rotated_at = utcnow()
-        self._audit("rotate", credential)
-        self.session.commit()
+        credential.status = CredentialStatus.ACTIVE
+        self._audit(
+            "rotate",
+            credential,
+            previous_status=(
+                previous_status if previous_status is not CredentialStatus.ACTIVE else None
+            ),
+        )
+        self.session.flush()
+        if commit:
+            self.session.commit()
         return credential
 
     def rotate_encryption(self, credential_id: int) -> ShopCredential:

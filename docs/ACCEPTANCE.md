@@ -3,12 +3,12 @@
 
 ## A. Demo Removal
 
-- [ ] Production behavior does not depend on A102.
-- [ ] Production behavior does not depend on B205.
-- [ ] Production behavior does not depend on COMP-B.
-- [ ] No fixed business answer exists only to satisfy demo tests.
-- [ ] Mock ERP remains available for dev/test if useful.
-- [ ] Production path does not require Mock ERP.
+- [x] Production behavior does not depend on A102.
+- [x] Production behavior does not depend on B205.
+- [x] Production behavior does not depend on COMP-B.
+- [x] No fixed business answer exists only to satisfy demo tests.
+- [x] Mock ERP remains available for dev/test if useful.
+- [x] Production path does not require Mock ERP.
 
 ---
 
@@ -26,15 +26,18 @@
 
 ## C. Stores
 
-- [ ] Multiple Shops supported.
-- [ ] Platform recorded.
-- [ ] Country/region recorded.
-- [ ] Currency recorded.
-- [ ] Timezone recorded.
-- [ ] Credentials are encrypted.
-- [ ] Credential state supported.
-- [ ] Platform capabilities supported.
-- [ ] Disabled/revoked store handled.
+- [x] Multiple Shops supported.
+- [x] Platform recorded.
+- [x] Country/region recorded.
+- [x] Currency recorded.
+- [x] Timezone recorded.
+- [x] Credentials are encrypted.
+- [x] Credential state supported.
+- [x] Platform capabilities supported.
+- [x] Disabled/revoked store handled.
+
+These Store criteria are locally verified V2 foundation capabilities. They do not claim real
+seller authorization or completion of every platform connector.
 
 ---
 
@@ -281,18 +284,18 @@ Verification state must be explicit.
 
 ## P. Roles & Security
 
-- [ ] OWNER.
-- [ ] OPERATOR.
-- [ ] APPROVER.
-- [ ] Authentication.
-- [ ] Authorization.
-- [ ] Credential encryption.
-- [ ] Audit logging.
-- [ ] Webhook validation where supported.
-- [ ] Request validation.
-- [ ] No committed secrets.
-- [ ] No LLM arbitrary production SQL.
-- [ ] Consequential writes follow approval rules.
+- [x] OWNER.
+- [x] OPERATOR.
+- [x] APPROVER.
+- [x] Authentication.
+- [x] Authorization.
+- [x] Credential encryption.
+- [x] Audit logging.
+- [x] Webhook validation where supported.
+- [x] Request validation.
+- [x] No committed secrets.
+- [x] No LLM arbitrary production SQL.
+- [x] Consequential writes follow approval rules.
 
 ---
 
@@ -420,7 +423,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-008 completion the current local suite is `325 passed, 18 skipped, 1 warning` under
+COM-P1-008 completion the current local suite is `338 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
