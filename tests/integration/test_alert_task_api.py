@@ -270,6 +270,7 @@ def alert_client(
             total_amount=Decimal("100"),
         )
     )
+    task.execution_purchase_order_id = purchase_order.id
     db_session.commit()
     app.dependency_overrides[get_session] = lambda: db_session
     client = TestClient(app)

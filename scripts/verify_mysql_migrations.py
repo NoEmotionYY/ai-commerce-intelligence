@@ -35,8 +35,11 @@ from commerce.config import (  # noqa: E402
     TikTokShopWebhookApplication,
 )
 from commerce.credentials import CredentialCipher, CredentialService  # noqa: E402
-from commerce.database import Base  # noqa: E402
+from commerce.database import Base, persist_buffered_operation_audits  # noqa: E402
 from commerce.models import (  # noqa: E402
+    AgentDraftActionType,
+    AgentDraftRequest,
+    AgentDraftRequestStatus,
     AlertType,
     BusinessTask,
     BusinessTaskHistory,
@@ -112,6 +115,7 @@ from commerce.services.shop import ShopService  # noqa: E402
 from commerce.services.shop_connection import ShopConnectionService  # noqa: E402
 from commerce.services.tiktok_shop_sync import TikTokShopSyncService  # noqa: E402
 from commerce.services.tiktok_shop_webhook import TikTokShopWebhookService  # noqa: E402
+from commerce.v2_agent_tools import V2AgentTools  # noqa: E402
 
 V2_TABLES = {
     "organizations",
@@ -159,6 +163,7 @@ V2_TABLES = {
     "business_tasks",
     "business_task_history",
     "task_effect_measurements",
+    "agent_draft_requests",
     "data_import_jobs",
     "data_import_records",
 }
@@ -228,6 +233,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "commerce_alerts": "uq_commerce_alerts_org_dedup",
     "business_tasks": "uq_business_tasks_org_idempotency",
     "task_effect_measurements": "uq_task_effect_measurements_task",
+    "agent_draft_requests": "uq_agent_draft_requests_org_idempotency",
     "data_import_jobs": "uq_data_import_jobs_org_idempotency",
     "data_import_records": "uq_data_import_records_job_key",
 }
@@ -263,6 +269,7 @@ EXPECTED_UNIQUE_INDEXES = {
     "commerce_alerts": "ix_commerce_alerts_org_id_unique",
     "business_tasks": "ix_business_tasks_org_id_unique",
     "task_effect_measurements": "ix_task_effect_measurements_org_id_unique",
+    "agent_draft_requests": "ix_agent_draft_requests_org_id_unique",
     "data_import_jobs": "ix_data_import_jobs_org_shop_id_unique",
     "data_import_records": "ix_data_import_records_org_job_id_unique",
 }
@@ -427,6 +434,7 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "master_sku_id"), "master_skus"),
         (("created_by_user_id",), "users"),
         (("assigned_to_user_id",), "users"),
+        (("organization_id", "execution_purchase_order_id"), "commerce_purchase_orders"),
     },
     "business_task_history": {
         (("organization_id", "business_task_id"), "business_tasks"),
@@ -439,6 +447,10 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "master_sku_id"), "master_skus"),
         (("organization_id", "execution_purchase_order_id"), "commerce_purchase_orders"),
         (("measured_by_user_id",), "users"),
+    },
+    "agent_draft_requests": {
+        (("organization_id",), "organizations"),
+        (("created_by_user_id",), "users"),
     },
     "data_import_jobs": {
         (("organization_id", "shop_id"), "shops"),
@@ -530,6 +542,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "ck_task_effect_measurements_assessment",
         "ck_task_effect_measurements_profit_kind",
         "ck_task_effect_measurements_execution_status",
+    },
+    "agent_draft_requests": {
+        "ck_agent_draft_requests_action",
+        "ck_agent_draft_requests_status",
     },
     "data_import_jobs": {
         "ck_data_import_jobs_type",
@@ -717,7 +733,9 @@ def _expect_integrity_error(
     raise RuntimeError(f"MySQL integrity behavior did not reject {label}")
 
 
-def _verify_alert_task_integrity(connection: Connection) -> None:
+def _verify_alert_task_integrity(
+    connection: Connection,
+) -> tuple[int, int, int, int, int, int]:
     now = utcnow()
     first_org = connection.execute(
         sa.insert(Organization).values(
@@ -890,6 +908,167 @@ def _verify_alert_task_integrity(connection: Connection) -> None:
             created_at=now,
         ),
         label="unknown BusinessTaskHistory status",
+    )
+    return first_org, user_id, shop_id, sku_id, alert_id, task_id
+
+
+def _verify_agent_workflow_migration_backfill(
+    connection: Connection,
+    config: Config,
+    context: tuple[int, int, int, int, int, int],
+) -> None:
+    organization_id, user_id, shop_id, sku_id, alert_id, task_id = context
+    now = utcnow()
+    warehouse_id = connection.execute(
+        sa.insert(Warehouse).values(
+            organization_id=organization_id,
+            code="MYSQL-AGENT-MIGRATION",
+            name="MySQL Agent Migration Warehouse",
+            country_code="CN",
+            timezone="Asia/Shanghai",
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    supplier_id = connection.execute(
+        sa.insert(Supplier).values(
+            organization_id=organization_id,
+            code="MYSQL-AGENT-MIGRATION-SUPPLIER",
+            name="MySQL Agent Migration Supplier",
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    supplier_product_id = connection.execute(
+        sa.insert(SupplierProduct).values(
+            organization_id=organization_id,
+            supplier_id=supplier_id,
+            master_sku_id=sku_id,
+            supplier_product_code="MYSQL-AGENT-MIGRATION-SKU",
+            currency="CNY",
+            purchase_cost=10,
+            moq=1,
+            package_size=1,
+            lead_time_days=1,
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    purchase_order_id = connection.execute(
+        sa.insert(CommercePurchaseOrder).values(
+            organization_id=organization_id,
+            supplier_id=supplier_id,
+            warehouse_id=warehouse_id,
+            po_number="PO-MYSQL-AGENT-MIGRATION",
+            idempotency_key_hash=hashlib.sha256(b"mysql-agent-migration-po").hexdigest(),
+            request_hash=hashlib.sha256(b"mysql-agent-migration-request").hexdigest(),
+            status="ORDERED",
+            currency="CNY",
+            total_amount=10,
+            created_by_user_id=user_id,
+            ordered_at=now - timedelta(days=6),
+            created_at=now - timedelta(days=7),
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    connection.execute(
+        sa.insert(CommercePurchaseOrderItem).values(
+            organization_id=organization_id,
+            purchase_order_id=purchase_order_id,
+            supplier_product_id=supplier_product_id,
+            master_sku_id=sku_id,
+            quantity=1,
+            unit_cost=10,
+            total_amount=10,
+        )
+    )
+    connection.execute(
+        sa.update(CommerceAlert)
+        .where(CommerceAlert.id == alert_id)
+        .values(
+            window_start=now - timedelta(days=14),
+            window_end=now - timedelta(days=7),
+        )
+    )
+    connection.execute(
+        sa.update(BusinessTask)
+        .where(BusinessTask.id == task_id)
+        .values(
+            status="DONE",
+            execution_purchase_order_id=purchase_order_id,
+            created_at=now - timedelta(days=7),
+            completed_at=now - timedelta(days=1),
+            updated_at=now,
+        )
+    )
+    connection.execute(
+        sa.insert(TaskEffectMeasurement).values(
+            organization_id=organization_id,
+            business_task_id=task_id,
+            alert_id=alert_id,
+            shop_id=shop_id,
+            master_sku_id=sku_id,
+            execution_purchase_order_id=purchase_order_id,
+            execution_status="ORDERED",
+            executed_at=now - timedelta(days=6),
+            metric_name="days_of_stock",
+            metric_unit="DAYS",
+            direction="HIGHER_IS_BETTER",
+            baseline_value=1,
+            outcome_value=2,
+            delta_value=1,
+            assessment="IMPROVED",
+            baseline_window_start=now - timedelta(days=14),
+            baseline_window_end=now - timedelta(days=7),
+            outcome_window_start=now - timedelta(days=7),
+            outcome_window_end=now,
+            method_version="MYSQL_AGENT_MIGRATION_V1",
+            calculation_hash=hashlib.sha256(b"mysql-agent-migration-effect").hexdigest(),
+            evidence={"source": "mysql-agent-migration"},
+            measured_by_user_id=user_id,
+            measured_at=now,
+            created_at=now,
+        )
+    )
+    connection.commit()
+
+    command.downgrade(config, "0015_task_effects")
+    if "agent_draft_requests" in sa.inspect(connection).get_table_names():
+        raise RuntimeError("MySQL Agent workflow downgrade left AgentDraftRequest behind")
+    if (
+        int(connection.scalar(sa.select(sa.func.count()).select_from(BusinessTaskHistory)) or 0) < 1
+        or int(
+            connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) or 0
+        )
+        < 1
+    ):
+        raise RuntimeError("MySQL Agent workflow downgrade lost task history/effect evidence")
+
+    command.upgrade(config, "head")
+    _assert_head_schema(connection, config)
+    linked = connection.scalar(
+        sa.select(BusinessTask.execution_purchase_order_id).where(BusinessTask.id == task_id)
+    )
+    if linked != purchase_order_id:
+        raise RuntimeError("MySQL Agent workflow re-upgrade did not backfill task execution")
+    if (
+        int(connection.scalar(sa.select(sa.func.count()).select_from(BusinessTaskHistory)) or 0) < 1
+        or int(
+            connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) or 0
+        )
+        < 1
+    ):
+        raise RuntimeError("MySQL Agent workflow re-upgrade lost task history/effect evidence")
+    connection.commit()
+    _expect_integrity_error(
+        connection,
+        sa.update(BusinessTask)
+        .where(BusinessTask.id == task_id)
+        .values(execution_purchase_order_id=purchase_order_id + 999999),
+        label="missing BusinessTask execution purchase order",
     )
 
 
@@ -2065,6 +2244,7 @@ def _verify_task_effect_measurement_race(engine: Engine) -> None:
         )
         session.add_all([task, purchase_order])
         session.flush()
+        task.execution_purchase_order_id = purchase_order.id
         session.add(
             CommercePurchaseOrderItem(
                 organization_id=organization.id,
@@ -2157,6 +2337,348 @@ def _verify_task_effect_measurement_race(engine: Engine) -> None:
             .values(baseline_value=-1),
             label="negative TaskEffect baseline",
         )
+
+
+def _verify_agent_draft_request_races(engine: Engine) -> None:
+    now = utcnow()
+    with Session(engine, expire_on_commit=False) as session:
+        organization = Organization(slug="mysql-agent-race", name="MySQL Agent Race")
+        user = User(email="mysql-agent-race@example.com", display_name="Agent Operator")
+        session.add_all([organization, user])
+        session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OPERATOR,
+        )
+        shop = Shop(
+            organization_id=organization.id,
+            name="MySQL Agent Race Shop",
+            platform="douyin",
+            external_shop_id="mysql-agent-race-shop",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        )
+        warehouse = Warehouse(
+            organization_id=organization.id,
+            code="MYSQL-AGENT-RACE",
+            name="MySQL Agent Race Warehouse",
+            country_code="CN",
+            timezone="Asia/Shanghai",
+        )
+        product = MasterProduct(
+            organization_id=organization.id,
+            code="MYSQL-AGENT-RACE",
+            name="MySQL Agent Race Product",
+        )
+        supplier = Supplier(
+            organization_id=organization.id,
+            code="MYSQL-AGENT-RACE-SUPPLIER",
+            name="MySQL Agent Race Supplier",
+        )
+        session.add_all([membership, shop, warehouse, product, supplier])
+        session.flush()
+        sku = MasterSKU(
+            organization_id=organization.id,
+            master_product_id=product.id,
+            sku_code="MYSQL-AGENT-RACE-SKU",
+            name="MySQL Agent Race SKU",
+        )
+        session.add(sku)
+        session.flush()
+        mapping = PlatformSKU(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            master_sku_id=sku.id,
+            external_product_id="mysql-agent-race-product",
+            external_sku_id="mysql-agent-race-sku",
+            external_sku_key=hashlib.sha256(b"mysql-agent-race-sku").hexdigest(),
+            title="MySQL Agent Race SKU",
+        )
+        supplier_product = SupplierProduct(
+            organization_id=organization.id,
+            supplier_id=supplier.id,
+            master_sku_id=sku.id,
+            supplier_product_code="MYSQL-AGENT-RACE-SUPPLIER-SKU",
+            currency="CNY",
+            purchase_cost=10,
+            moq=1,
+            package_size=1,
+            lead_time_days=3,
+        )
+        session.add_all([mapping, supplier_product])
+        session.flush()
+        raw_key = hashlib.sha256(b"mysql-agent-race-raw").hexdigest()
+        raw_event = PlatformRawEvent(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            platform="douyin",
+            event_type="ORDER.SNAPSHOT",
+            external_event_id="mysql-agent-race-raw",
+            source_event_key=raw_key,
+            payload={"source": "mysql-agent-race"},
+            payload_hash=raw_key,
+            status="PROCESSED",
+            processing_attempts=1,
+            occurred_at=now - timedelta(days=1),
+            received_at=now - timedelta(days=1),
+            processed_at=now - timedelta(days=1),
+        )
+        session.add(raw_event)
+        session.flush()
+        order = CommerceOrder(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            platform="douyin",
+            external_order_id="mysql-agent-race-order",
+            external_order_key=hashlib.sha256(b"mysql-agent-race-order").hexdigest(),
+            status="COMPLETED",
+            external_status="COMPLETED",
+            currency="CNY",
+            total_amount=140,
+            ordered_at=now - timedelta(days=1),
+            paid_at=now - timedelta(days=1),
+            last_source_event_id=raw_event.id,
+            last_source_occurred_at=now - timedelta(days=1),
+        )
+        session.add(order)
+        session.flush()
+        session.add_all(
+            [
+                CommerceOrderItem(
+                    organization_id=organization.id,
+                    shop_id=shop.id,
+                    order_id=order.id,
+                    platform_sku_id=mapping.id,
+                    master_sku_id=sku.id,
+                    external_item_id="mysql-agent-race-item",
+                    external_item_key=hashlib.sha256(b"mysql-agent-race-item").hexdigest(),
+                    external_sku_id="mysql-agent-race-sku",
+                    quantity=14,
+                    currency="CNY",
+                    unit_price=10,
+                    line_amount=140,
+                ),
+                WarehouseInventory(
+                    organization_id=organization.id,
+                    warehouse_id=warehouse.id,
+                    master_sku_id=sku.id,
+                    available=0,
+                    reserved=0,
+                    incoming=0,
+                    damaged=0,
+                    source="TEST",
+                    source_reference="mysql-agent-race",
+                    source_updated_at=now,
+                    snapshot_hash=raw_key,
+                    last_source_shop_id=shop.id,
+                    last_source_event_id=raw_event.id,
+                    observed_at=now,
+                ),
+            ]
+        )
+        alert = CommerceAlert(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            master_sku_id=sku.id,
+            alert_type=AlertType.STOCKOUT_RISK,
+            status="OPEN",
+            deduplication_key_hash=hashlib.sha256(b"mysql-agent-race-alert").hexdigest(),
+            metric_name="days_of_stock",
+            metric_value=0,
+            threshold_value=7,
+            summary="Stockout risk",
+            details={"source": "mysql-agent-race"},
+            window_start=now - timedelta(days=7),
+            window_end=now,
+        )
+        session.add(alert)
+        session.flush()
+        principal = Principal(user.id, organization.id, membership.id, MembershipRole.OPERATOR)
+        first_task = AlertTaskService(session, principal).create_task(
+            alert.id,
+            BusinessTaskCreate(
+                title="Agent race first task",
+                idempotency_key="mysql-agent-race-first-task",
+            ),
+        )
+        second_task = AlertTaskService(session, principal).create_task(
+            alert.id,
+            BusinessTaskCreate(
+                title="Agent race second task",
+                idempotency_key="mysql-agent-race-second-task",
+            ),
+        )
+        organization_id = organization.id
+        shop_id = shop.id
+        warehouse_id = warehouse.id
+        supplier_product_id = supplier_product.id
+        first_task_id = first_task.id
+        second_task_id = second_task.id
+
+    same_key_barrier = Barrier(2, timeout=15)
+
+    def create_draft(task_id: int, request_key: str, barrier: Barrier) -> int:
+        with Session(engine, expire_on_commit=False) as session:
+            session.execute(sa.text("SET SESSION innodb_lock_wait_timeout = 10"))
+            tool_owner = V2AgentTools(
+                session,
+                principal,
+                as_of=now,
+                session_id=f"mysql-agent-{request_key}",
+                shop_id=shop_id,
+                request_idempotency_key=request_key,
+            )
+            draft_tool = next(
+                item
+                for item in tool_owner.langchain_tools(
+                    draft_action=AgentDraftActionType.CREATE_PURCHASE_DRAFT
+                )
+                if item.name == "create_purchase_draft"
+            )
+            barrier.wait()
+            result = draft_tool.invoke(
+                {
+                    "business_task_id": task_id,
+                    "warehouse_id": warehouse_id,
+                    "supplier_product_id": supplier_product_id,
+                }
+            )
+            persist_buffered_operation_audits(session)
+            return int(result["purchase_order_id"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        same_key_results = list(
+            executor.map(
+                lambda _: create_draft(first_task_id, "mysql-agent-same-key", same_key_barrier),
+                range(2),
+            )
+        )
+    if len(set(same_key_results)) != 1:
+        raise RuntimeError(f"MySQL Agent same-key race returned {same_key_results}")
+
+    different_key_barrier = Barrier(2, timeout=15)
+
+    def compete(request_key: str) -> tuple[str, int | None]:
+        try:
+            return "SUCCESS", create_draft(second_task_id, request_key, different_key_barrier)
+        except Exception:
+            return "FAILED", None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        different_results = list(executor.map(compete, ["mysql-agent-key-a", "mysql-agent-key-b"]))
+    if sorted(status for status, _ in different_results) != ["FAILED", "SUCCESS"]:
+        raise RuntimeError(f"MySQL Agent task-link race returned {different_results}")
+
+    with Session(engine) as session:
+        bindings = list(
+            session.scalars(
+                sa.select(AgentDraftRequest).where(
+                    AgentDraftRequest.organization_id == organization_id
+                )
+            )
+        )
+        purchase_orders = list(
+            session.scalars(
+                sa.select(CommercePurchaseOrder).where(
+                    CommercePurchaseOrder.organization_id == organization_id
+                )
+            )
+        )
+        tasks = list(
+            session.scalars(
+                sa.select(BusinessTask).where(BusinessTask.organization_id == organization_id)
+            )
+        )
+        linked_purchase_order_ids = {
+            item.execution_purchase_order_id
+            for item in tasks
+            if item.execution_purchase_order_id is not None
+        }
+        orphan_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(CommercePurchaseOrder)
+                .outerjoin(
+                    BusinessTask,
+                    (BusinessTask.organization_id == CommercePurchaseOrder.organization_id)
+                    & (BusinessTask.execution_purchase_order_id == CommercePurchaseOrder.id),
+                )
+                .where(
+                    CommercePurchaseOrder.organization_id == organization_id,
+                    BusinessTask.id.is_(None),
+                )
+            )
+            or 0
+        )
+        audit_scope = OperationLog.tool_input["organization_id"].as_integer() == organization_id
+        purchasing_create_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(
+                    OperationLog.tool_name == "purchasing.order.create",
+                    audit_scope,
+                )
+            )
+            or 0
+        )
+        task_link_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(
+                    OperationLog.tool_name == "business_task.purchase_order.link",
+                    audit_scope,
+                )
+            )
+            or 0
+        )
+        agent_success_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(
+                    OperationLog.tool_name == "v2_agent.create_purchase_draft",
+                    OperationLog.status == "SUCCESS",
+                    audit_scope,
+                )
+            )
+            or 0
+        )
+        agent_failed_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(
+                    OperationLog.tool_name == "v2_agent.create_purchase_draft",
+                    OperationLog.status == "FAILED",
+                    audit_scope,
+                )
+            )
+            or 0
+        )
+        if (
+            len(bindings) != 2
+            or any(item.status is not AgentDraftRequestStatus.SUCCESS for item in bindings)
+            or len(purchase_orders) != 2
+            or len(linked_purchase_order_ids) != 2
+            or orphan_count != 0
+            or purchasing_create_audits != 2
+            or task_link_audits != 2
+            or agent_success_audits != 3
+            or agent_failed_audits != 1
+        ):
+            raise RuntimeError(
+                "MySQL Agent races left duplicate/failed/orphan state: "
+                f"bindings={len(bindings)}, purchase_orders={len(purchase_orders)}, "
+                f"linked={len(linked_purchase_order_ids)}, orphans={orphan_count}, "
+                f"purchase_audits={purchasing_create_audits}, "
+                f"task_link_audits={task_link_audits}, "
+                f"agent_success_audits={agent_success_audits}, "
+                f"agent_failed_audits={agent_failed_audits}"
+            )
 
 
 def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
@@ -2771,7 +3293,8 @@ def main() -> None:
         command.upgrade(config, "head")
         _assert_head_schema(connection, config)
         _assert_legacy_product_preserved(connection)
-        _verify_alert_task_integrity(connection)
+        alert_task_context = _verify_alert_task_integrity(connection)
+        _verify_agent_workflow_migration_backfill(connection, config, alert_task_context)
         import_shop_id, import_raw_event_id = _verify_data_import_integrity(connection)
         alert_count_before_effect_rollback = int(
             connection.scalar(sa.select(sa.func.count()).select_from(CommerceAlert)) or 0
@@ -3301,6 +3824,7 @@ def main() -> None:
     _verify_purchase_execution_race(engine)
     _verify_alert_task_idempotency_races(engine)
     _verify_task_effect_measurement_race(engine)
+    _verify_agent_draft_request_races(engine)
     _verify_douyin_webhook_idempotency_race(engine)
     _verify_douyin_token_refresh_race(engine)
     _verify_tiktok_webhook_idempotency_race(engine)
@@ -3308,7 +3832,7 @@ def main() -> None:
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
         "legacy-reauth-catalog-raw-order-inventory-and-data-import-data-preservation-and-sync-and-"
-        "inventory-purchase-execution-alert-task-effect-douyin-and-tiktok-webhook-idempotency-and-token-refresh-"
+        "inventory-purchase-execution-alert-task-effect-agent-draft-douyin-and-tiktok-webhook-idempotency-and-token-refresh-"
         "races: PASS"
     )
 

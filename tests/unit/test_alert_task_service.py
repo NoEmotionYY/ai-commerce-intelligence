@@ -12,6 +12,7 @@ from commerce.authorization import AuthorizationError, Principal
 from commerce.models import (
     AlertStatus,
     AlertType,
+    BusinessTask,
     BusinessTaskHistory,
     BusinessTaskStatus,
     CommerceAlert,
@@ -48,11 +49,7 @@ from commerce.services.alerts import (
     AlertTaskValidationError,
 )
 from commerce.services.catalog import CatalogService
-from commerce.services.effects import (
-    TaskEffectNotFoundError,
-    TaskEffectService,
-    TaskEffectValidationError,
-)
+from commerce.services.effects import TaskEffectService, TaskEffectValidationError
 
 
 def _principal(
@@ -604,6 +601,7 @@ def test_completed_task_effect_is_deterministic_idempotent_and_tenant_scoped(
         ordered_at=datetime(2026, 8, 9, tzinfo=UTC),
     )
     task.status = BusinessTaskStatus.DONE
+    task.execution_purchase_order_id = purchase_order.id
     task.created_at = datetime(2026, 8, 8, 1, tzinfo=UTC)
     task.completed_at = datetime(2026, 8, 10, tzinfo=UTC)
     db_session.commit()
@@ -728,6 +726,175 @@ def _effect_purchase_order(
     return purchase_order
 
 
+def test_purchase_order_links_support_matching_tasks_and_control_replacement(
+    db_session: Session,
+) -> None:
+    owner, _, _, shop, sku_id, _ = _context(db_session, "task-purchase-link")
+    service = AlertTaskService(db_session, owner)
+    alert = service._alert(
+        AlertType.STOCKOUT_RISK,
+        shop.id,
+        sku_id,
+        "days_of_stock",
+        Decimal("2"),
+        Decimal("7"),
+        datetime(2026, 8, 1, tzinfo=UTC),
+        datetime(2026, 8, 8, tzinfo=UTC),
+        "Stockout risk",
+        {},
+    )
+    warehouse = Warehouse(
+        organization_id=owner.organization_id,
+        code="TASK-LINK-WH",
+        name="Task Link Warehouse",
+        country_code="CN",
+        timezone="Asia/Shanghai",
+    )
+    db_session.add(warehouse)
+    db_session.flush()
+    first = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="task-link-first",
+        status=PurchaseOrderStatus.DRAFT,
+        ordered_at=None,
+    )
+    replacement = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="task-link-replacement",
+        status=PurchaseOrderStatus.DRAFT,
+        ordered_at=None,
+    )
+    second_replacement = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="task-link-second-replacement",
+        status=PurchaseOrderStatus.DRAFT,
+        ordered_at=None,
+    )
+    task_one = service.create_task(
+        alert.id,
+        BusinessTaskCreate(title="First task", idempotency_key="task-link-one"),
+    )
+    task_two = service.create_task(
+        alert.id,
+        BusinessTaskCreate(title="Second task", idempotency_key="task-link-two"),
+    )
+
+    assert (
+        service.link_purchase_order(task_one.id, first.id).execution_purchase_order_id == first.id
+    )
+    assert (
+        service.link_purchase_order(task_two.id, first.id).execution_purchase_order_id == first.id
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(BusinessTask)
+            .where(BusinessTask.execution_purchase_order_id == first.id)
+        )
+        == 2
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(BusinessTaskHistory)
+            .where(BusinessTaskHistory.business_task_id.in_([task_one.id, task_two.id]))
+        )
+        == 2
+    )
+    with pytest.raises(AlertTaskConflictError, match="已关联有效采购单"):
+        service.link_purchase_order(task_one.id, replacement.id)
+    db_session.refresh(task_one)
+    assert task_one.execution_purchase_order_id == first.id
+
+    first.status = PurchaseOrderStatus.REJECTED
+    db_session.commit()
+    assert (
+        service.link_purchase_order(task_one.id, replacement.id).execution_purchase_order_id
+        == replacement.id
+    )
+    replacement.status = PurchaseOrderStatus.CANCELLED
+    db_session.commit()
+    assert (
+        service.link_purchase_order(task_one.id, second_replacement.id).execution_purchase_order_id
+        == second_replacement.id
+    )
+
+
+def test_purchase_order_sku_mismatch_preserves_existing_task_link(db_session: Session) -> None:
+    owner, _, _, shop, sku_id, _ = _context(db_session, "task-purchase-mismatch")
+    catalog = CatalogService(db_session, owner)
+    other_product = catalog.create_product(
+        code="task-purchase-mismatch-other-product",
+        name="Other Product",
+        category=None,
+    )
+    other_sku_id = catalog.create_sku(
+        master_product_id=other_product.id,
+        sku_code="task-purchase-mismatch-other-sku",
+        name="Other SKU",
+    ).id
+    service = AlertTaskService(db_session, owner)
+    alert = service._alert(
+        AlertType.STOCKOUT_RISK,
+        shop.id,
+        sku_id,
+        "days_of_stock",
+        Decimal("2"),
+        Decimal("7"),
+        datetime(2026, 8, 1, tzinfo=UTC),
+        datetime(2026, 8, 8, tzinfo=UTC),
+        "Stockout risk",
+        {},
+    )
+    warehouse = Warehouse(
+        organization_id=owner.organization_id,
+        code="TASK-MISMATCH-WH",
+        name="Task Mismatch Warehouse",
+        country_code="CN",
+        timezone="Asia/Shanghai",
+    )
+    db_session.add(warehouse)
+    db_session.flush()
+    valid = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="task-mismatch-valid",
+        status=PurchaseOrderStatus.REJECTED,
+        ordered_at=None,
+    )
+    invalid = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        other_sku_id,
+        slug="task-mismatch-invalid",
+        status=PurchaseOrderStatus.DRAFT,
+        ordered_at=None,
+    )
+    task = service.create_task(
+        alert.id,
+        BusinessTaskCreate(title="Mismatch task", idempotency_key="task-mismatch"),
+    )
+    task.execution_purchase_order_id = valid.id
+    db_session.commit()
+
+    with pytest.raises(AlertTaskValidationError, match="不包含任务关联的 SKU"):
+        service.link_purchase_order(task.id, invalid.id)
+    db_session.refresh(task)
+    assert task.execution_purchase_order_id == valid.id
+
+
 def test_task_effect_rejects_unexecuted_cross_tenant_and_unrelated_purchase(
     db_session: Session,
 ) -> None:
@@ -817,9 +984,15 @@ def test_task_effect_rejects_unexecuted_cross_tenant_and_unrelated_purchase(
         owner,
         clock=lambda: datetime(2026, 8, 18, tzinfo=UTC),
     )
+    task.execution_purchase_order_id = draft.id
+    db_session.commit()
     with pytest.raises(TaskEffectValidationError, match="尚未执行"):
         service.measure(task.id, purchase_order_id=draft.id)
-    with pytest.raises(TaskEffectNotFoundError, match="采购单不存在"):
+    task.execution_purchase_order_id = None
+    db_session.commit()
+    with pytest.raises(TaskEffectValidationError, match="必须在采购执行前关联"):
         service.measure(task.id, purchase_order_id=other_order.id)
+    task.execution_purchase_order_id = unrelated.id
+    db_session.commit()
     with pytest.raises(TaskEffectValidationError, match="不包含"):
         service.measure(task.id, purchase_order_id=unrelated.id)

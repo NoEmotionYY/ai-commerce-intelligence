@@ -470,5 +470,9 @@ class BusinessTaskStatusUpdate(AlertTaskInput):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class BusinessTaskPurchaseLink(AlertTaskInput):
+    purchase_order_id: int = Field(gt=0)
+
+
 class TaskEffectMeasure(AlertTaskInput):
     purchase_order_id: int = Field(gt=0)

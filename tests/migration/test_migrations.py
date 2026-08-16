@@ -16,6 +16,7 @@ from sqlalchemy.engine import Connection
 from alembic import command
 from commerce.database import Base
 from commerce.models import (
+    AgentDraftRequest,
     BusinessTask,
     BusinessTaskHistory,
     ChannelInventory,
@@ -206,9 +207,20 @@ def test_task_effect_upgrade_constraints_rollback_and_reupgrade_preserve_tasks(
                 updated_at=now,
             )
         ).inserted_primary_key[0]
+        connection.execute(
+            sa.insert(BusinessTaskHistory).values(
+                organization_id=organization_id,
+                business_task_id=task_id,
+                from_status=None,
+                to_status="TODO",
+                actor_user_id=user_id,
+                reason="migration evidence",
+                created_at=now - timedelta(days=2),
+            )
+        )
         connection.commit()
 
-        command.upgrade(config, "head")
+        command.upgrade(config, "0015_task_effects")
         assert "task_effect_measurements" in sa.inspect(connection).get_table_names()
         values = {
             "organization_id": organization_id,
@@ -278,6 +290,155 @@ def test_task_effect_upgrade_constraints_rollback_and_reupgrade_preserve_tasks(
             )
             connection.commit()
         connection.rollback()
+
+        command.upgrade(config, "head")
+        assert "agent_draft_requests" in sa.inspect(connection).get_table_names()
+        assert connection.scalar(sa.select(sa.func.count()).select_from(BusinessTaskHistory)) == 1
+        assert connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) == 1
+        assert (
+            connection.scalar(
+                sa.select(BusinessTask.execution_purchase_order_id).where(
+                    BusinessTask.id == task_id
+                )
+            )
+            == purchase_order_id
+        )
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.update(BusinessTask)
+                .where(BusinessTask.id == second_task_id)
+                .values(execution_purchase_order_id=purchase_order_id + 999)
+            )
+            connection.commit()
+        connection.rollback()
+        other_organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="task-effect-migration-other",
+                name="Task Effect Migration Other",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        other_warehouse_id = connection.execute(
+            sa.insert(Warehouse).values(
+                organization_id=other_organization_id,
+                code="TASK-EFFECT-MIGRATION-OTHER",
+                name="Task Effect Warehouse Other",
+                country_code="CN",
+                timezone="Asia/Shanghai",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        other_supplier_id = connection.execute(
+            sa.insert(Supplier).values(
+                organization_id=other_organization_id,
+                code="task-effect-migration-other-supplier",
+                name="Task Effect Supplier Other",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        other_purchase_order_id = connection.execute(
+            sa.insert(CommercePurchaseOrder).values(
+                organization_id=other_organization_id,
+                supplier_id=other_supplier_id,
+                warehouse_id=other_warehouse_id,
+                po_number="PO-TASK-EFFECT-MIGRATION-OTHER",
+                idempotency_key_hash=hashlib.sha256(b"task-effect-other-po-key").hexdigest(),
+                request_hash=hashlib.sha256(b"task-effect-other-po-request").hexdigest(),
+                status="DRAFT",
+                currency="CNY",
+                total_amount=1,
+                created_by_user_id=user_id,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.update(BusinessTask)
+                .where(BusinessTask.id == second_task_id)
+                .values(execution_purchase_order_id=other_purchase_order_id)
+            )
+            connection.commit()
+        connection.rollback()
+        connection.execute(
+            sa.delete(TaskEffectMeasurement).where(
+                TaskEffectMeasurement.business_task_id == task_id
+            )
+        )
+        connection.commit()
+        assert connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) == 0
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.update(CommercePurchaseOrder)
+                .where(CommercePurchaseOrder.id == purchase_order_id)
+                .values(
+                    organization_id=other_organization_id,
+                    supplier_id=other_supplier_id,
+                    warehouse_id=other_warehouse_id,
+                )
+            )
+            connection.commit()
+        connection.rollback()
+        connection.execute(sa.insert(TaskEffectMeasurement).values(**values))
+        connection.commit()
+        assert connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) == 1
+        agent_values = {
+            "organization_id": organization_id,
+            "idempotency_key_hash": hashlib.sha256(b"agent-migration-key").hexdigest(),
+            "request_hash": hashlib.sha256(b"agent-migration-request").hexdigest(),
+            "action": "CREATE_PURCHASE_DRAFT",
+            "status": "SUCCESS",
+            "result": {"purchase_order_id": purchase_order_id},
+            "created_by_user_id": user_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        connection.execute(sa.insert(AgentDraftRequest).values(**agent_values))
+        connection.commit()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(sa.insert(AgentDraftRequest).values(**agent_values))
+            connection.commit()
+        connection.rollback()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(AgentDraftRequest).values(
+                    **{
+                        **agent_values,
+                        "idempotency_key_hash": hashlib.sha256(b"agent-invalid-action").hexdigest(),
+                        "action": "EXECUTE_ORDER",
+                    }
+                )
+            )
+            connection.commit()
+        connection.rollback()
+
+        command.downgrade(config, "0015_task_effects")
+        inspector = sa.inspect(connection)
+        assert "agent_draft_requests" not in inspector.get_table_names()
+        assert "task_effect_measurements" in inspector.get_table_names()
+        assert "execution_purchase_order_id" not in {
+            item["name"] for item in inspector.get_columns("business_tasks")
+        }
+        assert connection.scalar(sa.select(sa.func.count()).select_from(BusinessTask)) == 2
+        assert connection.scalar(sa.select(sa.func.count()).select_from(BusinessTaskHistory)) == 1
+        assert connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) == 1
+        command.upgrade(config, "head")
+        assert connection.scalar(sa.select(sa.func.count()).select_from(BusinessTaskHistory)) == 1
+        assert connection.scalar(sa.select(sa.func.count()).select_from(TaskEffectMeasurement)) == 1
+        assert (
+            connection.scalar(
+                sa.select(BusinessTask.execution_purchase_order_id).where(
+                    BusinessTask.id == task_id
+                )
+            )
+            == purchase_order_id
+        )
 
         command.downgrade(config, "0014_douyin_webhook_lookup")
         assert "task_effect_measurements" not in sa.inspect(connection).get_table_names()

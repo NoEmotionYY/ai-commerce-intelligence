@@ -90,6 +90,10 @@ class TaskEffectService:
         if alert.alert_type is not AlertType.STOCKOUT_RISK or task.master_sku_id is None:
             raise TaskEffectValidationError("当前只支持采购执行后的库存告警效果测量")
         self._validate_baseline_evidence(alert)
+        if task.execution_purchase_order_id is None:
+            raise TaskEffectValidationError("业务任务必须在采购执行前关联采购单")
+        if task.execution_purchase_order_id != purchase_order_id:
+            raise TaskEffectConflictError("效果测量采购单与任务执行关联不一致")
         purchase_order = self._executed_purchase_order(purchase_order_id, task, alert)
         executed_at = purchase_order.ordered_at
         assert executed_at is not None

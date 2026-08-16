@@ -164,6 +164,7 @@ class PurchasingService:
         payload: PurchaseOrderCreate,
         *,
         request_identity: object | None = None,
+        commit: bool = True,
     ) -> CommercePurchaseOrder:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         supplier = self._supplier(payload.supplier_id)
@@ -235,7 +236,8 @@ class PurchasingService:
             "purchasing.order.create",
             {"purchase_order_id": order.id, "total_amount": str(order.total_amount)},
         )
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return order
 
     def submit_purchase_order(self, purchase_order_id: int) -> CommercePurchaseOrder:
@@ -583,6 +585,7 @@ class PurchasingService:
         payload: ReplenishmentDraftCreate,
         *,
         as_of: datetime | None = None,
+        commit: bool = True,
     ) -> tuple[CommercePurchaseOrder, dict[str, object], bool]:
         """Create a draft using server-owned replenishment policy and quantity."""
         require_permission(self.principal, Permission.WRITE_COMMERCE)
@@ -621,6 +624,7 @@ class PurchasingService:
                 ],
             ),
             request_identity=request_identity,
+            commit=commit,
         )
         return order, recommendation, False
 

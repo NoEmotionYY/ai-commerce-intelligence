@@ -33,6 +33,17 @@ def buffer_operation_audit(session: Session, operation: Any) -> None:
     session.info.setdefault(AUDIT_BUFFER_KEY, []).append(operation)
 
 
+def operation_audit_checkpoint(session: Session) -> int:
+    return len(session.info.get(AUDIT_BUFFER_KEY, []))
+
+
+def discard_buffered_operation_audits_since(session: Session, checkpoint: int) -> None:
+    operations = session.info.get(AUDIT_BUFFER_KEY, [])
+    if checkpoint < 0 or checkpoint > len(operations):
+        raise ValueError("审计缓冲检查点无效")
+    del operations[checkpoint:]
+
+
 def persist_buffered_operation_audits(session: Session) -> None:
     operations = session.info.pop(AUDIT_BUFFER_KEY, [])
     if not operations:

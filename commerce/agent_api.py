@@ -41,6 +41,7 @@ from commerce.llm_agent import run_model_tool_loop
 from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
 from commerce.logging import configure_logging
 from commerce.models import (
+    AgentDraftActionType,
     AlertStatus,
     ApprovalStatus,
     ApprovalTask,
@@ -84,6 +85,7 @@ from commerce.schemas import (
     AlertStatusUpdate,
     AuthenticationStatus,
     BusinessTaskCreate,
+    BusinessTaskPurchaseLink,
     BusinessTaskStatusUpdate,
     ChatRequest,
     ChatResponse,
@@ -207,6 +209,8 @@ from commerce.services.tiktok_shop_webhook import (
     TikTokShopWebhookValidationError,
 )
 from commerce.tools import CommerceTools
+from commerce.v2_agent import V2AgentRequest, V2AgentResponse, run_v2_agent_tool_loop
+from commerce.v2_agent_tools import V2AgentTools
 from commerce.workflow import create_purchase_draft, decide_approval, execute_approved_purchase
 
 
@@ -806,6 +810,7 @@ def business_task_dict(item: BusinessTask) -> dict[str, object]:
         "alert_id": item.alert_id,
         "shop_id": item.shop_id,
         "master_sku_id": item.master_sku_id,
+        "execution_purchase_order_id": item.execution_purchase_order_id,
         "title": item.title,
         "description": item.description,
         "status": item.status.value,
@@ -2616,6 +2621,28 @@ def transition_v2_business_task(
     return business_task_dict(item)
 
 
+@app.put("/api/v2/business-tasks/{task_id}/purchase-order")
+def link_v2_business_task_purchase_order(
+    task_id: int,
+    payload: BusinessTaskPurchaseLink,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = AlertTaskService(session, principal).link_purchase_order(
+            task_id,
+            payload.purchase_order_id,
+        )
+    except (
+        AuthorizationError,
+        AlertTaskConflictError,
+        AlertTaskNotFoundError,
+        AlertTaskValidationError,
+    ) as exc:
+        raise alert_task_http_error(exc) from exc
+    return business_task_dict(item)
+
+
 @app.patch("/api/v2/shops/{shop_id}/status")
 def update_v2_shop_status(
     shop_id: int,
@@ -2727,6 +2754,43 @@ def revoke_v2_shop_credential(
     except CredentialUnavailableError as exc:
         raise HTTPException(409, "店铺凭据不可用") from exc
     return CredentialService.metadata(credential)
+
+
+@app.post("/api/v2/agent", response_model=V2AgentResponse)
+def run_v2_agent(
+    payload: V2AgentRequest,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> V2AgentResponse:
+    session_id = payload.session_id or str(uuid4())
+    action = AgentDraftActionType(payload.draft_action) if payload.draft_action else None
+    try:
+        owner = V2AgentTools(
+            session,
+            principal,
+            as_of=utcnow(),
+            session_id=session_id,
+            shop_id=payload.shop_id,
+            request_idempotency_key=payload.idempotency_key,
+        )
+        tools = owner.langchain_tools(draft_action=action)
+        result, provider_name, model_name = run_v2_agent_tool_loop(payload.message, tools)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LLMConfigurationError as exc:
+        raise HTTPException(503, "生产 Agent 模型配置不可用") from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(504, "生产 Agent 模型请求超时") from exc
+    except (LLMServiceError, ValueError) as exc:
+        raise HTTPException(502, "生产 Agent 当前不可用") from exc
+    return V2AgentResponse(
+        **result.model_dump(),
+        session_id=session_id,
+        shop_id=payload.shop_id,
+        tool_calls=[ToolCallRecord.model_validate(item) for item in owner.trace],
+        llm_provider=provider_name,
+        llm_model=model_name,
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)

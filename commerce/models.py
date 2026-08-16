@@ -276,6 +276,17 @@ class EffectAssessment(StrEnum):
     WORSENED = "WORSENED"
 
 
+class AgentDraftActionType(StrEnum):
+    CREATE_BUSINESS_TASK = "CREATE_BUSINESS_TASK"
+    CREATE_PURCHASE_DRAFT = "CREATE_PURCHASE_DRAFT"
+
+
+class AgentDraftRequestStatus(StrEnum):
+    PENDING = "PENDING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
 class InboundShipmentStatus(StrEnum):
     PLANNED = "PLANNED"
     SHIPPED = "SHIPPED"
@@ -2190,6 +2201,11 @@ class BusinessTask(Base):
             ["organization_id", "master_sku_id"],
             ["master_skus.organization_id", "master_skus.id"],
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "execution_purchase_order_id"],
+            ["commerce_purchase_orders.organization_id", "commerce_purchase_orders.id"],
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint(
             "organization_id", "idempotency_key_hash", name="uq_business_tasks_org_idempotency"
         ),
@@ -2206,6 +2222,7 @@ class BusinessTask(Base):
     alert_id: Mapped[int] = mapped_column(index=True)
     shop_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     master_sku_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    execution_purchase_order_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     idempotency_key_hash: Mapped[str] = mapped_column(String(64))
     request_hash: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(200))
@@ -2345,6 +2362,45 @@ class TaskEffectMeasurement(Base):
     )
     measured_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class AgentDraftRequest(Base):
+    __tablename__ = "agent_draft_requests"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id"],
+            ["organizations.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "idempotency_key_hash",
+            name="uq_agent_draft_requests_org_idempotency",
+        ),
+        Index("ix_agent_draft_requests_org_id_unique", "organization_id", "id", unique=True),
+        CheckConstraint(
+            "action IN ('CREATE_BUSINESS_TASK','CREATE_PURCHASE_DRAFT')",
+            name="ck_agent_draft_requests_action",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING','SUCCESS','FAILED')",
+            name="ck_agent_draft_requests_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    action: Mapped[AgentDraftActionType] = mapped_column(
+        Enum(AgentDraftActionType, native_enum=False, length=32)
+    )
+    status: Mapped[AgentDraftRequestStatus] = mapped_column(
+        Enum(AgentDraftRequestStatus, native_enum=False, length=12)
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
 
 
 class Product(Base):

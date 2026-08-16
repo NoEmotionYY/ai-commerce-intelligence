@@ -25,13 +25,17 @@ from commerce.models import (
     CommerceAlert,
     CommerceOrder,
     CommerceOrderStatus,
+    CommercePurchaseOrder,
+    CommercePurchaseOrderItem,
     MembershipStatus,
     OperationLog,
     OrganizationMembership,
     ProfitKind,
     ProfitSnapshot,
+    PurchaseOrderStatus,
     Refund,
     RefundStatus,
+    SupplierProduct,
     User,
     utcnow,
 )
@@ -273,7 +277,13 @@ class AlertTaskService:
         self.session.commit()
         return alert
 
-    def create_task(self, alert_id: int, payload: BusinessTaskCreate) -> BusinessTask:
+    def create_task(
+        self,
+        alert_id: int,
+        payload: BusinessTaskCreate,
+        *,
+        commit: bool = True,
+    ) -> BusinessTask:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         alert = self._get_alert(alert_id)
         if payload.assigned_to_user_id is not None:
@@ -341,7 +351,8 @@ class AlertTaskService:
             return existing
         self._history(task, None, BusinessTaskStatus.TODO, None)
         self._audit("business_task.create", {"business_task_id": task.id, "alert_id": alert.id})
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return task
 
     def list_tasks(
@@ -356,6 +367,121 @@ class AlertTaskService:
         if status is not None:
             statement = statement.where(BusinessTask.status == status)
         return list(self.session.scalars(statement.order_by(BusinessTask.id).limit(limit)))
+
+    def link_purchase_order(
+        self,
+        task_id: int,
+        purchase_order_id: int,
+        *,
+        expected_shop_id: int | None = None,
+        commit: bool = True,
+    ) -> BusinessTask:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        task = self._get_task(task_id, lock=True)
+        if expected_shop_id is not None and task.shop_id != expected_shop_id:
+            raise AlertTaskNotFoundError("业务任务不存在于当前店铺范围")
+        replaced_purchase_order_id: int | None = None
+        if task.execution_purchase_order_id is not None:
+            if task.execution_purchase_order_id != purchase_order_id:
+                current = self.session.scalar(
+                    select(CommercePurchaseOrder).where(
+                        CommercePurchaseOrder.id == task.execution_purchase_order_id,
+                        CommercePurchaseOrder.organization_id == self.principal.organization_id,
+                    )
+                )
+                if current is None or current.status not in {
+                    PurchaseOrderStatus.REJECTED,
+                    PurchaseOrderStatus.CANCELLED,
+                }:
+                    raise AlertTaskConflictError("业务任务已关联有效采购单")
+                replaced_purchase_order_id = current.id
+            else:
+                return task
+        if task.status in {BusinessTaskStatus.DONE, BusinessTaskStatus.DISMISSED}:
+            raise AlertTaskConflictError("已结束的业务任务不能关联采购单")
+        alert = self._get_alert(task.alert_id)
+        if alert.alert_type is not AlertType.STOCKOUT_RISK or task.master_sku_id is None:
+            raise AlertTaskValidationError("只有库存告警任务可以关联补货采购单")
+        purchase_order = self.session.scalar(
+            select(CommercePurchaseOrder)
+            .where(
+                CommercePurchaseOrder.id == purchase_order_id,
+                CommercePurchaseOrder.organization_id == self.principal.organization_id,
+            )
+            .with_for_update()
+        )
+        if purchase_order is None:
+            raise AlertTaskNotFoundError("采购单不存在")
+        if purchase_order.status not in {
+            PurchaseOrderStatus.DRAFT,
+            PurchaseOrderStatus.PENDING_APPROVAL,
+            PurchaseOrderStatus.APPROVED,
+        }:
+            raise AlertTaskConflictError("采购单必须在执行前关联业务任务")
+        item_id = self.session.scalar(
+            select(CommercePurchaseOrderItem.id).where(
+                CommercePurchaseOrderItem.organization_id == self.principal.organization_id,
+                CommercePurchaseOrderItem.purchase_order_id == purchase_order.id,
+                CommercePurchaseOrderItem.master_sku_id == task.master_sku_id,
+            )
+        )
+        if item_id is None:
+            raise AlertTaskValidationError("采购单不包含任务关联的 SKU")
+        task.execution_purchase_order_id = purchase_order.id
+        self._audit(
+            "business_task.purchase_order.link",
+            {
+                "business_task_id": task.id,
+                "purchase_order_id": purchase_order.id,
+                "replaced_purchase_order_id": replaced_purchase_order_id,
+            },
+        )
+        if commit:
+            self.session.commit()
+        return task
+
+    def validate_purchase_draft_context(
+        self,
+        task_id: int,
+        supplier_product_id: int,
+        *,
+        expected_shop_id: int | None = None,
+    ) -> BusinessTask:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        task = self._get_task(task_id, lock=True)
+        if expected_shop_id is not None and task.shop_id != expected_shop_id:
+            raise AlertTaskNotFoundError("业务任务不存在于当前店铺范围")
+        if task.status in {BusinessTaskStatus.DONE, BusinessTaskStatus.DISMISSED}:
+            raise AlertTaskConflictError("已结束的业务任务不能创建采购草稿")
+        alert = self._get_alert(task.alert_id)
+        if alert.alert_type is not AlertType.STOCKOUT_RISK or task.master_sku_id is None:
+            raise AlertTaskValidationError("只有库存告警任务可以创建补货采购草稿")
+        if task.shop_id != alert.shop_id or task.master_sku_id != alert.master_sku_id:
+            raise AlertTaskValidationError("任务与库存告警业务上下文不一致")
+        supplier_product = self.session.scalar(
+            select(SupplierProduct).where(
+                SupplierProduct.id == supplier_product_id,
+                SupplierProduct.organization_id == self.principal.organization_id,
+                SupplierProduct.active.is_(True),
+            )
+        )
+        if supplier_product is None:
+            raise AlertTaskNotFoundError("供应商商品不存在")
+        if supplier_product.master_sku_id != task.master_sku_id:
+            raise AlertTaskValidationError("供应商商品与任务 SKU 不一致")
+        if task.execution_purchase_order_id is not None:
+            current = self.session.scalar(
+                select(CommercePurchaseOrder).where(
+                    CommercePurchaseOrder.id == task.execution_purchase_order_id,
+                    CommercePurchaseOrder.organization_id == self.principal.organization_id,
+                )
+            )
+            if current is None or current.status not in {
+                PurchaseOrderStatus.REJECTED,
+                PurchaseOrderStatus.CANCELLED,
+            }:
+                raise AlertTaskConflictError("业务任务已关联有效采购单")
+        return task
 
     def transition_task(
         self, task_id: int, status: BusinessTaskStatus, *, reason: str | None = None
