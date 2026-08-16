@@ -6,7 +6,7 @@ Phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`
 Current and next task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`TODO`)
 Last completed top-level task: `COM-P1-002` — Warehouse and Channel Inventory
 Current verification slice: `COM-P1-002A` through `COM-P1-002D` (`DONE`)
-Last verified commit: `4265e32`
+Last verified commit: `a9b3915`
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -865,3 +865,20 @@ Status:
 - The 18 skipped Compose/browser/cloud cases are not counted as PASS. Five Compose tests were run
   explicitly and passed; browser and DeepSeek cloud cases remain environment-gated for their
   relevant later phases and do not block COM-P1-002.
+
+## 2026-08-16 — Verified V2 Local Checkpoint
+
+- Reviewed the complete tracked and untracked working tree after the COM-P1-002 exit gate. All 39
+  previously untracked files were project migrations, V2 services, verification scripts, or tests;
+  no temporary database, log, cache, or test-artifact file was included.
+- Scanned changed and untracked files for common credential, token, password, and private-key
+  patterns. Matches were limited to explicit non-secret test values; no production secret was
+  found or committed.
+- Re-ran the checkpoint gates: `python -m pytest -q` -> `253 passed, 18 skipped, 1 warning`;
+  `ruff check .`, `ruff format --check .`, `mypy .`, `alembic heads`, and
+  `git diff --check` -> PASS. The 18 environment-gated skips remain excluded from PASS.
+- Created local commit `a9b3915` (`feat: establish verified v2 commerce foundations`) covering
+  the verified Phase 1/Phase 2 foundations, shop connections, inventory, migrations, tests, and
+  aligned project documentation. No remote was changed and nothing was pushed.
+- The next implementation task is `COM-P1-003`; the checkpoint does not claim costs, refunds,
+  settlements, or profit are implemented.
