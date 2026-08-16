@@ -68,25 +68,25 @@
 
 ## F. Cost & Profit
 
-- [ ] SKU cost history implemented.
-- [ ] Effective dates supported.
-- [ ] Estimated profit implemented.
-- [ ] Actual profit distinguished from estimated profit.
-- [ ] Platform fees representable.
-- [ ] Shipping costs representable.
-- [ ] Refund losses representable.
-- [ ] Deterministic calculations tested.
+- [x] SKU cost history implemented.
+- [x] Effective dates supported.
+- [x] Estimated profit implemented.
+- [x] Actual/settled profit distinguished from estimated profit.
+- [x] Platform fees representable.
+- [x] Shipping/logistics costs representable.
+- [x] Refund losses representable.
+- [x] Deterministic calculations tested with Decimal/Numeric inputs and persisted evidence.
 
 ---
 
 ## G. Refunds
 
-- [ ] Unified Refund implemented.
-- [ ] RefundItem implemented where needed.
-- [ ] SKU refund rate calculable.
-- [ ] Shop refund rate calculable.
-- [ ] Platform refund rate calculable.
-- [ ] Refund spike detection implemented.
+- [x] Unified Refund implemented.
+- [x] RefundItem implemented where needed.
+- [x] SKU refund rate calculable.
+- [x] Shop refund rate calculable.
+- [x] Platform refund rate calculable.
+- [x] Refund spike detection implemented with deterministic thresholds.
 
 ---
 

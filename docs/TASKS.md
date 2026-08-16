@@ -4,9 +4,10 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
-Current and next task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`TODO`).
-Last completed task: `COM-P1-002` — Warehouse and Channel Inventory (`DONE`).
+Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
+Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`).
+Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`).
+Last completed task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`DONE`).
 `COM-P1-002A` through `COM-P1-002D` are `DONE`; the formal exit review found no blocking Product,
 Architecture, Security, Testing, migration, or documentation issue.
 The `0009_inventory` SQLite and MySQL migration/integrity/data-preservation gates and the actual
@@ -524,15 +525,66 @@ git diff review, and independent reviewer findings resolved.
 
 ### COM-P1-003 — Costs, Refunds, Settlements, and Profit
 Priority: P1
-Status: TODO
+Status: DONE
 Dependencies: COM-P0-007, COM-P1-002.
 Scope: cost history, Refund/RefundItem, FinanceTransaction, Settlement, estimated/actual profit.
-Acceptance: historical results retain cost, FX, fees, logistics, ads, refunds, and settlement inputs.
-Verification: deterministic calculation and historical-replay tests.
+Acceptance: historical results retain cost, FX, fees, logistics, ads, refunds, and settlement inputs;
+estimated and settled profit are distinct; tenant and permission boundaries are enforced.
+Verification: `tests/unit/test_finance_service.py` and `tests/integration/test_finance_api.py` focused
+suite `5 passed`; `tests/migration/test_migrations.py` `12 passed`; disposable MySQL
+`scripts/verify_mysql_migrations.py` PASS; full pytest `259 passed, 18 skipped, 1 warning`; Ruff,
+format, strict MyPy, single head, diff check PASS; Product/Architecture/Security/Testing and
+documentation Exit Review PASS.
+
+#### COM-P1-003A — Finance Model and Additive Migration
+Priority: P1
+Status: DONE
+Dependencies: COM-P0-007, COM-P1-002.
+Scope: tenant-scoped SKU cost history, refunds/items, finance transactions, settlements, and
+immutable profit snapshots through explicit `0010` migration.
+Acceptance: composite foreign keys enforce tenant/shop/order/SKU ownership; money and FX use
+Decimal/Numeric; historical calculation inputs are persisted without changing legacy Demo tables.
+Verification: ORM/schema inspection plus SQLite migration suite `12 passed`; MySQL fresh, upgrade,
+rollback, re-upgrade, constraints, data-preservation, and finance behavior verifier PASS.
+
+#### COM-P1-003B — Trusted Finance Ingestion and Deterministic Profit Service
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-003A.
+Scope: permissioned cost history, RawEvent-bound refund/finance/settlement ingestion, deterministic
+estimated and settled profit snapshots, refund metrics, idempotency, stale-event handling, and audit.
+Acceptance: unvalidated payloads cannot become authoritative finance rows; later cost/FX changes do
+not rewrite historical snapshots; repeated source events are idempotent and conflicts fail closed.
+Verification: validation, Decimal calculation, replay, stale/equal-time conflict, tenant,
+permission, historical input, and idempotency tests in the focused `5 passed` service suite.
+
+#### COM-P1-003C — Tenant-Scoped Finance and Refund API
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-003B.
+Scope: authenticated bounded reads for cost history, refunds, transactions, settlements, profit,
+and refund metrics plus controlled cost-maintenance writes.
+Acceptance: tenant/shop/order/SKU filters cannot cross scope; APIs serialize Decimal as strings and
+do not expose raw payloads, processing tokens, source hashes, or unrestricted authoritative writes.
+Verification: authenticated API integration suite `5 passed`; denial, bounded reads, Decimal
+serialization, empty-state, and leakage boundary checks PASS.
+
+#### COM-P1-003D — Finance Exit Review
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-003A, COM-P1-003B, COM-P1-003C.
+Scope: Product, Architecture, Security, Testing, migration, documentation, and full-regression review
+for parent COM-P1-003.
+Acceptance: all Cost/Profit and Refund acceptance items have evidence with no unexplained internal
+gap or Critical/High correctness, security, or data-integrity issue.
+Verification: Product/Architecture/Security/Testing Exit Review PASS; focused service/API `5 passed`,
+migration `12 passed`, full `259 passed, 18 skipped, 1 warning`, MySQL verifier PASS, Ruff,
+format, strict MyPy, single Alembic head, and diff checks PASS. The 18 Compose/browser/cloud skips
+remain environment-gated and are not counted as PASS.
 
 ### COM-P1-004 — Suppliers and Purchasing
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P1-003.
 Scope: Supplier, SupplierProduct, PurchaseOrder, PurchaseOrderItem, InboundShipment.
 Acceptance: lifecycle and approval boundaries are enforced.
@@ -595,5 +647,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 8 (`COM-P1-003` through `COM-P1-010`); `COM-P1-001` and `COM-P1-002` are `DONE`.
+- P1 remaining: 7 (`COM-P1-004` through `COM-P1-010`); `COM-P1-001` through `COM-P1-003` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

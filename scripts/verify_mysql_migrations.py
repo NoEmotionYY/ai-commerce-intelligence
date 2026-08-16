@@ -83,6 +83,34 @@ V2_TABLES = {
     "channel_inventory",
     "warehouse_inventory_source_events",
     "channel_inventory_source_events",
+    "sku_costs",
+    "refunds",
+    "refund_items",
+    "refund_source_events",
+    "settlements",
+    "settlement_source_events",
+    "finance_transactions",
+    "finance_transaction_source_events",
+    "profit_snapshots",
+    "profit_snapshot_cost_inputs",
+    "profit_snapshot_refund_inputs",
+    "profit_snapshot_settlement_inputs",
+    "profit_snapshot_transaction_inputs",
+}
+FINANCE_TABLES = {
+    "sku_costs",
+    "refunds",
+    "refund_items",
+    "refund_source_events",
+    "settlements",
+    "settlement_source_events",
+    "finance_transactions",
+    "finance_transaction_source_events",
+    "profit_snapshots",
+    "profit_snapshot_cost_inputs",
+    "profit_snapshot_refund_inputs",
+    "profit_snapshot_settlement_inputs",
+    "profit_snapshot_transaction_inputs",
 }
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "organization_memberships": "uq_membership_org_user",
@@ -103,6 +131,18 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "channel_inventory": "uq_channel_inventory_shop_platform_sku",
     "warehouse_inventory_source_events": "uq_warehouse_inventory_source_events_raw_event",
     "channel_inventory_source_events": "uq_channel_inventory_source_events_raw_event",
+    "sku_costs": "uq_sku_costs_org_sku_effective_from",
+    "refunds": "uq_refunds_shop_external_key",
+    "refund_items": "uq_refund_items_refund_order_item",
+    "refund_source_events": "uq_refund_source_events_raw_event",
+    "settlements": "uq_settlements_shop_external_key",
+    "settlement_source_events": "uq_settlement_source_events_raw_event",
+    "finance_transactions": "uq_finance_transactions_shop_external_key",
+    "finance_transaction_source_events": "uq_finance_transaction_source_events_raw_event",
+    "profit_snapshots": "uq_profit_snapshots_order_kind_hash",
+    "profit_snapshot_cost_inputs": "uq_profit_snapshot_cost_inputs_item",
+    "profit_snapshot_refund_inputs": "uq_profit_snapshot_refund_inputs_refund",
+    "profit_snapshot_transaction_inputs": "uq_profit_snapshot_transaction_inputs_transaction",
 }
 EXPECTED_UNIQUE_INDEXES = {
     "shops": "ix_shops_org_id_unique",
@@ -115,6 +155,11 @@ EXPECTED_UNIQUE_INDEXES = {
     "warehouses": "ix_warehouses_org_id_unique",
     "warehouse_inventory": "ix_warehouse_inventory_org_id_unique",
     "channel_inventory": "ix_channel_inventory_org_shop_id_unique",
+    "sku_costs": "ix_sku_costs_org_id_unique",
+    "refunds": "ix_refunds_org_shop_order_id_unique",
+    "settlements": "ix_settlements_org_shop_id_unique",
+    "finance_transactions": "ix_finance_transactions_org_shop_id_unique",
+    "profit_snapshots": "ix_profit_snapshots_org_shop_id_unique",
 }
 EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
     "organization_memberships": {
@@ -179,6 +224,67 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         ),
         (("organization_id", "shop_id", "raw_event_id"), "platform_raw_events"),
     },
+    "sku_costs": {
+        (("organization_id", "master_sku_id"), "master_skus"),
+        (("created_by_user_id",), "users"),
+    },
+    "refunds": {
+        (("organization_id", "shop_id", "order_id"), "commerce_orders"),
+        (("organization_id", "shop_id", "last_source_event_id"), "platform_raw_events"),
+    },
+    "refund_items": {
+        (("organization_id", "shop_id", "order_id", "refund_id"), "refunds"),
+        (
+            ("organization_id", "shop_id", "order_id", "order_item_id", "master_sku_id"),
+            "commerce_order_items",
+        ),
+    },
+    "refund_source_events": {
+        (("organization_id", "shop_id", "order_id", "refund_id"), "refunds"),
+        (("organization_id", "shop_id", "raw_event_id"), "platform_raw_events"),
+    },
+    "settlements": {
+        (("organization_id", "shop_id"), "shops"),
+        (("organization_id", "shop_id", "last_source_event_id"), "platform_raw_events"),
+    },
+    "settlement_source_events": {
+        (("organization_id", "shop_id", "settlement_id"), "settlements"),
+        (("organization_id", "shop_id", "raw_event_id"), "platform_raw_events"),
+    },
+    "finance_transactions": {
+        (("organization_id", "shop_id"), "shops"),
+        (("organization_id", "shop_id", "order_id"), "commerce_orders"),
+        (("organization_id", "shop_id", "settlement_id"), "settlements"),
+        (("organization_id", "shop_id", "last_source_event_id"), "platform_raw_events"),
+    },
+    "finance_transaction_source_events": {
+        (("organization_id", "shop_id", "finance_transaction_id"), "finance_transactions"),
+        (("organization_id", "shop_id", "raw_event_id"), "platform_raw_events"),
+    },
+    "profit_snapshots": {
+        (("organization_id", "shop_id", "order_id"), "commerce_orders"),
+        (("organization_id", "shop_id", "settlement_id"), "settlements"),
+    },
+    "profit_snapshot_cost_inputs": {
+        (("organization_id", "shop_id", "profit_snapshot_id"), "profit_snapshots"),
+        (("organization_id", "sku_cost_id"), "sku_costs"),
+        (
+            ("organization_id", "shop_id", "order_id", "order_item_id", "master_sku_id"),
+            "commerce_order_items",
+        ),
+    },
+    "profit_snapshot_refund_inputs": {
+        (("organization_id", "shop_id", "profit_snapshot_id"), "profit_snapshots"),
+        (("organization_id", "shop_id", "order_id", "refund_id"), "refunds"),
+    },
+    "profit_snapshot_settlement_inputs": {
+        (("organization_id", "shop_id", "profit_snapshot_id"), "profit_snapshots"),
+        (("organization_id", "shop_id", "settlement_id"), "settlements"),
+    },
+    "profit_snapshot_transaction_inputs": {
+        (("organization_id", "shop_id", "profit_snapshot_id"), "profit_snapshots"),
+        (("organization_id", "shop_id", "finance_transaction_id"), "finance_transactions"),
+    },
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "shop_connections": {"ck_shop_connections_authorization_status"},
@@ -202,6 +308,39 @@ EXPECTED_CHECK_CONSTRAINTS = {
     },
     "warehouse_inventory": {"ck_warehouse_inventory_quantities"},
     "channel_inventory": {"ck_channel_inventory_quantities"},
+    "sku_costs": {"ck_sku_costs_nonnegative", "ck_sku_costs_effective_range"},
+    "refunds": {
+        "ck_refunds_amount",
+        "ck_refunds_reporting_amount",
+        "ck_refunds_exchange_rate",
+        "ck_refunds_status",
+    },
+    "refund_items": {"ck_refund_items_quantity", "ck_refund_items_amount"},
+    "settlements": {
+        "ck_settlements_nonnegative",
+        "ck_settlements_exchange_rate",
+        "ck_settlements_period",
+        "ck_settlements_status",
+    },
+    "finance_transactions": {
+        "ck_finance_transactions_amount",
+        "ck_finance_transactions_reporting_amount",
+        "ck_finance_transactions_exchange_rate",
+        "ck_finance_transactions_direction",
+        "ck_finance_transactions_type",
+    },
+    "profit_snapshots": {
+        "ck_profit_snapshots_nonnegative",
+        "ck_profit_snapshots_revenue_exchange_rate",
+        "ck_profit_snapshots_kind",
+    },
+    "profit_snapshot_cost_inputs": {
+        "ck_profit_snapshot_cost_inputs_quantity",
+        "ck_profit_snapshot_cost_inputs_values",
+    },
+    "profit_snapshot_refund_inputs": {"ck_profit_snapshot_refund_inputs_values"},
+    "profit_snapshot_settlement_inputs": {"ck_profit_snapshot_settlement_inputs_exchange_rate"},
+    "profit_snapshot_transaction_inputs": {"ck_profit_snapshot_transaction_inputs_values"},
 }
 
 
@@ -875,6 +1014,17 @@ def main() -> None:
         command.upgrade(config, "head")
         _assert_head_schema(connection, config)
         _assert_legacy_product_preserved(connection)
+        command.downgrade(config, "0009_inventory")
+        tables_after_finance_rollback = set(sa.inspect(connection).get_table_names())
+        remaining_finance_tables = FINANCE_TABLES.intersection(tables_after_finance_rollback)
+        if remaining_finance_tables:
+            raise RuntimeError(
+                f"MySQL finance rollback left tables behind: {sorted(remaining_finance_tables)}"
+            )
+        if "warehouse_inventory" not in tables_after_finance_rollback:
+            raise RuntimeError("MySQL finance rollback removed the inventory foundation")
+        command.upgrade(config, "head")
+        _assert_head_schema(connection, config)
         command.downgrade(config, "0002_approval_idempotency")
         remaining_tables = set(sa.inspect(connection).get_table_names())
         remaining_v2_tables = V2_TABLES.intersection(remaining_tables)

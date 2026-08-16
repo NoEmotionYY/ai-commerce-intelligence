@@ -2,12 +2,14 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
-Current and next task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`TODO`).
-Last completed task: `COM-P1-002` — Warehouse and Channel Inventory (`DONE`).
-`COM-P1-002A` through `COM-P1-002D` are `DONE`; the formal Product, Architecture, Security,
-Testing, migration, and documentation exit review found no blocking issue.
-The `0009_inventory` SQLite/MySQL migration gates and the MySQL inventory race gate pass.
+Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
+Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`).
+Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`).
+Last completed task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`DONE`).
+The `0010_finance` models, service, API, SQLite/MySQL migrations, tenant/permission boundaries,
+idempotent/stale-event handling, Decimal calculations, persisted historical inputs, and full
+regression gates pass the formal Product, Architecture, Security, Testing, migration, and
+documentation Exit Review.
 The inventory/analytics/API/migration suite is green (`25 passed, 1 warning`), Compose smoke is
 green (`5 passed`), and the latest current-checkout full suite is green
 (`253 passed, 18 skipped, 1 warning`).
@@ -76,8 +78,12 @@ connection infrastructure, not a claim of a completed or real-verified platform 
 RawEvent-bound reconciliation, stale/idempotent lineage, deterministic current and projected
 coverage, tenant-scoped read APIs, SQLite/MySQL migration evidence, and an actual MySQL concurrent
 shared-warehouse race are verified locally. Physical inventory remains organization-shared;
-incoming coverage is not ETA-bounded until purchasing/inbound shipment work exists. No real
-Douyin/TikTok inventory synchronization is claimed. `COM-P1-003` is the next highest-priority
+incoming coverage is not ETA-bounded until purchasing/inbound shipment work exists. The
+`0010_finance` revision and tenant-scoped cost/refund/settlement/transaction/profit services and
+APIs are locally verified on SQLite and MySQL. Profit snapshots preserve the actual Decimal cost,
+FX, refund, fee, logistics, advertising, adjustment, and settlement inputs used at calculation
+time; estimated and settled results are distinct. No real Douyin/TikTok inventory or finance
+synchronization is claimed. Phase 3 exit is satisfied; `COM-P1-004` is the next highest-priority
 dependency-satisfied task.
 
 ## Phase 4 — Suppliers, Purchasing, and Approval

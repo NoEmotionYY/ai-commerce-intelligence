@@ -222,3 +222,111 @@ class OrderSnapshotInput(SyncInput):
     refunded_at: datetime | None = None
     settled_at: datetime | None = None
     items: list[OrderItemSnapshotInput] = Field(min_length=1, max_length=10_000)
+
+
+class FinanceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, frozen=True)
+
+
+class SKUCostCreate(FinanceInput):
+    master_sku_id: int = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    purchase_cost: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    packaging_cost: str = Field(default="0", pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    domestic_shipping_cost: str = Field(
+        default="0", pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$"
+    )
+    cross_border_shipping_cost: str = Field(
+        default="0", pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$"
+    )
+    warehouse_cost: str = Field(default="0", pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    other_cost: str = Field(default="0", pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    effective_from: datetime
+    effective_to: datetime | None = None
+    source: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+    source_reference: str | None = Field(default=None, max_length=256)
+
+
+class RefundItemSnapshotInput(FinanceInput):
+    external_item_id: str = Field(min_length=1, max_length=256)
+    quantity: int = Field(gt=0, le=1_000_000)
+    amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+
+
+class RefundSnapshotInput(FinanceInput):
+    external_refund_id: str = Field(min_length=1, max_length=256)
+    external_order_id: str = Field(min_length=1, max_length=256)
+    platform_status: str = Field(
+        min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    )
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    exchange_rate: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,10})?$")
+    exchange_rate_effective_at: datetime
+    exchange_rate_source: str = Field(min_length=1, max_length=100)
+    reason_code: str | None = Field(default=None, max_length=100)
+    requested_at: datetime | None = None
+    approved_at: datetime | None = None
+    refunded_at: datetime | None = None
+    items: list[RefundItemSnapshotInput] = Field(min_length=1, max_length=10_000)
+
+
+class SettlementSnapshotInput(FinanceInput):
+    external_settlement_id: str = Field(min_length=1, max_length=256)
+    platform_status: str = Field(
+        min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    )
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    gross_amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    fee_amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    refund_amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    adjustment_amount: str = Field(pattern=r"^-?(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    net_amount: str = Field(pattern=r"^-?(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    exchange_rate: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,10})?$")
+    exchange_rate_effective_at: datetime
+    exchange_rate_source: str = Field(min_length=1, max_length=100)
+    period_start: datetime
+    period_end: datetime
+    settled_at: datetime | None = None
+
+
+class FinanceTransactionSnapshotInput(FinanceInput):
+    external_transaction_id: str = Field(min_length=1, max_length=256)
+    transaction_type: Literal[
+        "REVENUE",
+        "PLATFORM_FEE",
+        "LOGISTICS",
+        "ADVERTISING",
+        "REFUND",
+        "TAX",
+        "ADJUSTMENT",
+        "OTHER",
+    ]
+    direction: Literal["CREDIT", "DEBIT"]
+    amount: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    exchange_rate: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,10})?$")
+    exchange_rate_effective_at: datetime
+    exchange_rate_source: str = Field(min_length=1, max_length=100)
+    occurred_at: datetime
+    external_order_id: str | None = Field(default=None, max_length=256)
+    external_settlement_id: str | None = Field(default=None, max_length=256)
+
+
+class ExchangeRateInput(FinanceInput):
+    source_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    rate: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,10})?$")
+    effective_at: datetime
+    source: str = Field(min_length=1, max_length=100)
+
+
+class ProfitSnapshotCreate(FinanceInput):
+    kind: Literal["ESTIMATED", "SETTLED"]
+    reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    settlement_id: int | None = Field(default=None, gt=0)
+    as_of: datetime | None = None
+    exchange_rates: list[ExchangeRateInput] = Field(default_factory=list, max_length=32)

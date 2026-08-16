@@ -364,3 +364,32 @@ stock are non-sellable for coverage. Incoming stock improves only a separate pro
 is not ETA-bounded until InboundShipment/purchasing exists. Physical inventory remains shared at
 organization scope even when demand and channel exposure are filtered to one shop. The next task
 is `COM-P1-003`.
+
+## ADR-019 — Immutable Finance Inputs and Trusted Platform Finance Ingestion
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: Cost, FX, refund, fee, logistics, advertising, and settlement values change over time.
+Recomputing a historical profit result from current mutable reference data would silently alter
+past decisions. A public normalized finance write endpoint would also let an authenticated user
+fabricate platform-authoritative refunds or settlements without source evidence.
+
+Decision: Add tenant-scoped `SKUCost`, `Refund`/`RefundItem`, `Settlement`,
+`FinanceTransaction`, and immutable `ProfitSnapshot` input tables through `0010_finance`.
+Authoritative platform finance records require a claimed immutable `PlatformRawEvent`; replay is
+idempotent, stale evidence is retained without overwriting current state, and equal-time conflicts
+fail closed. Use `Decimal`/`Numeric` for all authoritative amounts and rates. Persist every cost,
+currency, exchange-rate effective time/source, refund, fee, logistics, advertising, adjustment,
+and settlement value consumed by a profit snapshot. Expose bounded tenant-scoped reads and only
+permissioned merchant cost creation and deterministic profit calculation as public writes.
+
+Reasoning: Historical financial evidence must remain reproducible even after source reference
+data changes. Raw lineage and explicit input snapshots provide auditability without guessing
+Douyin/TikTok payload contracts or allowing client-provided normalized data to become authoritative.
+
+Consequences: `COM-P1-003` is `DONE` at `L2 VERIFIED_LOCAL` after service/API/full regression,
+SQLite, and disposable MySQL 8.4.11 migration/integrity/data-preservation verification. It does
+not claim real platform synchronization or financial reconciliation. Those remain internal
+implementation work until connector tasks exist; no `BLOCKED_EXTERNAL` is recorded. Phase 3 exits
+and `COM-P1-004` is the next task.

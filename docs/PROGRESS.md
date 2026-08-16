@@ -2,11 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`
-Current and next task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`TODO`)
-Last completed top-level task: `COM-P1-002` — Warehouse and Channel Inventory
-Current verification slice: `COM-P1-002A` through `COM-P1-002D` (`DONE`)
-Last verified commit: `a9b3915`
+Phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`
+Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`)
+Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`)
+Last completed top-level task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit
+Current verification slice: `COM-P1-004A` — Purchasing Model and Additive Migration (`IN_PROGRESS`)
+Last verified commit: `3fccd76`
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -882,3 +883,59 @@ Status:
   aligned project documentation. No remote was changed and nothing was pushed.
 - The next implementation task is `COM-P1-003`; the checkpoint does not claim costs, refunds,
   settlements, or profit are implemented.
+
+## 2026-08-16 — COM-P1-003 Costs, Refunds, Settlements, and Profit Exit
+
+Implemented:
+
+- Added additive `0010_finance` models for immutable effective SKU cost history, Refund/RefundItem,
+  Settlement, FinanceTransaction, RawEvent lineage, ProfitSnapshot, and persisted cost/refund/
+  settlement/transaction calculation inputs. Legacy Demo tables remain unchanged.
+- Added trusted RawEvent-bound refund, settlement, and finance transaction ingestion with strict
+  validation, tenant/permission enforcement, same-event idempotency, stale-event lineage, and
+  differing equal-time conflict denial.
+- Added deterministic Decimal estimated and settled profit calculations. Snapshots preserve order
+  revenue FX, cost composition/FX, refunds, platform/logistics/advertising fees, adjustments, and
+  settlement evidence so later source changes do not rewrite history.
+- Added authenticated bounded V2 APIs for cost history, refunds and metrics, finance transactions,
+  settlements, and profit snapshots. Only permissioned cost creation and deterministic profit
+  calculation are public writes; authoritative platform finance imports remain internal services.
+
+Formal Exit Review:
+
+- Product: arbitrary organization/shop/order/SKU data is supported; estimated and settled profit
+  are distinct; refund rates and spike rules are deterministic; no Demo identifier is required.
+- Architecture: raw evidence remains separate from normalized finance models; stable business
+  semantics are shared without inventing platform adapters; legacy data is preserved.
+- Security: all reads are tenant scoped, writes require centralized permissions, authoritative
+  platform records require claimed RawEvents, and API responses exclude raw payloads, claim
+  tokens, hashes, credentials, and unrestricted normalized write endpoints.
+- Testing/data integrity: Decimal calculation, historical replay, cost interval conflict and
+  immutability, duplicate/stale/equal-time events, tenant/permission denial, API bounds/empty state,
+  SQLite/MySQL migrations, rollback/re-upgrade, and data preservation pass. MySQL initially exposed
+  an order-item foreign-key index downgrade dependency; `0010` now installs a stable support index
+  before dropping its finance-specific unique index, and the clean rerun passed.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_finance_service.py tests/integration/test_finance_api.py -q`:
+  `5 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `12 passed`.
+- `python -m pytest -q`: `259 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`107 files already formatted`).
+- `mypy .`: PASS (`82 source files`). A missing test-helper return annotation found by the first
+  run was fixed before the passing rerun.
+- `alembic heads`: one head, `0010_finance`; `git diff --check`: PASS.
+- Disposable official `mysql:8.4.11`, guarded empty `commerce_finance_test`: fresh install,
+  `0002 -> head -> 0002 -> head`, schema/behavior constraints, legacy/V2 data preservation, and
+  existing synchronization/inventory race checks PASS. The initial connection attempt occurred
+  before container initialization and was rerun only after MySQL reported ready.
+
+Status:
+
+- `COM-P1-003A` through `COM-P1-003D` and parent `COM-P1-003`: `DONE` at `L2 VERIFIED_LOCAL`.
+- Phase 3 exit is satisfied; current phase is `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
+- Current highest-priority dependency-satisfied task: `COM-P1-004` — Suppliers and Purchasing.
+- P0 remaining: 0; P1 remaining: 7; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS and do not
+  represent finance implementation failures or external platform verification.

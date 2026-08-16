@@ -163,6 +163,44 @@ class CommerceOrderStatus(StrEnum):
     REFUNDED = "REFUNDED"
 
 
+class RefundStatus(StrEnum):
+    REQUESTED = "REQUESTED"
+    APPROVED = "APPROVED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class FinanceTransactionType(StrEnum):
+    REVENUE = "REVENUE"
+    PLATFORM_FEE = "PLATFORM_FEE"
+    LOGISTICS = "LOGISTICS"
+    ADVERTISING = "ADVERTISING"
+    REFUND = "REFUND"
+    TAX = "TAX"
+    ADJUSTMENT = "ADJUSTMENT"
+    OTHER = "OTHER"
+
+
+class FinanceDirection(StrEnum):
+    CREDIT = "CREDIT"
+    DEBIT = "DEBIT"
+
+
+class SettlementStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    SETTLED = "SETTLED"
+    FAILED = "FAILED"
+    REVERSED = "REVERSED"
+
+
+class ProfitKind(StrEnum):
+    ESTIMATED = "ESTIMATED"
+    SETTLED = "SETTLED"
+
+
 class PurchaseStatus(StrEnum):
     EXECUTED = "EXECUTED"
 
@@ -666,6 +704,21 @@ class CommerceOrderItem(Base):
         UniqueConstraint(
             "order_id", "external_item_key", name="uq_commerce_order_items_order_external_key"
         ),
+        Index(
+            "ix_commerce_order_items_org_shop_order_id_sku_unique",
+            "organization_id",
+            "shop_id",
+            "order_id",
+            "id",
+            "master_sku_id",
+            unique=True,
+        ),
+        Index(
+            "ix_commerce_order_items_org_shop_order_fk",
+            "organization_id",
+            "shop_id",
+            "order_id",
+        ),
         CheckConstraint("quantity > 0", name="ck_commerce_order_items_quantity"),
         CheckConstraint("unit_price >= 0", name="ck_commerce_order_items_unit_price"),
         CheckConstraint("line_amount >= 0", name="ck_commerce_order_items_line_amount"),
@@ -915,6 +968,631 @@ class ChannelInventorySourceEvent(Base):
     source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
     applied: Mapped[bool] = mapped_column(default=True)
     imported_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class SKUCost(Base):
+    __tablename__ = "sku_costs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "master_sku_id",
+            "effective_from",
+            name="uq_sku_costs_org_sku_effective_from",
+        ),
+        Index(
+            "ix_sku_costs_org_sku_effective",
+            "organization_id",
+            "master_sku_id",
+            "effective_from",
+        ),
+        Index("ix_sku_costs_org_id_unique", "organization_id", "id", unique=True),
+        CheckConstraint(
+            "purchase_cost >= 0 AND packaging_cost >= 0 AND domestic_shipping_cost >= 0 "
+            "AND cross_border_shipping_cost >= 0 AND warehouse_cost >= 0 AND other_cost >= 0",
+            name="ck_sku_costs_nonnegative",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to > effective_from",
+            name="ck_sku_costs_effective_range",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    currency: Mapped[str] = mapped_column(String(3), index=True)
+    purchase_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    packaging_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    domestic_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    cross_border_shipping_cost: Mapped[Decimal] = mapped_column(
+        Numeric(18, 4), default=Decimal("0")
+    )
+    warehouse_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    other_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    effective_from: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    effective_to: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    source: Mapped[str] = mapped_column(String(64))
+    source_reference: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Refund(Base):
+    __tablename__ = "refunds"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id"],
+            ["commerce_orders.organization_id", "commerce_orders.shop_id", "commerce_orders.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "last_source_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint("shop_id", "external_refund_key", name="uq_refunds_shop_external_key"),
+        Index(
+            "ix_refunds_org_shop_order_id_unique",
+            "organization_id",
+            "shop_id",
+            "order_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint("amount >= 0", name="ck_refunds_amount"),
+        CheckConstraint("reporting_amount >= 0", name="ck_refunds_reporting_amount"),
+        CheckConstraint("exchange_rate > 0", name="ck_refunds_exchange_rate"),
+        CheckConstraint(
+            "status IN ('REQUESTED','APPROVED','PROCESSING','COMPLETED','REJECTED','CANCELLED')",
+            name="ck_refunds_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    external_refund_id: Mapped[str] = mapped_column(String(256))
+    external_refund_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[RefundStatus] = mapped_column(
+        Enum(RefundStatus, native_enum=False, length=20), index=True
+    )
+    external_status: Mapped[str] = mapped_column(String(100))
+    currency: Mapped[str] = mapped_column(String(3), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reporting_currency: Mapped[str] = mapped_column(String(3), index=True)
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    requested_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    refunded_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
+    last_source_event_id: Mapped[int] = mapped_column(index=True)
+    last_source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class RefundItem(Base):
+    __tablename__ = "refund_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id", "refund_id"],
+            ["refunds.organization_id", "refunds.shop_id", "refunds.order_id", "refunds.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id", "order_item_id", "master_sku_id"],
+            [
+                "commerce_order_items.organization_id",
+                "commerce_order_items.shop_id",
+                "commerce_order_items.order_id",
+                "commerce_order_items.id",
+                "commerce_order_items.master_sku_id",
+            ],
+        ),
+        UniqueConstraint("refund_id", "order_item_id", name="uq_refund_items_refund_order_item"),
+        CheckConstraint("quantity > 0", name="ck_refund_items_quantity"),
+        CheckConstraint("amount >= 0", name="ck_refund_items_amount"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    refund_id: Mapped[int] = mapped_column(index=True)
+    order_item_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class RefundSourceEvent(Base):
+    __tablename__ = "refund_source_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id", "refund_id"],
+            ["refunds.organization_id", "refunds.shop_id", "refunds.order_id", "refunds.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "raw_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint("raw_event_id", name="uq_refund_source_events_raw_event"),
+    )
+    refund_id: Mapped[int] = mapped_column(primary_key=True)
+    raw_event_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    normalized_hash: Mapped[str] = mapped_column(String(64))
+    normalizer_version: Mapped[str] = mapped_column(String(32))
+    source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    applied: Mapped[bool] = mapped_column(default=True)
+    imported_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Settlement(Base):
+    __tablename__ = "settlements"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id"],
+            ["shops.organization_id", "shops.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "last_source_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint(
+            "shop_id", "external_settlement_key", name="uq_settlements_shop_external_key"
+        ),
+        Index(
+            "ix_settlements_org_shop_id_unique",
+            "organization_id",
+            "shop_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "gross_amount >= 0 AND fee_amount >= 0 AND refund_amount >= 0",
+            name="ck_settlements_nonnegative",
+        ),
+        CheckConstraint("exchange_rate > 0", name="ck_settlements_exchange_rate"),
+        CheckConstraint("period_end >= period_start", name="ck_settlements_period"),
+        CheckConstraint(
+            "status IN ('PENDING','PROCESSING','SETTLED','FAILED','REVERSED')",
+            name="ck_settlements_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    external_settlement_id: Mapped[str] = mapped_column(String(256))
+    external_settlement_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[SettlementStatus] = mapped_column(
+        Enum(SettlementStatus, native_enum=False, length=20), index=True
+    )
+    currency: Mapped[str] = mapped_column(String(3), index=True)
+    gross_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    fee_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    refund_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    adjustment_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    net_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reporting_currency: Mapped[str] = mapped_column(String(3), index=True)
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_net_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    period_start: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    period_end: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    settled_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
+    last_source_event_id: Mapped[int] = mapped_column(index=True)
+    last_source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class SettlementSourceEvent(Base):
+    __tablename__ = "settlement_source_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "settlement_id"],
+            ["settlements.organization_id", "settlements.shop_id", "settlements.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "raw_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint("raw_event_id", name="uq_settlement_source_events_raw_event"),
+    )
+    settlement_id: Mapped[int] = mapped_column(primary_key=True)
+    raw_event_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    normalized_hash: Mapped[str] = mapped_column(String(64))
+    normalizer_version: Mapped[str] = mapped_column(String(32))
+    source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    applied: Mapped[bool] = mapped_column(default=True)
+    imported_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class FinanceTransaction(Base):
+    __tablename__ = "finance_transactions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id"],
+            ["shops.organization_id", "shops.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id"],
+            ["commerce_orders.organization_id", "commerce_orders.shop_id", "commerce_orders.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "settlement_id"],
+            ["settlements.organization_id", "settlements.shop_id", "settlements.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "last_source_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint(
+            "shop_id", "external_transaction_key", name="uq_finance_transactions_shop_external_key"
+        ),
+        Index(
+            "ix_finance_transactions_org_shop_id_unique",
+            "organization_id",
+            "shop_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint("amount >= 0", name="ck_finance_transactions_amount"),
+        CheckConstraint("reporting_amount >= 0", name="ck_finance_transactions_reporting_amount"),
+        CheckConstraint("exchange_rate > 0", name="ck_finance_transactions_exchange_rate"),
+        CheckConstraint(
+            "direction IN ('CREDIT','DEBIT')", name="ck_finance_transactions_direction"
+        ),
+        CheckConstraint(
+            "transaction_type IN ('REVENUE','PLATFORM_FEE','LOGISTICS','ADVERTISING','REFUND',"
+            "'TAX','ADJUSTMENT','OTHER')",
+            name="ck_finance_transactions_type",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    settlement_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    external_transaction_id: Mapped[str] = mapped_column(String(256))
+    external_transaction_key: Mapped[str] = mapped_column(String(64))
+    transaction_type: Mapped[FinanceTransactionType] = mapped_column(
+        Enum(FinanceTransactionType, native_enum=False, length=24), index=True
+    )
+    direction: Mapped[FinanceDirection] = mapped_column(
+        Enum(FinanceDirection, native_enum=False, length=8), index=True
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    currency: Mapped[str] = mapped_column(String(3), index=True)
+    reporting_currency: Mapped[str] = mapped_column(String(3), index=True)
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    last_source_event_id: Mapped[int] = mapped_column(index=True)
+    last_source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class FinanceTransactionSourceEvent(Base):
+    __tablename__ = "finance_transaction_source_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "finance_transaction_id"],
+            [
+                "finance_transactions.organization_id",
+                "finance_transactions.shop_id",
+                "finance_transactions.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "raw_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint("raw_event_id", name="uq_finance_transaction_source_events_raw_event"),
+    )
+    finance_transaction_id: Mapped[int] = mapped_column(primary_key=True)
+    raw_event_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    normalized_hash: Mapped[str] = mapped_column(String(64))
+    normalizer_version: Mapped[str] = mapped_column(String(32))
+    source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    applied: Mapped[bool] = mapped_column(default=True)
+    imported_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class ProfitSnapshot(Base):
+    __tablename__ = "profit_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id"],
+            ["commerce_orders.organization_id", "commerce_orders.shop_id", "commerce_orders.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "settlement_id"],
+            ["settlements.organization_id", "settlements.shop_id", "settlements.id"],
+        ),
+        UniqueConstraint(
+            "order_id", "kind", "calculation_hash", name="uq_profit_snapshots_order_kind_hash"
+        ),
+        Index(
+            "ix_profit_snapshots_org_shop_id_unique",
+            "organization_id",
+            "shop_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "gross_revenue >= 0 AND refund_amount >= 0 AND cost_of_goods >= 0 "
+            "AND platform_fee >= 0 AND logistics_cost >= 0 AND advertising_cost >= 0",
+            name="ck_profit_snapshots_nonnegative",
+        ),
+        CheckConstraint(
+            "revenue_exchange_rate > 0", name="ck_profit_snapshots_revenue_exchange_rate"
+        ),
+        CheckConstraint("kind IN ('ESTIMATED','SETTLED')", name="ck_profit_snapshots_kind"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    settlement_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    kind: Mapped[ProfitKind] = mapped_column(
+        Enum(ProfitKind, native_enum=False, length=12), index=True
+    )
+    reporting_currency: Mapped[str] = mapped_column(String(3), index=True)
+    revenue_currency: Mapped[str] = mapped_column(String(3))
+    revenue_exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    revenue_exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revenue_exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    gross_revenue: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    refund_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    cost_of_goods: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    platform_fee: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    logistics_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    advertising_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    adjustment_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    profit_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    calculated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+
+
+class ProfitSnapshotCostInput(Base):
+    __tablename__ = "profit_snapshot_cost_inputs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "profit_snapshot_id"],
+            [
+                "profit_snapshots.organization_id",
+                "profit_snapshots.shop_id",
+                "profit_snapshots.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "sku_cost_id"],
+            ["sku_costs.organization_id", "sku_costs.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id", "order_item_id", "master_sku_id"],
+            [
+                "commerce_order_items.organization_id",
+                "commerce_order_items.shop_id",
+                "commerce_order_items.order_id",
+                "commerce_order_items.id",
+                "commerce_order_items.master_sku_id",
+            ],
+        ),
+        UniqueConstraint(
+            "profit_snapshot_id", "order_item_id", name="uq_profit_snapshot_cost_inputs_item"
+        ),
+        CheckConstraint("quantity > 0", name="ck_profit_snapshot_cost_inputs_quantity"),
+        CheckConstraint(
+            "purchase_cost >= 0 AND packaging_cost >= 0 AND domestic_shipping_cost >= 0 "
+            "AND cross_border_shipping_cost >= 0 AND warehouse_cost >= 0 AND other_cost >= 0 "
+            "AND exchange_rate > 0 AND reporting_total_cost >= 0",
+            name="ck_profit_snapshot_cost_inputs_values",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    profit_snapshot_id: Mapped[int] = mapped_column(index=True)
+    order_item_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    sku_cost_id: Mapped[int] = mapped_column(index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    cost_currency: Mapped[str] = mapped_column(String(3))
+    purchase_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    packaging_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    domestic_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    cross_border_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    warehouse_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    other_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_total_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+
+
+class ProfitSnapshotRefundInput(Base):
+    __tablename__ = "profit_snapshot_refund_inputs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "profit_snapshot_id"],
+            [
+                "profit_snapshots.organization_id",
+                "profit_snapshots.shop_id",
+                "profit_snapshots.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "order_id", "refund_id"],
+            ["refunds.organization_id", "refunds.shop_id", "refunds.order_id", "refunds.id"],
+        ),
+        UniqueConstraint(
+            "profit_snapshot_id", "refund_id", name="uq_profit_snapshot_refund_inputs_refund"
+        ),
+        CheckConstraint(
+            "amount >= 0 AND exchange_rate > 0 AND reporting_amount >= 0",
+            name="ck_profit_snapshot_refund_inputs_values",
+        ),
+    )
+    profit_snapshot_id: Mapped[int] = mapped_column(primary_key=True)
+    refund_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    order_id: Mapped[int] = mapped_column(index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reporting_currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+
+
+class ProfitSnapshotSettlementInput(Base):
+    __tablename__ = "profit_snapshot_settlement_inputs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "profit_snapshot_id"],
+            [
+                "profit_snapshots.organization_id",
+                "profit_snapshots.shop_id",
+                "profit_snapshots.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "settlement_id"],
+            ["settlements.organization_id", "settlements.shop_id", "settlements.id"],
+        ),
+        CheckConstraint(
+            "exchange_rate > 0", name="ck_profit_snapshot_settlement_inputs_exchange_rate"
+        ),
+    )
+    profit_snapshot_id: Mapped[int] = mapped_column(primary_key=True)
+    settlement_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    net_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reporting_currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_net_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    settled_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class ProfitSnapshotTransactionInput(Base):
+    __tablename__ = "profit_snapshot_transaction_inputs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "profit_snapshot_id"],
+            [
+                "profit_snapshots.organization_id",
+                "profit_snapshots.shop_id",
+                "profit_snapshots.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "finance_transaction_id"],
+            [
+                "finance_transactions.organization_id",
+                "finance_transactions.shop_id",
+                "finance_transactions.id",
+            ],
+        ),
+        UniqueConstraint(
+            "profit_snapshot_id",
+            "finance_transaction_id",
+            name="uq_profit_snapshot_transaction_inputs_transaction",
+        ),
+        CheckConstraint(
+            "amount >= 0 AND exchange_rate > 0 AND reporting_amount >= 0",
+            name="ck_profit_snapshot_transaction_inputs_values",
+        ),
+    )
+    profit_snapshot_id: Mapped[int] = mapped_column(primary_key=True)
+    finance_transaction_id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    transaction_type: Mapped[FinanceTransactionType] = mapped_column(
+        Enum(FinanceTransactionType, native_enum=False, length=24)
+    )
+    direction: Mapped[FinanceDirection] = mapped_column(
+        Enum(FinanceDirection, native_enum=False, length=8)
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    currency: Mapped[str] = mapped_column(String(3))
+    reporting_currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    exchange_rate_effective_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    exchange_rate_source: Mapped[str] = mapped_column(String(100))
+    reporting_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+@event.listens_for(SKUCost, "before_update")
+@event.listens_for(ProfitSnapshot, "before_update")
+@event.listens_for(ProfitSnapshotCostInput, "before_update")
+@event.listens_for(ProfitSnapshotRefundInput, "before_update")
+@event.listens_for(ProfitSnapshotSettlementInput, "before_update")
+@event.listens_for(ProfitSnapshotTransactionInput, "before_update")
+def prevent_historical_finance_update(
+    mapper: Mapper[Any], connection: Connection, target: Any
+) -> None:
+    del mapper, connection, target
+    raise ValueError("historical finance evidence is immutable")
 
 
 class Product(Base):

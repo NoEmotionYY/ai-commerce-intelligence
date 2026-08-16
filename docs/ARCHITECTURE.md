@@ -40,8 +40,9 @@ implemented and locally exit-reviewed ShopConnection/ShopCapability model, servi
 credential/sync readiness gate, and `0008` migration. Its SQLite/MySQL migration, security
 regression, and MySQL row-lock race gates pass.
 COM-P1-002 provides the locally verified warehouse and physical/channel inventory foundation
-described below. There are no implemented Refund, Settlement, BusinessTask, or AuditLog
-production models.
+described below. COM-P1-003 adds tenant-scoped SKU cost history, refunds, settlements, finance
+transactions, immutable estimated/settled profit snapshots, and bounded finance/refund APIs.
+Suppliers, purchasing, inbound shipments, alerts, BusinessTask, and AuditLog remain TARGET.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -91,8 +92,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0009_inventory`. Revisions `0003`
-through `0009`
+The repository has one Alembic head at `0010_finance`. Revisions `0003`
+through `0010`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -106,7 +107,9 @@ constraints. Revision `0008` passes the current SQLite suite and a disposable of
 Revision `0009` adds warehouses, physical inventory, channel inventory, and source-event lineage;
 it passes SQLite upgrade/rollback/re-upgrade/data-preservation checks and the disposable official
 MySQL 8.4 migration/integrity verifier, including a real concurrent first-write/newer-versus-stale
-shared-warehouse snapshot race.
+shared-warehouse snapshot race. Revision `0010` adds cost/refund/settlement/transaction/profit
+tables and a stable order-item foreign-key support index; it passes the same SQLite and disposable
+MySQL 8.4.11 fresh/upgrade/rollback/re-upgrade, constraint, and data-preservation gates.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -213,6 +216,30 @@ ETA-bounded because InboundShipment and purchasing remain TARGET.
 This is `L2 VERIFIED_LOCAL`, including SQLite and disposable official MySQL 8.4 evidence. It does
 not claim real Douyin/TikTok inventory synchronization or real-platform verification.
 
+## 3.10 CURRENT: Costs, Refunds, Settlements, and Profit
+
+`SKUCost` stores organization-owned, non-overlapping effective cost intervals. Costs use
+`Numeric`/`Decimal` values and cannot be mutated after creation, preserving the historical input
+used by a calculation. `Refund`/`RefundItem`, `Settlement`, and `FinanceTransaction` are separate
+normalized records whose source lineage must point to a claimed, validated `PlatformRawEvent`.
+Same-event replay is idempotent; equal-time conflicting content fails closed; older events retain
+lineage without overwriting current state. All money and exchange-rate fields retain currency,
+effective time, and source metadata.
+
+`FinanceService` deterministically computes `ESTIMATED` and `SETTLED` profit from order revenue,
+effective SKU cost, refunds, platform/logistics/advertising fees, adjustments, and settlement
+inputs. `ProfitSnapshot` and its cost/refund/settlement/transaction input tables persist the
+complete calculation evidence, so later cost or FX changes cannot silently rewrite history.
+Authenticated APIs expose bounded tenant-scoped cost, refund, refund-metric, transaction,
+settlement, and profit-snapshot reads, plus permissioned cost creation and profit calculation.
+Authoritative refund/settlement/transaction writes remain internal ingestion-service operations;
+raw payloads, claim tokens, and credentials are not returned.
+
+This is `L2 VERIFIED_LOCAL`: focused service/API/migration tests, full regression, SQLite, and
+disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass. It is not real
+Douyin/TikTok finance verification; platform adapters and production synchronization remain
+TARGET.
+
 ## 4. TARGET: Production Data Flow
 
 ```text
@@ -228,10 +255,9 @@ Platform API/Webhook/CSV/XLSX
 
 The unified domain includes the currently implemented Organization, User,
 OrganizationMembership, Shop, ShopCredential, MasterProduct, MasterSKU, PlatformSKU,
-PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, and ShopCapability
-plus the currently implemented Warehouse, WarehouseInventory, and ChannelInventory, and future
-Refund, SKUCost,
-FinanceTransaction, Settlement, Supplier,
+PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, ShopCapability,
+Warehouse, WarehouseInventory, ChannelInventory, Refund, RefundItem, SKUCost,
+FinanceTransaction, Settlement, and ProfitSnapshot, plus future Supplier,
 PurchaseOrder, InboundShipment, Alert, BusinessTask, OperationLog, and AuditLog.
 
 ## 5. TARGET: Dependency Direction

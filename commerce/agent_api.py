@@ -44,15 +44,21 @@ from commerce.models import (
     CommerceOrder,
     CommerceOrderStatus,
     CrawlerTask,
+    FinanceTransaction,
     MasterProduct,
     MasterSKU,
     OperationLog,
     Order,
     PlatformRawEvent,
     PlatformSKU,
+    ProfitKind,
+    ProfitSnapshot,
     RawEventStatus,
+    Refund,
+    Settlement,
     Shop,
     ShopCapabilityStatus,
+    SKUCost,
     SyncJob,
     SyncJobStatus,
     Warehouse,
@@ -70,12 +76,14 @@ from commerce.schemas import (
     PlatformSKUCreate,
     PlatformSKURemap,
     ProcessingFailure,
+    ProfitSnapshotCreate,
     RawEventClaimInput,
     RawEventCreate,
     RawEventReplay,
     ShopCapabilityUpdate,
     ShopProfileUpdate,
     ShopStatusUpdate,
+    SKUCostCreate,
     SyncCheckpointUpdate,
     SyncJobCreate,
     SyncJobFinish,
@@ -85,6 +93,12 @@ from commerce.schemas import (
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
 from commerce.services.catalog import CatalogConflictError, CatalogNotFoundError, CatalogService
 from commerce.services.combined import compose_a102
+from commerce.services.finance import (
+    FinanceConflictError,
+    FinanceNotFoundError,
+    FinanceService,
+    FinanceValidationError,
+)
 from commerce.services.ingestion import (
     IngestionConflictError,
     IngestionNotFoundError,
@@ -453,6 +467,113 @@ def channel_inventory_dict(item: ChannelInventory) -> dict[str, object]:
     }
 
 
+def sku_cost_dict(item: SKUCost) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "master_sku_id": item.master_sku_id,
+        "currency": item.currency,
+        "purchase_cost": str(item.purchase_cost),
+        "packaging_cost": str(item.packaging_cost),
+        "domestic_shipping_cost": str(item.domestic_shipping_cost),
+        "cross_border_shipping_cost": str(item.cross_border_shipping_cost),
+        "warehouse_cost": str(item.warehouse_cost),
+        "other_cost": str(item.other_cost),
+        "effective_from": item.effective_from,
+        "effective_to": item.effective_to,
+        "source": item.source,
+        "created_at": item.created_at,
+    }
+
+
+def refund_dict(item: Refund) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "order_id": item.order_id,
+        "external_refund_id": item.external_refund_id,
+        "status": item.status.value,
+        "external_status": item.external_status,
+        "currency": item.currency,
+        "amount": str(item.amount),
+        "reporting_currency": item.reporting_currency,
+        "exchange_rate": str(item.exchange_rate),
+        "exchange_rate_effective_at": item.exchange_rate_effective_at,
+        "exchange_rate_source": item.exchange_rate_source,
+        "reporting_amount": str(item.reporting_amount),
+        "reason_code": item.reason_code,
+        "requested_at": item.requested_at,
+        "approved_at": item.approved_at,
+        "refunded_at": item.refunded_at,
+    }
+
+
+def finance_transaction_dict(item: FinanceTransaction) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "order_id": item.order_id,
+        "settlement_id": item.settlement_id,
+        "external_transaction_id": item.external_transaction_id,
+        "transaction_type": item.transaction_type.value,
+        "direction": item.direction.value,
+        "amount": str(item.amount),
+        "currency": item.currency,
+        "reporting_currency": item.reporting_currency,
+        "exchange_rate": str(item.exchange_rate),
+        "exchange_rate_effective_at": item.exchange_rate_effective_at,
+        "exchange_rate_source": item.exchange_rate_source,
+        "reporting_amount": str(item.reporting_amount),
+        "occurred_at": item.occurred_at,
+    }
+
+
+def settlement_dict(item: Settlement) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "external_settlement_id": item.external_settlement_id,
+        "status": item.status.value,
+        "currency": item.currency,
+        "gross_amount": str(item.gross_amount),
+        "fee_amount": str(item.fee_amount),
+        "refund_amount": str(item.refund_amount),
+        "adjustment_amount": str(item.adjustment_amount),
+        "net_amount": str(item.net_amount),
+        "reporting_currency": item.reporting_currency,
+        "exchange_rate": str(item.exchange_rate),
+        "exchange_rate_effective_at": item.exchange_rate_effective_at,
+        "exchange_rate_source": item.exchange_rate_source,
+        "reporting_net_amount": str(item.reporting_net_amount),
+        "period_start": item.period_start,
+        "period_end": item.period_end,
+        "settled_at": item.settled_at,
+    }
+
+
+def profit_snapshot_dict(item: ProfitSnapshot) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "order_id": item.order_id,
+        "settlement_id": item.settlement_id,
+        "kind": item.kind.value,
+        "reporting_currency": item.reporting_currency,
+        "revenue_currency": item.revenue_currency,
+        "revenue_exchange_rate": str(item.revenue_exchange_rate),
+        "revenue_exchange_rate_effective_at": item.revenue_exchange_rate_effective_at,
+        "revenue_exchange_rate_source": item.revenue_exchange_rate_source,
+        "gross_revenue": str(item.gross_revenue),
+        "refund_amount": str(item.refund_amount),
+        "cost_of_goods": str(item.cost_of_goods),
+        "platform_fee": str(item.platform_fee),
+        "logistics_cost": str(item.logistics_cost),
+        "advertising_cost": str(item.advertising_cost),
+        "adjustment_amount": str(item.adjustment_amount),
+        "profit_amount": str(item.profit_amount),
+        "calculated_at": item.calculated_at,
+    }
+
+
 def shop_dict(shop: Shop, connection_service: ShopConnectionService) -> dict[str, object]:
     connection = connection_service.connection_for_shop(shop.id)
     capabilities = connection_service.list_capabilities(shop.id)
@@ -506,6 +627,18 @@ def inventory_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, InventoryValidationError):
         return HTTPException(400, str(exc))
     return HTTPException(500, "库存服务失败")
+
+
+def finance_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, FinanceNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, FinanceConflictError):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, FinanceValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "财务服务失败")
 
 
 def require_operator(key: str) -> None:
@@ -1209,6 +1342,152 @@ def get_v2_inventory_risk(
         )
     except (AuthorizationError, InventoryNotFoundError, InventoryValidationError) as exc:
         raise inventory_http_error(exc) from exc
+
+
+@app.post("/api/v2/finance/sku-costs")
+def create_v2_sku_cost(
+    payload: SKUCostCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return sku_cost_dict(FinanceService(session, principal).create_sku_cost(payload))
+    except (
+        AuthorizationError,
+        FinanceConflictError,
+        FinanceNotFoundError,
+        FinanceValidationError,
+    ) as exc:
+        raise finance_http_error(exc) from exc
+
+
+@app.get("/api/v2/finance/sku-costs")
+def list_v2_sku_costs(
+    master_sku_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = FinanceService(session, principal).list_sku_costs(
+            master_sku_id=master_sku_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+    return [sku_cost_dict(item) for item in items]
+
+
+@app.get("/api/v2/refunds")
+def list_v2_refunds(
+    shop_id: int | None = Query(default=None, gt=0),
+    order_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = FinanceService(session, principal).list_refunds(
+            shop_id=shop_id, order_id=order_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+    return [refund_dict(item) for item in items]
+
+
+@app.get("/api/v2/refunds/metrics")
+def get_v2_refund_metrics(
+    shop_id: int | None = Query(default=None, gt=0),
+    platform: str | None = Query(default=None, max_length=50),
+    master_sku_id: int | None = Query(default=None, gt=0),
+    as_of: datetime | None = None,
+    window_days: int = Query(default=30, ge=1, le=90),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return FinanceService(session, principal).refund_metrics(
+            shop_id=shop_id,
+            platform=platform,
+            master_sku_id=master_sku_id,
+            as_of=as_of or utcnow(),
+            window_days=window_days,
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+
+
+@app.get("/api/v2/finance/transactions")
+def list_v2_finance_transactions(
+    shop_id: int | None = Query(default=None, gt=0),
+    order_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = FinanceService(session, principal).list_transactions(
+            shop_id=shop_id, order_id=order_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+    return [finance_transaction_dict(item) for item in items]
+
+
+@app.get("/api/v2/finance/settlements")
+def list_v2_settlements(
+    shop_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = FinanceService(session, principal).list_settlements(
+            shop_id=shop_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+    return [settlement_dict(item) for item in items]
+
+
+@app.post("/api/v2/finance/orders/{order_id}/profit-snapshots")
+def calculate_v2_profit_snapshot(
+    order_id: int,
+    payload: ProfitSnapshotCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = FinanceService(session, principal).calculate_profit(order_id, payload)
+    except (
+        AuthorizationError,
+        FinanceConflictError,
+        FinanceNotFoundError,
+        FinanceValidationError,
+    ) as exc:
+        raise finance_http_error(exc) from exc
+    return profit_snapshot_dict(item)
+
+
+@app.get("/api/v2/finance/profit-snapshots")
+def list_v2_profit_snapshots(
+    order_id: int | None = Query(default=None, gt=0),
+    kind: ProfitKind | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = FinanceService(session, principal).list_profit_snapshots(
+            order_id=order_id, kind=kind, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
+        raise finance_http_error(exc) from exc
+    return [profit_snapshot_dict(item) for item in items]
 
 
 @app.patch("/api/v2/shops/{shop_id}/status")

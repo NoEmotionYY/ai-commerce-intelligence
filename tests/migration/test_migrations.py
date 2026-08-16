@@ -17,6 +17,7 @@ from commerce.database import Base
 from commerce.models import (
     ChannelInventory,
     CommerceOrder,
+    CommerceOrderItem,
     Inventory,
     MasterProduct,
     MasterSKU,
@@ -27,7 +28,9 @@ from commerce.models import (
     Shop,
     ShopCapability,
     ShopConnection,
+    SKUCost,
     SyncJob,
+    User,
     Warehouse,
     WarehouseInventory,
     utcnow,
@@ -855,6 +858,229 @@ def test_inventory_revision_constraints_and_rollback_preserve_existing_data(tmp_
         assert connection.scalar(sa.select(sa.func.count()).select_from(PlatformRawEvent)) == 1
         command.upgrade(config, "head")
         assert "warehouses" in sa.inspect(connection).get_table_names()
+        assert connection.scalar(sa.select(sa.func.count()).select_from(Inventory)) == 1
+
+
+def test_finance_revision_constraints_and_rollback_preserve_existing_data(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'finance-upgrade.db'}")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        config = _config(connection)
+        command.upgrade(config, "0009_inventory")
+        now = utcnow()
+        organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="finance-migration",
+                name="Finance Migration",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        other_organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="finance-migration-other",
+                name="Finance Migration Other",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        user_id = connection.execute(
+            sa.insert(User).values(
+                email="finance-migration@example.com",
+                display_name="Finance Migration",
+                is_active=True,
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        shop_id = connection.execute(
+            sa.insert(Shop).values(
+                organization_id=organization_id,
+                name="Finance Migration Shop",
+                platform="douyin",
+                external_shop_id="finance-migration-shop",
+                country_code="CN",
+                currency="CNY",
+                timezone="Asia/Shanghai",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        product_id = connection.execute(
+            sa.insert(MasterProduct).values(
+                organization_id=organization_id,
+                code="FINANCE-MIGRATION",
+                name="Finance Migration",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        sku_id = connection.execute(
+            sa.insert(MasterSKU).values(
+                organization_id=organization_id,
+                master_product_id=product_id,
+                sku_code="FINANCE-MIGRATION-SKU",
+                name="Finance Migration SKU",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        external_sku = "FINANCE-MIGRATION-EXTERNAL-SKU"
+        platform_sku_id = connection.execute(
+            sa.insert(PlatformSKU).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                master_sku_id=sku_id,
+                external_product_id="FINANCE-MIGRATION-EXTERNAL-PRODUCT",
+                external_sku_id=external_sku,
+                external_sku_key=hashlib.sha256(external_sku.encode()).hexdigest(),
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        raw_payload = '{"kind":"finance-migration"}'
+        raw_event_id = connection.execute(
+            sa.insert(PlatformRawEvent).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                platform="douyin",
+                event_type="ORDER.SNAPSHOT",
+                external_event_id="FINANCE-MIGRATION-EVENT",
+                source_event_key=hashlib.sha256(
+                    b"ORDER.SNAPSHOT\0FINANCE-MIGRATION-EVENT"
+                ).hexdigest(),
+                payload={"kind": "finance-migration"},
+                payload_hash=hashlib.sha256(raw_payload.encode()).hexdigest(),
+                status="PROCESSED",
+                processing_attempts=1,
+                replay_count=0,
+                received_at=now,
+                processed_at=now,
+            )
+        ).inserted_primary_key[0]
+        external_order = "FINANCE-MIGRATION-ORDER"
+        order_id = connection.execute(
+            sa.insert(CommerceOrder).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                platform="douyin",
+                external_order_id=external_order,
+                external_order_key=hashlib.sha256(external_order.encode()).hexdigest(),
+                status="COMPLETED",
+                external_status="COMPLETED",
+                currency="CNY",
+                total_amount=100,
+                ordered_at=now,
+                paid_at=now,
+                delivered_at=now,
+                last_source_event_id=raw_event_id,
+                last_source_occurred_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        external_item = "FINANCE-MIGRATION-ITEM"
+        connection.execute(
+            sa.insert(CommerceOrderItem).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                order_id=order_id,
+                platform_sku_id=platform_sku_id,
+                master_sku_id=sku_id,
+                external_item_id=external_item,
+                external_item_key=hashlib.sha256(external_item.encode()).hexdigest(),
+                external_sku_id=external_sku,
+                quantity=1,
+                currency="CNY",
+                unit_price=100,
+                line_amount=100,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        connection.execute(
+            sa.insert(Inventory).values(
+                sku="LEGACY-FINANCE-INVENTORY",
+                stock=3,
+                reserved_stock=0,
+                safety_stock=1,
+                updated_at=now,
+            )
+        )
+        connection.commit()
+
+        command.upgrade(config, "head")
+        finance_tables = {
+            "sku_costs",
+            "refunds",
+            "refund_items",
+            "refund_source_events",
+            "settlements",
+            "settlement_source_events",
+            "finance_transactions",
+            "finance_transaction_source_events",
+            "profit_snapshots",
+            "profit_snapshot_cost_inputs",
+            "profit_snapshot_refund_inputs",
+            "profit_snapshot_settlement_inputs",
+            "profit_snapshot_transaction_inputs",
+        }
+        assert finance_tables.issubset(set(sa.inspect(connection).get_table_names()))
+        cost_values = {
+            "organization_id": organization_id,
+            "master_sku_id": sku_id,
+            "currency": "CNY",
+            "purchase_cost": 10,
+            "packaging_cost": 1,
+            "domestic_shipping_cost": 0,
+            "cross_border_shipping_cost": 0,
+            "warehouse_cost": 0,
+            "other_cost": 0,
+            "effective_from": now,
+            "effective_to": None,
+            "source": "TEST",
+            "source_reference": "migration",
+            "created_by_user_id": user_id,
+            "created_at": now,
+        }
+        connection.execute(sa.insert(SKUCost).values(**cost_values))
+        connection.commit()
+
+        def rejects_integrity(statement: sa.Executable) -> None:
+            with pytest.raises(sa.exc.IntegrityError):
+                connection.execute(statement)
+                connection.commit()
+            connection.rollback()
+
+        rejects_integrity(
+            sa.insert(SKUCost).values(
+                **{
+                    **cost_values,
+                    "effective_from": now.replace(microsecond=1),
+                    "purchase_cost": -1,
+                }
+            )
+        )
+        rejects_integrity(
+            sa.insert(SKUCost).values(
+                **{
+                    **cost_values,
+                    "organization_id": other_organization_id,
+                    "effective_from": now.replace(microsecond=2),
+                }
+            )
+        )
+
+        command.downgrade(config, "0009_inventory")
+        tables_after_rollback = set(sa.inspect(connection).get_table_names())
+        assert finance_tables.isdisjoint(tables_after_rollback)
+        assert connection.scalar(sa.select(sa.func.count()).select_from(CommerceOrder)) == 1
+        assert connection.scalar(sa.select(sa.func.count()).select_from(Inventory)) == 1
+        command.upgrade(config, "head")
+        assert finance_tables.issubset(set(sa.inspect(connection).get_table_names()))
+        assert connection.scalar(sa.select(sa.func.count()).select_from(CommerceOrder)) == 1
         assert connection.scalar(sa.select(sa.func.count()).select_from(Inventory)) == 1
 
 
