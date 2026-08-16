@@ -3,8 +3,8 @@
 ## V2 Status
 
 Phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
-Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`)
+Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review
 Last completed top-level task: `COM-P1-009` — TikTok Shop Connector
 Current verification slice: `COM-P1-009` final Exit Review (`DONE`)
 Last verified checkpoint: `COM-P1-009` final Exit Review (local checkpoint recorded with this evidence)
@@ -1366,8 +1366,11 @@ Exit Review:
 Commands and final evidence:
 
 - TikTok sync-service regression after final hardening: `33 passed`.
-- TikTok/tenant/runtime/logging/client/normalization/API slice:
-  `python -m pytest -q ...`: `107 passed, 1 warning`.
+- TikTok/tenant/runtime/logging/client/API slice:
+  `python -m pytest -q tests/unit/test_tiktok_shop_client.py
+  tests/unit/test_tiktok_shop_sync_service.py tests/integration/test_tiktok_shop_connector_api.py
+  tests/integration/test_tenant_api.py tests/unit/test_logging_security.py
+  tests/unit/test_runtime_boundary.py`: `93 passed, 1 warning`.
 - `python -m pytest -q`: `416 passed, 18 skipped, 1 warning`.
 - `ruff check .`: PASS; `ruff format --check .`: PASS (`140 files already formatted`).
 - `mypy .`: PASS (`111 source files`); `alembic heads`: one head,
@@ -1387,6 +1390,6 @@ Status:
 
 - `COM-P1-009`: `DONE`; Implementation `PASS`; Contract/Mock `PASS` / `VERIFIED_MOCK` at
   `L2 VERIFIED_LOCAL`; Real Platform `IMPLEMENTED_UNVERIFIED`.
-- Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`; current/next task:
-  `COM-P1-010` (`TODO`).
+- Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`; current task:
+  `COM-P1-010` (`IN_PROGRESS`). Next task selection is deferred to its Exit Review.
 - P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.

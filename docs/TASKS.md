@@ -5,12 +5,12 @@ Priorities: P0 blocks product/data integrity/security; P1 is mandatory product b
 P2/P3 are quality and future work.
 
 Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
-Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`).
+Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review.
 Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
 `COM-P1-009` passed Product, Architecture, Security, Testing, migration, and documentation Exit
 Review. The current full suite is `416 passed, 18 skipped, 1 warning`; the final TikTok/tenant
-slice is `107 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite, and disposable
+slice is `93 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite, and disposable
 MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus Douyin/TikTok webhook and token
 concurrency gates pass. Implementation and contract/mock verification pass; real-platform verification is
 `IMPLEMENTED_UNVERIFIED`, not `VERIFIED_REAL`.
@@ -721,7 +721,7 @@ binding, encrypted row-locked token refresh, request identity, bounded deadline/
 statement reconciliation, RawEvent-first domain ingestion, stale/idempotent inventory/product/
 refund/finance handling, webhook signature/registry/deduplication, API checkpoint redaction,
 credential leakage, SQLite, and disposable MySQL concurrency gates pass. Final TikTok/tenant slice:
-`107 passed, 1 warning`; full pytest: `416 passed, 18 skipped, 1 warning`; Ruff, format, MyPy,
+`93 passed, 1 warning`; full pytest: `416 passed, 18 skipped, 1 warning`; Ruff, format, MyPy,
 single Alembic head, and `git diff --check`: PASS. Product/Architecture and Security Exit Reviews
 found no unresolved Critical/High/Medium issue. `Implementation: PASS`; `Contract/Mock: PASS` at
 `L2 VERIFIED_LOCAL`; `Real Platform: IMPLEMENTED_UNVERIFIED`. No sandbox or live seller/platform
@@ -729,7 +729,7 @@ call was executed. Webhook consumption, scheduler, and Worker remain TARGET.
 
 ### COM-P1-010 — Real Dashboard and Agent Tools
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P1-002, COM-P1-003, COM-P1-006, COM-P1-007.
 Scope: real normalized metrics, alerts/tasks, platform/shop comparison, validated Agent tools.
 Acceptance: product is useful without LLM and Agent output is grounded in services.

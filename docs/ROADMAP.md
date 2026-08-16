@@ -3,8 +3,8 @@
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
 Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
-Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`).
+Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review.
 Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
 Phase 8 Exit Review passed. The platform-specific TikTok Shop adapter, bounded pull continuation,
 credential refresh rotation, webhook RawEvent ingress, normalization, reconciliation, and
