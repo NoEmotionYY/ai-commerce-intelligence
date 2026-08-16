@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     erp_base_url: str = "http://localhost:8001"
     crawler_base_url: str = "http://localhost:8002"
     competitor_base_url: str = "http://localhost:8003"
+    douyin_api_base_url: str = "https://openapi-fxg.jinritemai.com"
+    douyin_max_attempts: int = Field(default=2, ge=1, le=2)
+    douyin_sync_deadline_seconds: float = Field(default=20.0, ge=5.0, le=60.0)
     allowed_crawler_hosts: str = "localhost,127.0.0.1,mock-competitor-site"
     agent_api_url: str = "http://localhost:8000"
     llm_provider: Literal["offline", "deepseek", "openai"] = "offline"

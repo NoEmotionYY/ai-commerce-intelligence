@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -21,6 +22,7 @@ from commerce.models import (
     Shop,
     User,
 )
+from commerce.services.credential_backfill import DouyinCredentialIdentifierBackfill
 
 
 def _fixture(db_session: Session) -> tuple[Principal, Principal, Shop, Shop]:
@@ -191,3 +193,64 @@ def test_credential_type_length_matches_database_schema(db_session: Session) -> 
             credential_type="B" * 51,
             payload={"value": "rejected"},
         )
+
+
+def test_public_app_identifier_is_only_stored_as_lookup_hash(db_session: Session) -> None:
+    owner, _, shop, _ = _fixture(db_session)
+    cipher = CredentialCipher({"v1": b"v" * 32}, "v1")
+    app_key = "public-douyin-app-key"
+    credential = CredentialService(db_session, owner, cipher).upsert(
+        shop_id=shop.id,
+        credential_type="OAUTH",
+        payload={
+            "app_key": app_key,
+            "app_secret": "private-app-secret",
+            "access_token": "private-access-token",
+        },
+    )
+    assert credential.public_identifier_hash == hashlib.sha256(app_key.encode()).hexdigest()
+    metadata = CredentialService.metadata(credential)
+    assert app_key not in str(metadata)
+    assert "private-app-secret" not in str(metadata)
+    assert "private-access-token" not in str(metadata)
+
+
+def test_douyin_identifier_backfill_is_bounded_idempotent_and_fail_closed(
+    db_session: Session,
+) -> None:
+    owner, _, shop, _ = _fixture(db_session)
+    cipher = CredentialCipher({"v1": b"z" * 32}, "v1")
+    app_key = "legacy-douyin-app-key"
+    credential = CredentialService(db_session, owner, cipher).upsert(
+        shop_id=shop.id,
+        credential_type="OAUTH",
+        payload={
+            "app_key": app_key,
+            "app_secret": "legacy-secret",
+            "access_token": "legacy-access-token",
+        },
+    )
+    credential.public_identifier_hash = None
+    db_session.commit()
+    service = DouyinCredentialIdentifierBackfill(db_session, cipher)
+    first = service.run_batch(limit=1)
+    assert (first.scanned, first.updated, first.failed) == (1, 1, 0)
+    db_session.refresh(credential)
+    assert credential.public_identifier_hash == hashlib.sha256(app_key.encode()).hexdigest()
+    assert service.run_batch(limit=1).scanned == 0
+
+    credential.public_identifier_hash = None
+    credential.encrypted_payload = credential.encrypted_payload[:-1] + bytes(
+        [credential.encrypted_payload[-1] ^ 1]
+    )
+    db_session.commit()
+    failed = service.run_batch(limit=1)
+    assert (failed.scanned, failed.updated, failed.failed) == (1, 0, 1)
+    db_session.refresh(credential)
+    assert credential.public_identifier_hash is None
+    audits = db_session.query(OperationLog).filter_by(
+        tool_name="credential.douyin_identifier_backfill"
+    )
+    serialized = " ".join(f"{item.tool_input} {item.tool_output}" for item in audits)
+    for secret in (app_key, "legacy-secret", "legacy-access-token"):
+        assert secret not in serialized

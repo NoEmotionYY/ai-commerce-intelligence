@@ -2,13 +2,14 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_7_DOUYIN_CONNECTOR`.
-Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`).
-Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
-Last completed task: `COM-P1-007` — CSV/XLSX Import (`DONE`).
-Phase 6 Exit Review passed. Tenant-scoped two-stage CSV/XLSX catalog/order/inventory/cost imports,
-RawEvent lineage, execution recovery, SQLite/MySQL migration evidence, and bounded API/parser
-security are verified locally. The current full suite is `290 passed, 18 skipped, 1 warning`;
+Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
+Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
+Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
+Phase 7 Exit Review passed. The platform-specific Douyin adapter, bounded pull continuation,
+credential refresh rotation, webhook RawEvent ingress, normalization, reconciliation, and
+SQLite/MySQL migration/concurrency evidence are verified locally. The current full suite is
+`325 passed, 18 skipped, 1 warning`;
 the 18 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
@@ -51,7 +52,8 @@ COM-P0-006 provides locally verified tenant-scoped immutable RawEvent evidence, 
 observations, SyncJob lifecycle, exclusive claims, lease recovery, retry/replay, bounded APIs,
 and SQLite/MySQL migration evidence. COM-P0-007 provides additive unified commerce orders/items,
 validated idempotent snapshot normalization, exact SKU/source lineage, and tenant-scoped reads.
-Real Douyin/TikTok payload parsing and status-code contracts remain later connector work.
+At Phase 2 exit, real platform parsing remained connector work. Douyin local/mock connector
+evidence is now recorded in Phase 7; TikTok Shop and all real-platform verification remain later.
 
 Exit: canonical catalog, raw ingestion, synchronization foundation, and unified order import are
 locally verified on SQLite/MySQL with no production dependency on legacy Demo orders.
@@ -137,6 +139,15 @@ Dependencies: Phases 1–6.
 Implement the platform-specific adapter, contract tests, and all technically possible
 authentication, product/SKU/order/inventory/refund/event/reconciliation behavior. Real
 verification is recorded separately and may be `BLOCKED_EXTERNAL` only after implementation.
+
+Exit: satisfied at `L2 VERIFIED_LOCAL` / `VERIFIED_MOCK` for contract behavior. Official Douyin
+request signing and endpoint shapes, token refresh, tenant-scoped bounded pulls, durable
+checkpoint continuation, request idempotency, product/SKU/order/inventory/refund normalization,
+webhook signature/deduplication, stale/equal-time reconciliation, failure visibility, and
+credential redaction pass local and MySQL gates. Pulls are explicit bounded request-time chunks;
+scheduled workers and webhook domain consumers remain TARGET. Real seller/platform verification is
+`IMPLEMENTED_UNVERIFIED` and is not counted as PASS or recorded as `BLOCKED_EXTERNAL` without a
+confirmed unavailable external prerequisite.
 
 ## Phase 8 — TikTok Shop Connector
 

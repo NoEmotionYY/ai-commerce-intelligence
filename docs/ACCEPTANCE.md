@@ -202,19 +202,30 @@ Douyin
 
 Implementation:
 
-- [ ] authentication architecture;
-- [ ] product synchronization;
-- [ ] SKU synchronization;
-- [ ] order synchronization;
-- [ ] inventory synchronization;
-- [ ] refunds where API supports;
-- [ ] event/webhook path where applicable;
-- [ ] retries;
-- [ ] pagination;
-- [ ] rate-limit handling;
-- [ ] idempotency;
-- [ ] contract tests;
-- [ ] errors observable.
+- [x] authentication architecture;
+- [x] product synchronization;
+- [x] SKU synchronization;
+- [x] order synchronization;
+- [x] inventory synchronization;
+- [x] refunds where API supports;
+- [x] event/webhook path where applicable;
+- [x] retries;
+- [x] pagination;
+- [x] rate-limit handling;
+- [x] idempotency;
+- [x] contract tests;
+- [x] errors observable.
+
+Current evidence state:
+
+- Implementation Status: `PASS`;
+- Contract/Mock Verification Status: `PASS` / `VERIFIED_MOCK`;
+- Real Platform Verification Status: `IMPLEMENTED_UNVERIFIED`.
+
+The checked implementation items mean the bounded connector contract is present and locally
+verified. They do not mean sandbox or real seller verification. Pulls require explicit bounded
+continuation, and the webhook currently persists RawEvents for later consumption; a scheduler and
+background Worker remain TARGET.
 
 Verification state must explicitly state one of:
 
@@ -409,7 +420,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-007 completion the current local suite is `290 passed, 18 skipped, 1 warning` under
+COM-P1-008 completion the current local suite is `325 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
@@ -425,8 +436,10 @@ deduplication, replay, lease recovery, failure visibility, and bounded APIs are 
 `PROCESSED` at the raw layer alone is not evidence that an Order was normalized. The unified
 CommerceOrder/CommerceOrderItem service atomically records source lineage, normalizer version,
 status, Decimal amounts/currency, UTC event timestamps, and raw completion. Tenant-scoped order
-reads and filters are locally verified. Real Douyin/TikTok payload and status-code mappings remain
-`MISSING` connector work and are not represented as real-platform verification. Organization-owned
+reads and filters are locally verified. Douyin payload/status normalization and official request
+contracts are locally/mock verified, while real Douyin execution is `IMPLEMENTED_UNVERIFIED` and
+TikTok Shop connector work remains `MISSING`; neither is represented as real-platform PASS.
+Organization-owned
 warehouses, tenant/catalog-constrained physical and channel inventory, RawEvent-bound snapshot
 lineage, stale/idempotent reconciliation, and deterministic current/incoming-aware coverage are
 locally verified on SQLite and MySQL. Tenant-scoped suppliers, commercial terms, purchase orders,
@@ -445,6 +458,11 @@ an explicit preview then execute workflow. Every staged record has file-source R
 tenant/permission checks, bounded parsing, mapping validation, exact source identity, duplicate and
 stale handling, execution leases, failed-record retry, and crash-after-domain-commit recovery are
 covered. This is a merchant file-ingestion capability, not Douyin/TikTok connector verification.
+The Douyin connector now provides encrypted row-locked token rotation, bounded checkpointed pulls,
+request identity, official endpoint/signature contracts, product/SKU/order/inventory/refund
+normalization, exact-body webhook verification/deduplication, and stale/equal-time product
+reconciliation. SQLite and MySQL migration/data-preservation gates plus real MySQL webhook and
+token-refresh races pass. No real seller, sandbox, or live-platform call was executed.
 
 ## V2 Complete Gate
 

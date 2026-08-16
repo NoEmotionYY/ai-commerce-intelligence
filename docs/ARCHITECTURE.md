@@ -184,8 +184,8 @@ platform adapters and CSV/XLSX importers call the service after their own contra
 
 Authenticated V2 order list/detail APIs are read-only, tenant-scoped, cursor-bounded, and support
 shop/platform/status/date filters without returning raw payloads or claim tokens. This is
-`L2 VERIFIED_LOCAL`; real Douyin/TikTok payload parsing and status-code mapping remain TARGET and
-must be verified separately.
+`L2 VERIFIED_LOCAL`. Douyin payload/status normalization now exists under the separately labelled
+connector in section 3.14; TikTok Shop and real-platform verification remain TARGET.
 
 ## 3.8 CURRENT: Shop Connections and Capabilities
 
@@ -234,8 +234,9 @@ is filtered to one shop, and API output labels that scope explicitly. Recorded w
 remains a source snapshot, while purchasing recommendations use open InboundShipment quantities
 only when their expected time falls within the lead-time plus safety window.
 
-This is `L2 VERIFIED_LOCAL`, including SQLite and disposable official MySQL 8.4 evidence. It does
-not claim real Douyin/TikTok inventory synchronization or real-platform verification.
+This is `L2 VERIFIED_LOCAL`, including SQLite and disposable official MySQL 8.4 evidence. The
+Douyin inventory adapter in section 3.14 is also local/mock verified, but neither section claims
+real-platform inventory verification; TikTok Shop synchronization remains TARGET.
 
 ## 3.10 CURRENT: Costs, Refunds, Settlements, and Profit
 
@@ -257,8 +258,9 @@ Authoritative refund/settlement/transaction writes remain internal ingestion-ser
 raw payloads, claim tokens, and credentials are not returned.
 
 This is `L2 VERIFIED_LOCAL`: focused service/API/migration tests, full regression, SQLite, and
-disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass. It is not real
-Douyin/TikTok finance verification; platform adapters and production synchronization remain
+disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass. Douyin refund
+normalization now calls this service as described in section 3.14, but remains local/mock rather
+than real finance verification. TikTok Shop and real-platform production synchronization remain
 TARGET.
 
 ## 3.11 CURRENT: Suppliers, Purchasing, and Inbound Planning
@@ -340,6 +342,53 @@ under SQLite and MySQL collations.
 This is `L2 VERIFIED_LOCAL`, including SQLite and disposable MySQL 8.4 migration/integrity gates.
 It is not evidence of Douyin/TikTok API, sandbox, or real-platform support.
 
+## 3.14 CURRENT: Douyin Connector (Local/Mock Verified)
+
+The Douyin-specific adapter implements the currently documented official Open Platform request
+contract for product, order, after-sale, SKU stock, and token refresh. It pins the official HTTPS
+origin, signs canonical JSON with HMAC-SHA256, bounds response size, timeout, attempts,
+Retry-After, total request duration, and admission. Credential material remains encrypted and is
+never serialized in job/API results. Refresh holds the credential row lock, detects an already
+rotated token, otherwise refreshes once and updates encrypted material without resetting an
+authorized ShopConnection.
+
+```text
+authenticated bounded pull
+  -> SyncJob(request fingerprint + checkpoint)
+  -> official Douyin client
+  -> PlatformRawEvent
+  -> Douyin normalization
+  -> Catalog / Order / Inventory / Finance service
+  -> unified tenant-scoped models
+```
+
+PRODUCTS.PULL, ORDERS.PULL, INVENTORY.PULL, and REFUNDS.PULL are permissioned and tenant scoped.
+Each HTTP call processes a bounded chunk in the request thread. An incomplete chunk yields the
+same job to `PENDING` with a durable next cursor/page/PlatformSKU position; repeating the identical
+request continues it. The idempotency key is bound to shop, job type, UTC window, page size, and
+chunk size. Different content conflicts, only one same-shop/same-type job may run, and a total
+deadline plus process semaphore bounds shared API worker occupancy. Successful complete windows
+record a high-water checkpoint; `PARTIAL` normalization outcomes do not advance it. There is no
+implemented scheduler or background sync Worker.
+
+Product snapshots preserve manual PlatformSKU-to-MasterSKU mappings. New unmapped platform SKUs
+receive deterministic initial canonical records. PlatformSKUSourceEvent records applied/stale
+lineage; a complete newer product snapshot deactivates missing SKUs atomically with RawEvent
+completion. Older snapshots cannot overwrite current metadata and differing same-time snapshots
+fail closed. Orders, inventory, and refunds reuse their existing stale/idempotent domain services.
+
+The public webhook verifies `HMAC-SHA256(app_id + exact raw body + app_secret)`, accepts at most
+50 events, bounds body/depth/candidate/concurrency, rejects sensitive credential fields, and
+deduplicates `msg_id` per Shop. It persists immutable `RECEIVED` RawEvents and returns the official
+success envelope. Webhook-to-domain background consumption remains TARGET; pull reconciliation is
+the current authoritative update path. Legacy NULL app-key lookup hashes require the explicit,
+bounded `scripts/backfill_douyin_credential_identifiers.py` deployment step; ordinary callbacks
+retain only an external-shop-bounded compatibility lookup.
+
+Verification state: `Implementation: PASS`; `Contract/Mock: PASS` at `L2 VERIFIED_LOCAL`;
+`Real Platform: IMPLEMENTED_UNVERIFIED`. No sandbox, real seller credential, developer approval,
+or live-platform execution was used, so this is not `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
+
 ## 4. TARGET: Production Data Flow
 
 ```text
@@ -355,6 +404,7 @@ Platform API/Webhook/CSV/XLSX
 
 The unified domain includes the currently implemented Organization, User,
 OrganizationMembership, Shop, ShopCredential, MasterProduct, MasterSKU, PlatformSKU,
+PlatformSKUSourceEvent,
 PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, ShopCapability,
 Warehouse, WarehouseInventory, ChannelInventory, Refund, RefundItem, SKUCost,
 FinanceTransaction, Settlement, ProfitSnapshot, Supplier, SupplierProduct,

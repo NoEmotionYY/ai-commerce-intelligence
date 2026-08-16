@@ -151,6 +151,15 @@ def _canonical_json(
     return normalized, hashlib.sha256(serialized).hexdigest()
 
 
+def canonical_raw_payload(value: dict[str, object]) -> tuple[dict[str, object], str]:
+    """Validate and canonicalize untrusted raw-event evidence before persistence."""
+    return _canonical_json(
+        value,
+        max_bytes=MAX_RAW_PAYLOAD_BYTES,
+        label="原始事件 payload",
+    )
+
+
 def _token(value: str, *, label: str, max_length: int) -> str:
     normalized = value.strip().upper()
     if (
@@ -264,6 +273,8 @@ class IngestionService:
         job_type: str,
         idempotency_key: str,
         max_attempts: int = 3,
+        request_fingerprint: str | None = None,
+        single_flight: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         normalized_type = _token(job_type, label="同步任务类型", max_length=64)
@@ -284,6 +295,11 @@ class IngestionService:
             raise IngestionValidationError("幂等键无效")
         if not 1 <= max_attempts <= 10:
             raise IngestionValidationError("最大重试次数无效")
+        if (
+            request_fingerprint is not None
+            and re.fullmatch(r"[a-f0-9]{64}", request_fingerprint) is None
+        ):
+            raise IngestionValidationError("同步请求指纹无效")
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
         existing = self.session.scalar(
             select(SyncJob).where(
@@ -298,9 +314,21 @@ class IngestionService:
                 existing.idempotency_key == raw_key
                 and existing.max_attempts == max_attempts
                 and existing.required_capability == required_capability
+                and (existing.checkpoint or {}).get("request_fingerprint") == request_fingerprint
             ):
                 return existing
             raise IngestionConflictError("同步任务幂等键冲突")
+        if single_flight:
+            active = self.session.scalar(
+                select(SyncJob).where(
+                    SyncJob.organization_id == self.principal.organization_id,
+                    SyncJob.shop_id == shop.id,
+                    SyncJob.job_type == normalized_type,
+                    SyncJob.status.in_((SyncJobStatus.PENDING, SyncJobStatus.RUNNING)),
+                )
+            )
+            if active is not None:
+                raise IngestionConflictError("同店铺同类型同步任务已在运行")
         job = SyncJob(
             organization_id=self.principal.organization_id,
             shop_id=shop.id,
@@ -308,6 +336,11 @@ class IngestionService:
             required_capability=required_capability,
             idempotency_key=raw_key,
             idempotency_key_hash=key_hash,
+            checkpoint=(
+                {"request_fingerprint": request_fingerprint}
+                if request_fingerprint is not None
+                else None
+            ),
             max_attempts=max_attempts,
         )
         self.session.add(job)
@@ -328,6 +361,7 @@ class IngestionService:
                 and concurrent.idempotency_key == raw_key
                 and concurrent.max_attempts == max_attempts
                 and concurrent.required_capability == required_capability
+                and (concurrent.checkpoint or {}).get("request_fingerprint") == request_fingerprint
             ):
                 return concurrent
             raise IngestionConflictError("同步任务已存在") from exc
@@ -419,6 +453,22 @@ class IngestionService:
         self.session.commit()
         return job
 
+    def yield_job(self, job_id: int, *, claim_token: str) -> SyncJob:
+        """Return a bounded connector chunk to PENDING without consuming retry budget."""
+        require_permission(self.principal, Permission.OPERATE_SYNC)
+        job, _ = self._locked_ready_job(job_id)
+        self._require_job_claim(job, claim_token)
+        job.status = SyncJobStatus.PENDING
+        job.attempts = max(job.attempts - 1, 0)
+        job.lease_token_hash = None
+        job.lease_expires_at = None
+        self._audit(
+            "sync_job.yield",
+            {"sync_job_id": job.id, "shop_id": job.shop_id},
+        )
+        self.session.commit()
+        return job
+
     def update_checkpoint(
         self, job_id: int, checkpoint: dict[str, object], *, claim_token: str
     ) -> SyncJob:
@@ -431,6 +481,12 @@ class IngestionService:
             label="同步 checkpoint",
             allow_pagination_tokens=True,
         )
+        existing_fingerprint = (job.checkpoint or {}).get("request_fingerprint")
+        incoming_fingerprint = normalized.get("request_fingerprint")
+        if existing_fingerprint is not None:
+            if incoming_fingerprint not in {None, existing_fingerprint}:
+                raise IngestionConflictError("同步 checkpoint 请求指纹冲突")
+            normalized["request_fingerprint"] = existing_fingerprint
         job.checkpoint = normalized
         self._audit("sync_job.checkpoint", {"sync_job_id": job.id, "shop_id": job.shop_id})
         self.session.commit()
@@ -811,9 +867,7 @@ class IngestionService:
             raise IngestionValidationError("事件发生时间必须包含时区")
         if occurred_at is not None:
             occurred_at = occurred_at.astimezone(UTC)
-        normalized_payload, payload_hash = _canonical_json(
-            payload, max_bytes=MAX_RAW_PAYLOAD_BYTES, label="原始事件 payload"
-        )
+        normalized_payload, payload_hash = canonical_raw_payload(payload)
         identity = f"{normalized_type}\0{external_id}".encode()
         source_key = hashlib.sha256(identity).hexdigest()
         existing = self.session.scalar(

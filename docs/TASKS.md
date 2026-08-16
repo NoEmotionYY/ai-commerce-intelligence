@@ -4,14 +4,16 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_7_DOUYIN_CONNECTOR`.
-Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`).
-Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
-Last completed task: `COM-P1-007` — CSV/XLSX Import (`DONE`).
-`COM-P1-007` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. CSV/XLSX parser/service tests are green (`12 passed`), the current-checkout full suite is
-green (`290 passed, 18 skipped, 1 warning`), and SQLite/MySQL verify additive `0013`, constraints,
-rollback/re-upgrade, and data preservation. No platform connector capability is claimed.
+Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
+Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
+Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
+`COM-P1-008` passed Product, Architecture, Security, Testing, migration, and documentation Exit
+Review. The current full suite is `325 passed, 18 skipped, 1 warning`; focused Douyin/credential/
+ingestion/catalog/migration tests are `96 passed`; Ruff, format, MyPy, `git diff --check`, SQLite,
+and MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus webhook/token concurrency
+gates pass. Implementation and contract/mock verification pass; real-platform verification is
+`IMPLEMENTED_UNVERIFIED`, not `VERIFIED_REAL`.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -690,11 +692,16 @@ their actionable findings were fixed before exit.
 
 ### COM-P1-008 — Douyin Connector
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P0-005, COM-P0-006, COM-P0-007, COM-P1-001.
 Scope: adapter, auth, product/SKU/order/inventory/refund/event/retry/pagination/reconciliation.
 Acceptance: contract behavior passes; real verification is separately labelled.
-Verification: contract/mock/sandbox/real status with evidence.
+Verification: official endpoint/signature contract fixtures, normalization, tenant/permission,
+credential rotation/leakage, request identity, bounded continuation/deadline/admission, RawEvent
+dedupe, stale/equal-time product reconciliation, API, SQLite migration, and MySQL webhook/token
+concurrency pass. `Implementation: PASS`; `Contract/Mock: PASS`; `Real Platform:
+IMPLEMENTED_UNVERIFIED`. Pull execution remains bounded request-time chunks with explicit
+continuation; webhook callbacks durably enqueue RawEvents and do not claim an implemented worker.
 
 ### COM-P1-009 — TikTok Shop Connector
 Priority: P1
@@ -721,5 +728,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 3 (`COM-P1-008` through `COM-P1-010`); `COM-P1-001` through `COM-P1-007` are `DONE`.
+- P1 remaining: 2 (`COM-P1-009` and `COM-P1-010`); `COM-P1-001` through `COM-P1-008` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

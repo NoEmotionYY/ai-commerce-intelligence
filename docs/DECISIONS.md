@@ -513,3 +513,45 @@ Consequences: `COM-P1-007` is `DONE` at `L2 VERIFIED_LOCAL` after focused/API/fu
 SQLite, and disposable MySQL 8.4 migration/integrity gates. This is not Douyin or TikTok Shop
 connector verification. Phase 7 begins with `COM-P1-008`; real-platform verification remains
 separate and no `BLOCKED_EXTERNAL` is recorded before implementation exists.
+
+## ADR-024 — Douyin Uses Bounded Platform-Specific Pulls and Durable Raw Webhook Ingress
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: Douyin product, order, after-sale, stock, authentication, and callback contracts differ
+from TikTok Shop. Running an unbounded inventory pull in the API worker would create cross-tenant
+availability risk. Reusing an idempotency key for a different window could silently return stale
+results. Token refresh can race across job types, and a normal credential upsert would incorrectly
+reset an already verified ShopConnection. Existing encrypted credentials also predate the
+non-reversible app-key lookup needed by an anonymous webhook. Official callbacks can be duplicated
+or out of order and recommend persistence before asynchronous processing.
+
+Decision: Keep a Douyin-specific adapter pinned to the official HTTPS origin and documented
+product/listV2, order/searchList, afterSale/List, sku/stockNum, and token refresh contracts. Route
+pulls through SyncJob and immutable PlatformRawEvent before existing domain services. Bind each
+idempotency key to shop/type/UTC window/page parameters, use per-shop single-flight plus process
+admission, a total deadline, bounded calls, and durable continuation checkpoints. Advance
+high-water only after a fully successful window. Hold the credential row lock during refresh;
+reuse a token rotated by another job or rotate encrypted material once without changing
+`AUTHORIZED` state. Add an explicit deployment backfill that decrypts legacy Douyin credentials
+under application keys and stores only SHA256(app_key). Webhooks verify the exact-body HMAC,
+strictly bound input/candidates, reject sensitive fields, deduplicate msg_id, and enqueue RECEIVED
+RawEvents. Do not claim a background consumer or scheduler until implemented.
+
+Use PlatformSKUSourceEvent for platform metadata lineage. Apply a complete product snapshot and
+RawEvent completion in one transaction, preserve manual master-SKU mappings, deactivate SKUs
+missing from a newer complete product snapshot, ignore older snapshots, and fail closed when
+different payloads share the same platform business timestamp. Local RawEvent ID never decides
+business recency.
+
+Reasoning: This closes the technically possible connector path without inventing a universal
+platform abstraction or a premature queue. Bounded continuation makes synchronous operation
+honest and recoverable; source lineage and fail-closed ordering protect catalog integrity; locked
+rotation and explicit backfill preserve authorization and limit anonymous credential work.
+
+Consequences: `COM-P1-008` is `DONE` with `Implementation: PASS` and `Contract/Mock: PASS` after
+focused/full, SQLite, and disposable MySQL 8.4 migration, data-preservation, webhook-idempotency,
+and token-refresh race gates. Real Douyin status is `IMPLEMENTED_UNVERIFIED`, not sandbox/real
+PASS. Scheduler/Worker, webhook domain consumption, and live seller validation remain future or
+external verification work. Phase 8 and `COM-P1-009` are next.

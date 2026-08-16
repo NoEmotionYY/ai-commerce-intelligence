@@ -35,6 +35,7 @@ from commerce.models import (
     Shop,
     ShopCapability,
     ShopConnection,
+    ShopCredential,
     SKUCost,
     SyncJob,
     User,
@@ -1564,3 +1565,79 @@ def test_mysql_verifier_cli_rejects_unsafe_database_targets(unsafe_url: str) -> 
 
     assert result.returncode != 0
     assert "distinct 'test' name segment" in result.stderr
+
+
+def test_douyin_webhook_lookup_revision_preserves_credentials_on_rollback(
+    tmp_path: Path,
+) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'douyin-webhook-lookup.db'}")
+    with engine.connect() as connection:
+        config = _config(connection)
+        command.upgrade(config, "0013_data_imports")
+        now = utcnow()
+        organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="douyin-webhook-migration",
+                name="Douyin Webhook Migration",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        shop_id = connection.execute(
+            sa.insert(Shop).values(
+                organization_id=organization_id,
+                name="Douyin Webhook Migration Shop",
+                platform="DOUYIN",
+                external_shop_id="douyin-webhook-migration-shop",
+                country_code="CN",
+                currency="CNY",
+                timezone="Asia/Shanghai",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        credential_id = connection.execute(
+            sa.insert(ShopCredential).values(
+                shop_id=shop_id,
+                credential_type="OAUTH",
+                key_id="v1",
+                nonce=b"n" * 12,
+                encrypted_payload=b"encrypted-placeholder",
+                status="ACTIVE",
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+
+        command.upgrade(config, "head")
+        inspector = sa.inspect(connection)
+        columns = {item["name"] for item in inspector.get_columns("shop_credentials")}
+        assert "public_identifier_hash" in columns
+        assert "ix_shop_credentials_public_identifier_hash" in {
+            item["name"] for item in inspector.get_indexes("shop_credentials")
+        }
+        assert "platform_sku_source_events" in inspector.get_table_names()
+        assert (
+            connection.scalar(
+                sa.select(ShopCredential.id).where(ShopCredential.id == credential_id)
+            )
+            == credential_id
+        )
+
+        command.downgrade(config, "0013_data_imports")
+        assert "public_identifier_hash" not in {
+            item["name"] for item in sa.inspect(connection).get_columns("shop_credentials")
+        }
+        assert "platform_sku_source_events" not in sa.inspect(connection).get_table_names()
+        assert (
+            connection.scalar(sa.select(sa.func.count()).select_from(ShopCredential.__table__)) == 1
+        )
+        command.upgrade(config, "head")
+        assert "public_identifier_hash" in {
+            item["name"] for item in sa.inspect(connection).get_columns("shop_credentials")
+        }
+        assert "platform_sku_source_events" in sa.inspect(connection).get_table_names()
+        assert (
+            connection.scalar(sa.select(sa.func.count()).select_from(ShopCredential.__table__)) == 1
+        )

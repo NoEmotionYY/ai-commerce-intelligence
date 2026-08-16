@@ -15,18 +15,17 @@ Internal engineering problems do not belong here.
 
 # Active Blockers
 
-None confirmed. Douyin and TikTok Shop connectors are not implemented yet; this is an
-internal `MISSING` task, not an external blocker. Real credentials, developer approval, or
-seller authorization may become `BLOCKED_EXTERNAL` only after the corresponding connector
-implementation and contract verification exist.
+None confirmed. The Douyin connector is implemented and contract/mock verified, but real-platform
+status is `IMPLEMENTED_UNVERIFIED`; no unavailable credential, developer approval, seller
+authorization, or external environment has been confirmed, so it is not `BLOCKED_EXTERNAL`.
+The TikTok Shop connector is still internal `MISSING` work, not an external blocker.
 
 `COM-P1-006` has no external blocker. Optional detectors, Agent registration, and effect tracking
 are internal future scope and therefore remain `MISSING`, not `BLOCKED_EXTERNAL`.
 
-`COM-P1-007` completed without an external blocker. `COM-P1-008` connector implementation and
-contract tests are internal work and therefore `IN_PROGRESS`, not `BLOCKED_EXTERNAL`. Real Douyin
-credentials, developer approval, seller authorization, or platform access have not yet been
-confirmed unavailable and are not recorded as active blockers.
+`COM-P1-007` and `COM-P1-008` completed without an external blocker. Real Douyin credentials,
+developer approval, seller authorization, or platform access have not been confirmed unavailable
+and are not recorded as active blockers. `COM-P1-009` is the next internal implementation task.
 
 ---
 

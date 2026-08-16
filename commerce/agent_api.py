@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -13,6 +14,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -85,6 +87,7 @@ from commerce.schemas import (
     ChatRequest,
     ChatResponse,
     ClaimInput,
+    DouyinSyncRun,
     Evidence,
     InboundReceipt,
     InboundShipmentCreate,
@@ -129,6 +132,18 @@ from commerce.services.data_import import (
     DataImportNotFoundError,
     DataImportService,
     DataImportValidationError,
+)
+from commerce.services.douyin_sync import (
+    DouyinSyncExecutionError,
+    DouyinSyncResult,
+    DouyinSyncService,
+    DouyinSyncValidationError,
+)
+from commerce.services.douyin_webhook import (
+    DouyinWebhookAuthenticationError,
+    DouyinWebhookConflictError,
+    DouyinWebhookService,
+    DouyinWebhookValidationError,
 )
 from commerce.services.finance import (
     FinanceConflictError,
@@ -183,6 +198,10 @@ app = FastAPI(title="Commerce Agent API", version="0.1.0", lifespan=lifespan)
 
 MAX_SYNC_REQUEST_BYTES = 1_100_000
 MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 256_000
+DOUYIN_SYNC_MAX_CONCURRENCY = 2
+DOUYIN_WEBHOOK_MAX_CONCURRENCY = 8
+_douyin_sync_admission = threading.BoundedSemaphore(DOUYIN_SYNC_MAX_CONCURRENCY)
+_douyin_webhook_admission = threading.BoundedSemaphore(DOUYIN_WEBHOOK_MAX_CONCURRENCY)
 
 
 @app.exception_handler(RequestValidationError)
@@ -207,7 +226,14 @@ async def enforce_production_tenant_api_boundary(
 ) -> Response:
     path = request.url.path
     max_bytes: int | None = None
-    if path.startswith(("/api/v2/raw-events", "/api/v2/sync-jobs", "/api/v2/imports")):
+    if path.startswith(
+        (
+            "/api/v2/raw-events",
+            "/api/v2/sync-jobs",
+            "/api/v2/imports",
+            "/api/v2/platforms/douyin/webhook",
+        )
+    ):
         max_bytes = (
             MAX_IMPORT_REQUEST_BYTES
             if path.startswith("/api/v2/imports")
@@ -836,6 +862,59 @@ def ingestion_http_error(exc: Exception) -> HTTPException:
     return HTTPException(500, "数据接入服务失败")
 
 
+def douyin_sync_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, DouyinSyncValidationError):
+        return HTTPException(400, str(exc))
+    if isinstance(exc, (IngestionConflictError, IngestionTransitionError)):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, (CredentialConfigurationError, CredentialUnavailableError)):
+        return HTTPException(503, "抖音店铺凭据服务不可用")
+    if isinstance(exc, DouyinSyncExecutionError):
+        if exc.error_code == "DOUYIN_JOB_RETRY_REQUIRED":
+            status = 409
+        elif exc.error_code in {
+            "DOUYIN_CREDENTIAL_MISSING",
+            "DOUYIN_CREDENTIAL_UNAVAILABLE",
+        }:
+            status = 503
+        else:
+            status = 502
+        return HTTPException(status, {"message": str(exc), "error_code": exc.error_code})
+    if isinstance(exc, IngestionValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "抖音同步服务失败")
+
+
+def douyin_sync_result_dict(item: DouyinSyncResult) -> dict[str, object]:
+    return {
+        "sync_job_id": item.sync_job_id,
+        "status": item.status.value,
+        "pages": item.pages,
+        "received": item.received,
+        "processed": item.processed,
+        "failed": item.failed,
+        "checkpoint": item.checkpoint,
+    }
+
+
+def _douyin_sync_service(session: Session, principal: Principal) -> DouyinSyncService:
+    try:
+        cipher = CredentialCipher.from_settings(get_settings())
+    except CredentialConfigurationError as exc:
+        raise HTTPException(503, "店铺凭据加密服务未配置") from exc
+    return DouyinSyncService(session, principal, cipher)
+
+
+def _douyin_webhook_service(session: Session) -> DouyinWebhookService:
+    try:
+        cipher = CredentialCipher.from_settings(get_settings())
+    except CredentialConfigurationError as exc:
+        raise HTTPException(503, "店铺凭据加密服务未配置") from exc
+    return DouyinWebhookService(session, cipher)
+
+
 def order_import_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AuthorizationError):
         return HTTPException(403, str(exc))
@@ -1264,6 +1343,61 @@ def create_v2_sync_job(
     except (AuthorizationError, IngestionConflictError, IngestionValidationError) as exc:
         raise ingestion_http_error(exc) from exc
     return sync_job_dict(item)
+
+
+@app.post("/api/v2/platforms/douyin/sync")
+def run_v2_douyin_sync(
+    payload: DouyinSyncRun,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    if not _douyin_sync_admission.acquire(blocking=False):
+        raise HTTPException(429, "抖音同步服务繁忙", headers={"Retry-After": "5"})
+    try:
+        try:
+            result = _douyin_sync_service(session, principal).run(**payload.model_dump())
+        except (
+            AuthorizationError,
+            CredentialConfigurationError,
+            CredentialUnavailableError,
+            DouyinSyncExecutionError,
+            DouyinSyncValidationError,
+            IngestionConflictError,
+            IngestionTransitionError,
+            IngestionValidationError,
+        ) as exc:
+            raise douyin_sync_http_error(exc) from exc
+    finally:
+        _douyin_sync_admission.release()
+    return douyin_sync_result_dict(result)
+
+
+@app.post("/api/v2/platforms/douyin/webhook")
+async def receive_v2_douyin_webhook(
+    request: Request,
+    event_sign: str = Header(default="", alias="event-sign"),
+    app_id: str = Header(default="", alias="app-id"),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    if not _douyin_webhook_admission.acquire(blocking=False):
+        raise HTTPException(429, "抖音回调服务繁忙", headers={"Retry-After": "1"})
+    try:
+        try:
+            await run_in_threadpool(
+                _douyin_webhook_service(session).ingest,
+                raw_body=await request.body(),
+                event_sign=event_sign,
+                app_id=app_id,
+            )
+        except DouyinWebhookAuthenticationError as exc:
+            raise HTTPException(401, "抖音回调认证失败") from exc
+        except DouyinWebhookValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except DouyinWebhookConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    finally:
+        _douyin_webhook_admission.release()
+    return {"code": 0, "msg": "success"}
 
 
 @app.post("/api/v2/sync-jobs/{job_id}/start")

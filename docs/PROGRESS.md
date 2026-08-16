@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_7_DOUYIN_CONNECTOR`
-Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`)
-Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`)
-Last completed top-level task: `COM-P1-007` — CSV/XLSX Import
-Current verification slice: `COM-P1-008A` — Douyin Contract and Adapter Boundary (`IN_PROGRESS`)
-Last verified checkpoint: `COM-P1-007` (local commit follows this evidence record)
+Phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`
+Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`)
+Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
+Last completed top-level task: `COM-P1-008` — Douyin Connector
+Current verification slice: `COM-P1-009A` — TikTok Shop Contract Discovery (`TODO`)
+Last verified checkpoint: `COM-P1-008` (local commit follows this evidence record)
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1178,3 +1178,67 @@ Status:
 - P0 remaining: 0; P1 remaining: 3; active `BLOCKED_EXTERNAL`: 0.
 - The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not prove or block
   file-import behavior and will be executed at the corresponding productization/release phases.
+
+## 2026-08-16 — COM-P1-008 Douyin Connector Exit
+
+Scope completed:
+
+- Added a Douyin-specific official Open Platform client for product, order, after-sale, inventory,
+  and token-refresh endpoints with canonical HMAC-SHA256 signing, official HTTPS-origin pinning,
+  bounded timeout/retry/Retry-After handling, response limits, and credential-safe errors.
+- Added platform-specific normalization into the existing Catalog, CommerceOrder, ChannelInventory,
+  and Refund services through `SyncJob -> PlatformRawEvent -> normalized domain service`.
+- Pull requests bind their idempotency key to shop/type/window/page parameters, enforce per-shop and
+  process admission limits, a 20-second total deadline, and at most 100 inventory API calls per
+  chunk. Checkpoints persist next cursor/page/SKU position; an unfinished bounded chunk returns
+  `PENDING` with explicit continuation and does not consume failure retry budget. High-water advances
+  only after a complete successful window.
+- Authentication failure locks the credential row, reuses a concurrently rotated access token or
+  refreshes once, encrypts the rotated token, and preserves `AUTHORIZED` connection state. Added an
+  explicit bounded deployment backfill for legacy webhook app-key lookup hashes.
+- Webhook ingress verifies the exact raw body HMAC, bounds body/batch/depth/candidates/concurrency,
+  rejects nested credential fields, deduplicates `msg_id`, and persists only immutable `RECEIVED`
+  RawEvents. Callback processing remains asynchronous TARGET work; no Worker is claimed.
+- Added `0014_douyin_webhook_lookup` for the non-reversible credential lookup and
+  PlatformSKUSourceEvent lineage. Complete product snapshots atomically update platform metadata,
+  deactivate missing SKUs, preserve manual MasterSKU mappings, ignore older snapshots, and fail
+  closed on differing same-time snapshots.
+
+Formal Exit Review:
+
+- Product: product/SKU/order/inventory/refund pulls operate on arbitrary tenant shops and data;
+  no fixed Demo identity or Mock ERP participates. Real seller verification remains separate.
+- Architecture: the connector remains Douyin-specific, uses RawEvent before unified models, and
+  does not introduce a speculative universal adapter. Request-time chunking is explicit; scheduler,
+  queue/worker, and webhook domain consumer remain TARGET.
+- Security: official-origin pinning, encrypted credentials, row-locked single refresh, request
+  fingerprint, tenant/permission checks, deadline/admission/candidate bounds, sensitive-payload
+  rejection, response/error redaction, and audit metadata pass. Independent review findings were
+  fixed; no unresolved Critical/High issue remains in COM-P1-008 scope.
+- Testing/data integrity: official signing vectors and endpoint shapes, normalization, continuation,
+  failure resume, high-water, stale/equal-time product snapshots, atomic rollback, duplicate webhook,
+  credential backfill, tenant/permission denial, API limits, SQLite migration, and MySQL migration/
+  webhook/token concurrency pass.
+
+Commands and evidence:
+
+- Focused Douyin/credential/catalog/ingestion/migration suite: `96 passed, 1 warning`.
+- `python -m pytest -q`: `325 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`132 files already formatted`).
+- `mypy .`: PASS (`103 source files`).
+- `alembic heads`: one head, `0014_douyin_webhook_lookup`; `git diff --check`: PASS.
+- Guarded disposable official MySQL 8.4 database `commerce_connector_test`: fresh install,
+  `0013 -> 0014 -> 0013 -> 0014`, schema/FK/index/constraint integrity, legacy/tenant data
+  preservation, existing concurrency gates, one-row webhook deduplication race, and cross-job-type
+  single token-refresh race PASS. The explicitly named temporary container was removed after final
+  verification.
+
+Status:
+
+- `COM-P1-008`: `DONE`. Implementation `PASS`; contract/mock verification `PASS`;
+  real platform `IMPLEMENTED_UNVERIFIED` (not `VERIFIED_REAL`).
+- Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`; current task: `COM-P1-009` (`TODO`); next task:
+  `COM-P1-010`.
+- P0 remaining: 0; P1 remaining: 2; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips remain not PASS and will be reevaluated in
+  their corresponding productization/release phases.

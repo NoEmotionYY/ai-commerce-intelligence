@@ -376,6 +376,9 @@ class ShopCredential(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), index=True)
     credential_type: Mapped[str] = mapped_column(String(50))
+    public_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     key_id: Mapped[str] = mapped_column(String(64), index=True)
     nonce: Mapped[bytes] = mapped_column(LargeBinary(12))
     encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary)
@@ -636,6 +639,39 @@ class PlatformRawEvent(Base):
     occurred_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     received_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class PlatformSKUSourceEvent(Base):
+    __tablename__ = "platform_sku_source_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "platform_sku_id", "master_sku_id"],
+            [
+                "platform_skus.organization_id",
+                "platform_skus.shop_id",
+                "platform_skus.id",
+                "platform_skus.master_sku_id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "raw_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+    )
+    platform_sku_id: Mapped[int] = mapped_column(primary_key=True)
+    raw_event_id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    normalized_hash: Mapped[str] = mapped_column(String(64))
+    source_occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    applied: Mapped[bool] = mapped_column(default=True)
+    imported_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 class DataImportJob(Base):
