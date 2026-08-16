@@ -5,7 +5,7 @@ Priorities: P0 blocks product/data integrity/security; P1 is mandatory product b
 P2/P3 are quality and future work.
 
 Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
-Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`).
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
 Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
 `COM-P1-008` passed Product, Architecture, Security, Testing, migration, and documentation Exit
@@ -712,7 +712,7 @@ RawEvents; it does not claim an implemented worker.
 
 ### COM-P1-009 — TikTok Shop Connector
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P1-008.
 Scope: adapter, token refresh, product/order/inventory/refund/finance/webhook/retry.
 Acceptance: contract behavior passes; real verification is separately labelled.

@@ -3,10 +3,10 @@
 ## V2 Status
 
 Phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`
-Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`)
+Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`)
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
 Last completed top-level task: `COM-P1-008` — Douyin Connector
-Current verification slice: `COM-P1-009A` — TikTok Shop Contract Discovery (`TODO`)
+Current verification slice: `COM-P1-009C` — TikTok Shop Sync and RawEvent Integration (`IN_PROGRESS`)
 Last verified checkpoint: `COM-P1-008` final Exit Review (local checkpoint recorded with this evidence)
 V2 completion: `NOT_COMPLETE`
 
@@ -1293,3 +1293,35 @@ Status:
 - P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.
 - The 18 Compose/browser/DeepSeek skips are not PASS and do not block Douyin local/mock exit; they
   will be reevaluated at their corresponding productization/release phases.
+
+## 2026-08-17 — COM-P1-009B TikTok Shop Client and Normalization
+
+Implemented:
+
+- Added a TikTok Shop-specific client pinned to the official API and token HTTPS origins. Requests
+  use the documented `x-tts-access-token` header, exact-body HMAC-SHA256 signature, bounded retries,
+  deadline-aware timeouts, page-token limits, and an explicit endpoint allowlist. Refresh parses
+  `access_token_expire_in` as an absolute Unix timestamp rather than a duration.
+- Added fail-closed product/SKU, order, channel-inventory, aftersales/refund, and statement-
+  transaction normalization. Unknown statuses, mixed currencies, multi-order aftersales payloads,
+  duplicate identities, and incomplete refund amounts are rejected.
+- Finance normalization emits only explicit revenue, logistics, fee/tax aggregate, and adjustment
+  components as `FinanceTransactionSnapshotInput`. It does not fabricate a Settlement or infer a
+  refund amount from incomplete statement data.
+
+Verification:
+
+- Official documentation contracts were rechecked from TikTok Shop Partner Center for signing,
+  product `202502`, inventory/order `202309`, aftersales `202603`, finance `202309/202501`,
+  authorized shops, refresh, and webhook semantics. This is contract evidence, not a live API run.
+- `python -m pytest -q tests/unit/test_tiktok_shop_client.py tests/unit/test_tiktok_shop_normalization.py`:
+  `27 passed`.
+- Focused `ruff check`: PASS; focused `ruff format --check`: PASS; focused `mypy`: PASS;
+  `git diff --check`: PASS.
+- Verification level for this slice: `L2 VERIFIED_LOCAL` / contract fixtures only. No sandbox or
+  real seller/platform claim is made.
+
+Status:
+
+- `COM-P1-009` remains `IN_PROGRESS`; the next verification slice is SyncJob/RawEvent/domain/API
+  integration. P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.

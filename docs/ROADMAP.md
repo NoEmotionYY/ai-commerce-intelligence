@@ -3,7 +3,7 @@
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
 Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
-Current task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`).
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
 Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
 Phase 7 Exit Review passed. The platform-specific Douyin adapter, bounded pull continuation,
