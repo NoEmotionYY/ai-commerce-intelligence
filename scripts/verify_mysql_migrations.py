@@ -96,6 +96,12 @@ V2_TABLES = {
     "profit_snapshot_refund_inputs",
     "profit_snapshot_settlement_inputs",
     "profit_snapshot_transaction_inputs",
+    "suppliers",
+    "supplier_products",
+    "commerce_purchase_orders",
+    "commerce_purchase_order_items",
+    "inbound_shipments",
+    "inbound_shipment_items",
 }
 FINANCE_TABLES = {
     "sku_costs",
@@ -111,6 +117,14 @@ FINANCE_TABLES = {
     "profit_snapshot_refund_inputs",
     "profit_snapshot_settlement_inputs",
     "profit_snapshot_transaction_inputs",
+}
+PURCHASING_TABLES = {
+    "suppliers",
+    "supplier_products",
+    "commerce_purchase_orders",
+    "commerce_purchase_order_items",
+    "inbound_shipments",
+    "inbound_shipment_items",
 }
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "organization_memberships": "uq_membership_org_user",
@@ -143,6 +157,16 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "profit_snapshot_cost_inputs": "uq_profit_snapshot_cost_inputs_item",
     "profit_snapshot_refund_inputs": "uq_profit_snapshot_refund_inputs_refund",
     "profit_snapshot_transaction_inputs": "uq_profit_snapshot_transaction_inputs_transaction",
+    "suppliers": "uq_suppliers_org_code",
+    "supplier_products": "uq_supplier_products_supplier_sku",
+    "commerce_purchase_orders": "uq_commerce_purchase_orders_org_number",
+    "commerce_purchase_order_items": "uq_commerce_purchase_order_items_product",
+    "inbound_shipments": "uq_inbound_shipments_org_number",
+    "inbound_shipment_items": "uq_inbound_shipment_items_order_item",
+}
+EXPECTED_ADDITIONAL_UNIQUE_CONSTRAINTS = {
+    "supplier_products": {"uq_supplier_products_supplier_code"},
+    "commerce_purchase_orders": {"uq_commerce_purchase_orders_org_idempotency"},
 }
 EXPECTED_UNIQUE_INDEXES = {
     "shops": "ix_shops_org_id_unique",
@@ -160,6 +184,12 @@ EXPECTED_UNIQUE_INDEXES = {
     "settlements": "ix_settlements_org_shop_id_unique",
     "finance_transactions": "ix_finance_transactions_org_shop_id_unique",
     "profit_snapshots": "ix_profit_snapshots_org_shop_id_unique",
+    "suppliers": "ix_suppliers_org_id_unique",
+    "supplier_products": "ix_supplier_products_org_id_unique",
+    "commerce_purchase_orders": "ix_commerce_purchase_orders_org_id_unique",
+    "commerce_purchase_order_items": "ix_commerce_purchase_order_items_org_id_unique",
+    "inbound_shipments": "ix_inbound_shipments_org_id_unique",
+    "inbound_shipment_items": "ix_inbound_shipment_items_org_id_unique",
 }
 EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
     "organization_memberships": {
@@ -285,6 +315,31 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "shop_id", "profit_snapshot_id"), "profit_snapshots"),
         (("organization_id", "shop_id", "finance_transaction_id"), "finance_transactions"),
     },
+    "suppliers": {(("organization_id",), "organizations")},
+    "supplier_products": {
+        (("organization_id", "supplier_id"), "suppliers"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+    },
+    "commerce_purchase_orders": {
+        (("organization_id", "supplier_id"), "suppliers"),
+        (("organization_id", "warehouse_id"), "warehouses"),
+        (("created_by_user_id",), "users"),
+        (("approved_by_user_id",), "users"),
+    },
+    "commerce_purchase_order_items": {
+        (("organization_id", "purchase_order_id"), "commerce_purchase_orders"),
+        (("organization_id", "supplier_product_id"), "supplier_products"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+    },
+    "inbound_shipments": {
+        (("organization_id", "purchase_order_id"), "commerce_purchase_orders"),
+        (("organization_id", "warehouse_id"), "warehouses"),
+    },
+    "inbound_shipment_items": {
+        (("organization_id", "inbound_shipment_id"), "inbound_shipments"),
+        (("organization_id", "purchase_order_item_id"), "commerce_purchase_order_items"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+    },
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "shop_connections": {"ck_shop_connections_authorization_status"},
@@ -341,6 +396,14 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "profit_snapshot_refund_inputs": {"ck_profit_snapshot_refund_inputs_values"},
     "profit_snapshot_settlement_inputs": {"ck_profit_snapshot_settlement_inputs_exchange_rate"},
     "profit_snapshot_transaction_inputs": {"ck_profit_snapshot_transaction_inputs_values"},
+    "supplier_products": {"ck_supplier_products_commercial_terms"},
+    "commerce_purchase_orders": {
+        "ck_commerce_purchase_orders_total",
+        "ck_commerce_purchase_orders_status",
+    },
+    "commerce_purchase_order_items": {"ck_commerce_purchase_order_items_values"},
+    "inbound_shipments": {"ck_inbound_shipments_status"},
+    "inbound_shipment_items": {"ck_inbound_shipment_items_quantities"},
 }
 
 
@@ -385,6 +448,18 @@ def _assert_head_schema(connection: Connection, config: Config) -> None:
         if constraint_name not in names:
             raise RuntimeError(
                 f"MySQL table {table_name} is missing unique constraint {constraint_name}"
+            )
+
+    for table_name, expected_names in EXPECTED_ADDITIONAL_UNIQUE_CONSTRAINTS.items():
+        names = {
+            item["name"]
+            for item in inspector.get_unique_constraints(table_name)
+            if item.get("name")
+        }
+        if not expected_names.issubset(names):
+            raise RuntimeError(
+                f"MySQL table {table_name} is missing unique constraints: "
+                f"{sorted(expected_names - names)}"
             )
 
     for table_name, index_name in EXPECTED_UNIQUE_INDEXES.items():
@@ -1014,12 +1089,36 @@ def main() -> None:
         command.upgrade(config, "head")
         _assert_head_schema(connection, config)
         _assert_legacy_product_preserved(connection)
+
+        command.downgrade(config, "0010_finance")
+        tables_after_purchasing_rollback = set(sa.inspect(connection).get_table_names())
+        remaining_purchasing_tables = PURCHASING_TABLES.intersection(
+            tables_after_purchasing_rollback
+        )
+        if remaining_purchasing_tables:
+            raise RuntimeError(
+                "MySQL purchasing rollback left tables behind: "
+                f"{sorted(remaining_purchasing_tables)}"
+            )
+        missing_finance_tables = FINANCE_TABLES - tables_after_purchasing_rollback
+        if missing_finance_tables:
+            raise RuntimeError(
+                "MySQL purchasing rollback removed finance tables: "
+                f"{sorted(missing_finance_tables)}"
+            )
+        _assert_legacy_product_preserved(connection)
+        command.upgrade(config, "head")
+        _assert_head_schema(connection, config)
+
         command.downgrade(config, "0009_inventory")
         tables_after_finance_rollback = set(sa.inspect(connection).get_table_names())
-        remaining_finance_tables = FINANCE_TABLES.intersection(tables_after_finance_rollback)
-        if remaining_finance_tables:
+        remaining_post_inventory_tables = (FINANCE_TABLES | PURCHASING_TABLES).intersection(
+            tables_after_finance_rollback
+        )
+        if remaining_post_inventory_tables:
             raise RuntimeError(
-                f"MySQL finance rollback left tables behind: {sorted(remaining_finance_tables)}"
+                "MySQL finance/purchasing rollback left tables behind: "
+                f"{sorted(remaining_post_inventory_tables)}"
             )
         if "warehouse_inventory" not in tables_after_finance_rollback:
             raise RuntimeError("MySQL finance rollback removed the inventory foundation")

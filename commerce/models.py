@@ -201,6 +201,26 @@ class ProfitKind(StrEnum):
     SETTLED = "SETTLED"
 
 
+class PurchaseOrderStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    ORDERED = "ORDERED"
+    SHIPPED = "SHIPPED"
+    RECEIVED = "RECEIVED"
+    CLOSED = "CLOSED"
+    CANCELLED = "CANCELLED"
+
+
+class InboundShipmentStatus(StrEnum):
+    PLANNED = "PLANNED"
+    SHIPPED = "SHIPPED"
+    PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
+    RECEIVED = "RECEIVED"
+    CANCELLED = "CANCELLED"
+
+
 class PurchaseStatus(StrEnum):
     EXECUTED = "EXECUTED"
 
@@ -1593,6 +1613,264 @@ def prevent_historical_finance_update(
 ) -> None:
     del mapper, connection, target
     raise ValueError("historical finance evidence is immutable")
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_suppliers_org_code"),
+        Index("ix_suppliers_org_id_unique", "organization_id", "id", unique=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    code: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str] = mapped_column(String(200))
+    payment_terms: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class SupplierProduct(Base):
+    __tablename__ = "supplier_products"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "supplier_id"],
+            ["suppliers.organization_id", "suppliers.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("supplier_id", "master_sku_id", name="uq_supplier_products_supplier_sku"),
+        UniqueConstraint(
+            "supplier_id", "supplier_product_code", name="uq_supplier_products_supplier_code"
+        ),
+        CheckConstraint(
+            "purchase_cost >= 0 AND moq >= 1 AND package_size >= 1 AND lead_time_days >= 0",
+            name="ck_supplier_products_commercial_terms",
+        ),
+        Index("ix_supplier_products_org_id_unique", "organization_id", "id", unique=True),
+        Index("ix_supplier_products_org_sku", "organization_id", "master_sku_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    supplier_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    supplier_product_code: Mapped[str] = mapped_column(String(128))
+    currency: Mapped[str] = mapped_column(String(3))
+    purchase_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    moq: Mapped[int] = mapped_column(Integer, default=1)
+    package_size: Mapped[int] = mapped_column(Integer, default=1)
+    lead_time_days: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class CommercePurchaseOrder(Base):
+    __tablename__ = "commerce_purchase_orders"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "supplier_id"],
+            ["suppliers.organization_id", "suppliers.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "warehouse_id"],
+            ["warehouses.organization_id", "warehouses.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id", "po_number", name="uq_commerce_purchase_orders_org_number"
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "idempotency_key_hash",
+            name="uq_commerce_purchase_orders_org_idempotency",
+        ),
+        CheckConstraint("total_amount >= 0", name="ck_commerce_purchase_orders_total"),
+        CheckConstraint(
+            "status IN ('DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','ORDERED','SHIPPED',"
+            "'RECEIVED','CLOSED','CANCELLED')",
+            name="ck_commerce_purchase_orders_status",
+        ),
+        Index("ix_commerce_purchase_orders_org_id_unique", "organization_id", "id", unique=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    supplier_id: Mapped[int] = mapped_column(index=True)
+    warehouse_id: Mapped[int] = mapped_column(index=True)
+    po_number: Mapped[str] = mapped_column(String(64))
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[PurchaseOrderStatus] = mapped_column(
+        Enum(PurchaseOrderStatus, native_enum=False, length=24),
+        default=PurchaseOrderStatus.DRAFT,
+        index=True,
+    )
+    currency: Mapped[str] = mapped_column(String(3))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    approved_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    ordered_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    shipped_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+    items: Mapped[list[CommercePurchaseOrderItem]] = relationship(
+        back_populates="purchase_order", cascade="all, delete-orphan"
+    )
+
+
+class CommercePurchaseOrderItem(Base):
+    __tablename__ = "commerce_purchase_order_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "purchase_order_id"],
+            ["commerce_purchase_orders.organization_id", "commerce_purchase_orders.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "supplier_product_id"],
+            ["supplier_products.organization_id", "supplier_products.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "purchase_order_id",
+            "supplier_product_id",
+            name="uq_commerce_purchase_order_items_product",
+        ),
+        CheckConstraint(
+            "quantity > 0 AND received_quantity >= 0 AND received_quantity <= quantity "
+            "AND unit_cost >= 0 AND total_amount >= 0",
+            name="ck_commerce_purchase_order_items_values",
+        ),
+        Index(
+            "ix_commerce_purchase_order_items_org_id_unique",
+            "organization_id",
+            "id",
+            unique=True,
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    purchase_order_id: Mapped[int] = mapped_column(index=True)
+    supplier_product_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    received_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    purchase_order: Mapped[CommercePurchaseOrder] = relationship(back_populates="items")
+
+
+class InboundShipment(Base):
+    __tablename__ = "inbound_shipments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "purchase_order_id"],
+            ["commerce_purchase_orders.organization_id", "commerce_purchase_orders.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "warehouse_id"],
+            ["warehouses.organization_id", "warehouses.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id", "shipment_number", name="uq_inbound_shipments_org_number"
+        ),
+        CheckConstraint(
+            "status IN ('PLANNED','SHIPPED','PARTIALLY_RECEIVED','RECEIVED','CANCELLED')",
+            name="ck_inbound_shipments_status",
+        ),
+        Index("ix_inbound_shipments_org_id_unique", "organization_id", "id", unique=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    purchase_order_id: Mapped[int] = mapped_column(index=True)
+    warehouse_id: Mapped[int] = mapped_column(index=True)
+    shipment_number: Mapped[str] = mapped_column(String(128))
+    status: Mapped[InboundShipmentStatus] = mapped_column(
+        Enum(InboundShipmentStatus, native_enum=False, length=24),
+        default=InboundShipmentStatus.PLANNED,
+        index=True,
+    )
+    expected_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    shipped_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+    items: Mapped[list[InboundShipmentItem]] = relationship(
+        back_populates="shipment", cascade="all, delete-orphan"
+    )
+
+
+class InboundShipmentItem(Base):
+    __tablename__ = "inbound_shipment_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "inbound_shipment_id"],
+            ["inbound_shipments.organization_id", "inbound_shipments.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "purchase_order_item_id"],
+            [
+                "commerce_purchase_order_items.organization_id",
+                "commerce_purchase_order_items.id",
+            ],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "inbound_shipment_id",
+            "purchase_order_item_id",
+            name="uq_inbound_shipment_items_order_item",
+        ),
+        CheckConstraint(
+            "quantity_shipped > 0 AND quantity_received >= 0 "
+            "AND quantity_received <= quantity_shipped",
+            name="ck_inbound_shipment_items_quantities",
+        ),
+        Index(
+            "ix_inbound_shipment_items_org_id_unique",
+            "organization_id",
+            "id",
+            unique=True,
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    inbound_shipment_id: Mapped[int] = mapped_column(index=True)
+    purchase_order_item_id: Mapped[int] = mapped_column(index=True)
+    master_sku_id: Mapped[int] = mapped_column(index=True)
+    quantity_shipped: Mapped[int] = mapped_column(Integer)
+    quantity_received: Mapped[int] = mapped_column(Integer, default=0)
+    shipment: Mapped[InboundShipment] = relationship(back_populates="items")
 
 
 class Product(Base):

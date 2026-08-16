@@ -5,15 +5,14 @@ Priorities: P0 blocks product/data integrity/security; P1 is mandatory product b
 P2/P3 are quality and future work.
 
 Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
-Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`).
-Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`).
-Last completed task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`DONE`).
-`COM-P1-002A` through `COM-P1-002D` are `DONE`; the formal exit review found no blocking Product,
-Architecture, Security, Testing, migration, or documentation issue.
-The `0009_inventory` SQLite and MySQL migration/integrity/data-preservation gates and the actual
-MySQL shared-warehouse inventory race pass. The inventory/analytics/API/migration suite is green
-(`25 passed, 1 warning`), Compose smoke is green (`5 passed`), and the latest current-checkout
-full suite is green (`253 passed, 18 skipped, 1 warning`).
+Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`).
+Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`).
+Last completed task: `COM-P1-004` — Suppliers and Purchasing (`DONE`).
+`COM-P1-004A` through `COM-P1-004D` are `DONE`; the formal exit review found no blocking Product,
+Architecture, Security, Testing, migration, or documentation issue. The `0011_purchasing` SQLite
+and MySQL migration/integrity/data-preservation gates pass. The purchasing service/API slice is
+green (`5 passed, 1 warning`), migration suite is green (`13 passed`), and the latest
+current-checkout full suite is green (`265 passed, 18 skipped, 1 warning`).
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -584,15 +583,64 @@ remain environment-gated and are not counted as PASS.
 
 ### COM-P1-004 — Suppliers and Purchasing
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-003.
 Scope: Supplier, SupplierProduct, PurchaseOrder, PurchaseOrderItem, InboundShipment.
 Acceptance: lifecycle and approval boundaries are enforced.
-Verification: workflow, idempotency, approval, and migration tests.
+Verification: Product/Architecture/Security/Testing Exit Review PASS; focused service/API
+`5 passed, 1 warning`, migration `13 passed`, full `265 passed, 18 skipped, 1 warning`, disposable
+MySQL 8.4.11 verifier, Ruff, format, strict MyPy, single `0011_purchasing` head, and diff checks PASS.
+The 18 Compose/browser/cloud skips remain environment-gated and are not counted as PASS.
+
+#### COM-P1-004A — Purchasing Model and Additive Migration
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-003.
+Scope: tenant-scoped suppliers, supplier products, commerce purchase orders/items, inbound
+shipments/items, constraints, and explicit `0011_purchasing` migration.
+Acceptance: legacy tables/data remain intact; tenant/catalog references, commercial terms,
+quantities, state values, and idempotency keys are protected by schema constraints.
+Verification: SQLite fresh/upgrade/rollback/re-upgrade and disposable MySQL 8.4.11 schema,
+constraint, rollback, and data-preservation verification PASS.
+
+#### COM-P1-004B — Purchasing Service and Inbound Lifecycle
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-004A.
+Scope: supplier management, Decimal purchase snapshots, MOQ/package validation, state transitions,
+inbound batches, cumulative receipts, and operation audit.
+Acceptance: lifecycle transitions fail closed; duplicate requests are idempotent; older receipt
+snapshots cannot reduce received stock; inventory is not fabricated outside RawEvent ingestion.
+Verification: focused service tests cover replay, conflicting keys, MOQ, independent approval,
+partial/full receipt, retry, stale receipt, multiple state retries, and cross-tenant denial.
+
+#### COM-P1-004C — Tenant-Scoped API and Deterministic Replenishment
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-002, COM-P1-004B.
+Scope: authenticated bounded supplier/purchase/inbound APIs and deterministic reorder calculation
+using order velocity, physical availability, ETA-bounded incoming, lead time, safety days, MOQ,
+and package size.
+Acceptance: APIs derive tenant from the authenticated principal, hide internal hashes, require
+centralized write/approval permissions, and return calculations produced without an LLM.
+Verification: integration and calculation tests cover tenant isolation, approval denial, response
+redaction, arbitrary SKU data, open inbound allocation, MOQ, and package rounding.
+
+#### COM-P1-004D — Purchasing Exit Review
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-004A, COM-P1-004B, COM-P1-004C.
+Scope: Product, Architecture, Security, Testing, migration, documentation, and full-regression
+review for parent COM-P1-004.
+Acceptance: all model, lifecycle, inbound, and replenishment items in COM-P1-004 scope have local
+evidence with no unexplained internal gap or Critical/High correctness, security, or data-integrity
+issue. Agent/tool execution and concurrent execution idempotency remain explicitly in COM-P1-005.
+Verification: focused, migration, full-suite, MySQL, lint, format, type, Alembic-head, and diff
+gates listed on the parent task PASS; CURRENT/TARGET and real-platform verification remain honest.
 
 ### COM-P1-005 — Replenishment and Approval Execution
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P1-002, COM-P1-004.
 Scope: deterministic reorder quantity, MOQ/lead time, approved execution and audit.
 Acceptance: AI can explain but cannot change authoritative quantity or bypass approval.
@@ -647,5 +695,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 7 (`COM-P1-004` through `COM-P1-010`); `COM-P1-001` through `COM-P1-003` are `DONE`.
+- P1 remaining: 6 (`COM-P1-005` through `COM-P1-010`); `COM-P1-001` through `COM-P1-004` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

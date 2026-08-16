@@ -393,3 +393,36 @@ SQLite, and disposable MySQL 8.4.11 migration/integrity/data-preservation verifi
 not claim real platform synchronization or financial reconciliation. Those remain internal
 implementation work until connector tasks exist; no `BLOCKED_EXTERNAL` is recorded. Phase 3 exits
 and `COM-P1-004` is the next task.
+
+## ADR-020 — Independent Purchase Approval and Monotonic Inbound Evidence
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: The legacy purchase workflow depends on Demo tables and Mock ERP behavior. A production
+purchase draft must preserve the commercial terms used for approval, prevent a creator with broad
+permissions from approving their own high-impact request, and tolerate client retries without
+duplicating orders, shipments, or received quantities. Receiving planned stock must also not
+fabricate an authoritative platform inventory snapshot.
+
+Decision: Add separate tenant-scoped Supplier, SupplierProduct, CommercePurchaseOrder/Item, and
+InboundShipment/Item tables through `0011_purchasing`. Snapshot Decimal unit cost and requested
+quantity into each purchase item. Enforce the documented purchase state machine through a
+permissioned service, require an APPROVE_ACTION principal distinct from the creator for approval,
+and record successful transitions in OperationLog. Use a tenant-scoped hashed idempotency key plus
+request hash for draft creation. Treat shipment number plus immutable shipment content as its retry
+identity. Interpret receipt quantities as cumulative monotonic snapshots so duplicate or older
+requests cannot double count or reduce received stock. Use open ETA-bounded inbound quantities only
+as replenishment-planning evidence; authoritative WarehouseInventory continues to change only via
+claimed RawEvent ingestion.
+
+Reasoning: Snapshotting makes the approval decision reproducible. Separate actors and centralized
+permissions preserve the human boundary. Monotonic cumulative receipt semantics give safe retry
+and stale-request behavior without inventing a platform event contract before connectors exist.
+Keeping physical inventory ingestion separate avoids treating a purchasing plan as observed stock.
+
+Consequences: `COM-P1-004` is `DONE` at `L2 VERIFIED_LOCAL` after focused service/API, SQLite,
+disposable MySQL 8.4.11, and full regression gates. This does not place an order on a real supplier
+or platform, and it does not add an Agent purchase tool. `COM-P1-005` must complete the validated
+recommendation-to-draft, execution retry/concurrency, and Agent approval boundary. No
+`BLOCKED_EXTERNAL` is recorded.

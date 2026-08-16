@@ -92,19 +92,24 @@
 
 ## H. Suppliers & Purchasing
 
-- [ ] Supplier implemented.
-- [ ] SupplierProduct implemented.
-- [ ] Purchase cost supported.
-- [ ] MOQ supported.
-- [ ] Lead time supported.
-- [ ] PurchaseOrder implemented.
-- [ ] PurchaseOrderItem implemented.
-- [ ] InboundShipment implemented.
-- [ ] Purchase lifecycle implemented.
-- [ ] Incoming stock affects replenishment.
-- [ ] Replenishment recommendation is deterministic.
+- [x] Supplier implemented.
+- [x] SupplierProduct implemented.
+- [x] Purchase cost supported.
+- [x] MOQ supported.
+- [x] Lead time supported.
+- [x] PurchaseOrder implemented.
+- [x] PurchaseOrderItem implemented.
+- [x] InboundShipment implemented.
+- [x] Purchase lifecycle implemented.
+- [x] Incoming stock affects replenishment.
+- [x] Replenishment recommendation is deterministic.
 - [ ] High-impact purchase execution requires approval.
 - [ ] Purchase execution is idempotent.
+
+The purchase draft/lifecycle and independent approval boundary are locally verified. The final
+two execution items remain `MISSING` until COM-P1-005 proves the Agent/tool execution boundary and
+concurrent retry behavior; an internal `ORDERED` status transition is not real supplier/platform
+execution evidence.
 
 ---
 
@@ -391,7 +396,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-002 completion the current local suite is `253 passed, 18 skipped, 1 warning` under
+COM-P1-004 completion the current local suite is `265 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
@@ -411,8 +416,11 @@ reads and filters are locally verified. Real Douyin/TikTok payload and status-co
 `MISSING` connector work and are not represented as real-platform verification. Organization-owned
 warehouses, tenant/catalog-constrained physical and channel inventory, RawEvent-bound snapshot
 lineage, stale/idempotent reconciliation, and deterministic current/incoming-aware coverage are
-locally verified on SQLite and MySQL. Incoming coverage currently includes all recorded incoming
-units because ETA-bounded inbound allocation remains later purchasing work.
+locally verified on SQLite and MySQL. Tenant-scoped suppliers, commercial terms, purchase orders,
+independent approval, inbound shipments, monotonic cumulative receipts, and ETA-bounded incoming
+stock are locally verified. Replenishment uses actual order velocity, available stock, open
+inbound quantities, lead time, safety days, MOQ, and package size. Platform purchasing execution,
+Agent purchase-draft tooling, and real supplier integrations remain later work.
 
 ## V2 Complete Gate
 

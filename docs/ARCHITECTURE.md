@@ -42,7 +42,9 @@ regression, and MySQL row-lock race gates pass.
 COM-P1-002 provides the locally verified warehouse and physical/channel inventory foundation
 described below. COM-P1-003 adds tenant-scoped SKU cost history, refunds, settlements, finance
 transactions, immutable estimated/settled profit snapshots, and bounded finance/refund APIs.
-Suppliers, purchasing, inbound shipments, alerts, BusinessTask, and AuditLog remain TARGET.
+COM-P1-004 adds the locally verified supplier, purchasing, inbound shipment, and deterministic
+replenishment foundation described below. Alerts, BusinessTask, production platform purchasing
+execution, Agent purchasing tools, and AuditLog remain TARGET.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -92,8 +94,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0010_finance`. Revisions `0003`
-through `0010`
+The repository has one Alembic head at `0011_purchasing`. Revisions `0003`
+through `0011`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -110,6 +112,9 @@ MySQL 8.4 migration/integrity verifier, including a real concurrent first-write/
 shared-warehouse snapshot race. Revision `0010` adds cost/refund/settlement/transaction/profit
 tables and a stable order-item foreign-key support index; it passes the same SQLite and disposable
 MySQL 8.4.11 fresh/upgrade/rollback/re-upgrade, constraint, and data-preservation gates.
+Revision `0011` adds tenant-scoped supplier, supplier-product, commerce purchase-order, and inbound
+shipment tables. Its SQLite and disposable MySQL 8.4.11 checks cover fresh install,
+`0010 -> 0011 -> 0010 -> 0011`, constraints, and prior-data preservation.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -210,8 +215,9 @@ inventory, and deterministic stockout-risk reads. There is no public authoritati
 route. Risk uses unified CommerceOrder demand and physical `available` stock; reserved and damaged
 units are reported but not treated as sellable. Incoming units produce a separate projected
 coverage/risk result. Physical inventory is organization-shared even when demand/channel exposure
-is filtered to one shop, and API output labels that scope explicitly. Incoming units are not yet
-ETA-bounded because InboundShipment and purchasing remain TARGET.
+is filtered to one shop, and API output labels that scope explicitly. Recorded warehouse incoming
+remains a source snapshot, while purchasing recommendations use open InboundShipment quantities
+only when their expected time falls within the lead-time plus safety window.
 
 This is `L2 VERIFIED_LOCAL`, including SQLite and disposable official MySQL 8.4 evidence. It does
 not claim real Douyin/TikTok inventory synchronization or real-platform verification.
@@ -240,6 +246,28 @@ disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass.
 Douyin/TikTok finance verification; platform adapters and production synchronization remain
 TARGET.
 
+## 3.11 CURRENT: Suppliers, Purchasing, and Inbound Planning
+
+Supplier and SupplierProduct are organization-scoped and retain purchase currency/cost, MOQ,
+package size, lead time, payment terms, and optional contact metadata. CommercePurchaseOrder and
+its items snapshot the approved quantity and Decimal unit cost rather than reading mutable supplier
+terms after creation. The additive models are separate from the legacy Demo purchase tables.
+
+PurchasingService enforces the DRAFT -> PENDING_APPROVAL -> APPROVED/REJECTED -> ORDERED ->
+SHIPPED -> RECEIVED -> CLOSED lifecycle with centralized permissions and a creator/approver
+separation rule. Purchase creation uses a tenant-scoped hashed idempotency key plus request hash;
+status retries and identical shipment-number retries are idempotent, while key reuse with different
+content fails closed. Inbound receipt values are cumulative monotonic snapshots: retries do not
+double count and older values cannot reduce received stock. OperationLog records every successful
+transition without exposing idempotency hashes through the API.
+
+Replenishment is deterministic Python/SQL logic using unified order velocity, current warehouse
+available stock, ETA-bounded open inbound quantities, lead time, safety-stock days, MOQ, and package
+size. It returns the authoritative quantity as data; no LLM participates in the calculation.
+Receiving an inbound shipment does not directly mutate authoritative WarehouseInventory, whose
+physical snapshot boundary remains claimed PlatformRawEvent ingestion. This is `L2 VERIFIED_LOCAL`,
+not platform purchasing execution or a real supplier/connector claim.
+
 ## 4. TARGET: Production Data Flow
 
 ```text
@@ -257,8 +285,9 @@ The unified domain includes the currently implemented Organization, User,
 OrganizationMembership, Shop, ShopCredential, MasterProduct, MasterSKU, PlatformSKU,
 PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, ShopCapability,
 Warehouse, WarehouseInventory, ChannelInventory, Refund, RefundItem, SKUCost,
-FinanceTransaction, Settlement, and ProfitSnapshot, plus future Supplier,
-PurchaseOrder, InboundShipment, Alert, BusinessTask, OperationLog, and AuditLog.
+FinanceTransaction, Settlement, ProfitSnapshot, Supplier, SupplierProduct,
+CommercePurchaseOrder, CommercePurchaseOrderItem, InboundShipment, and InboundShipmentItem, plus
+future Alert, BusinessTask, platform execution records, and AuditLog.
 
 ## 5. TARGET: Dependency Direction
 

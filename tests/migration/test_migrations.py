@@ -286,6 +286,7 @@ def test_unified_order_revision_rollback_preserves_raw_event_data(tmp_path: Path
 
         command.upgrade(config, "head")
         assert "commerce_orders" in sa.inspect(connection).get_table_names()
+
         command.downgrade(config, "0006_raw_event_sync_foundation")
         assert "commerce_orders" not in sa.inspect(connection).get_table_names()
         assert (
@@ -298,6 +299,84 @@ def test_unified_order_revision_rollback_preserves_raw_event_data(tmp_path: Path
         )
         command.upgrade(config, "head")
         assert "commerce_orders" in sa.inspect(connection).get_table_names()
+
+
+def test_purchasing_revision_constraints_and_rollback_are_additive(tmp_path: Path) -> None:
+    """The purchasing foundation is explicit, reversible, and leaves prior V2 data intact."""
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'purchasing-upgrade.db'}")
+    with engine.connect() as connection:
+        connection.execute(sa.text("PRAGMA foreign_keys=ON"))
+        config = _config(connection)
+        command.upgrade(config, "0010_finance")
+        legacy_product_id = connection.execute(
+            sa.insert(Product).values(
+                sku="PURCHASING-MIG-PRESERVE",
+                name="Purchasing Migration Preservation",
+                category="test",
+                price=1,
+                cost=1,
+                supplier="test",
+                active=True,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+
+        command.upgrade(config, "0011_purchasing")
+        inspector = sa.inspect(connection)
+        purchasing_tables = {
+            "suppliers",
+            "supplier_products",
+            "commerce_purchase_orders",
+            "commerce_purchase_order_items",
+            "inbound_shipments",
+            "inbound_shipment_items",
+        }
+        assert purchasing_tables.issubset(set(inspector.get_table_names()))
+        assert {
+            item["name"] for item in inspector.get_unique_constraints("commerce_purchase_orders")
+        } >= {
+            "uq_commerce_purchase_orders_org_number",
+            "uq_commerce_purchase_orders_org_idempotency",
+        }
+        assert {item["name"] for item in inspector.get_unique_constraints("suppliers")} >= {
+            "uq_suppliers_org_code"
+        }
+        assert {item["name"] for item in inspector.get_unique_constraints("inbound_shipments")} >= {
+            "uq_inbound_shipments_org_number"
+        }
+        assert {item["name"] for item in inspector.get_check_constraints("supplier_products")} >= {
+            "ck_supplier_products_commercial_terms"
+        }
+        assert {
+            item["name"] for item in inspector.get_check_constraints("commerce_purchase_orders")
+        } >= {"ck_commerce_purchase_orders_total", "ck_commerce_purchase_orders_status"}
+        assert {item["name"] for item in inspector.get_check_constraints("inbound_shipments")} >= {
+            "ck_inbound_shipments_status"
+        }
+        supplier_fks = {
+            (tuple(item["constrained_columns"]), item["referred_table"])
+            for item in inspector.get_foreign_keys("supplier_products")
+        }
+        assert (("organization_id", "supplier_id"), "suppliers") in supplier_fks
+        po_fks = {
+            (tuple(item["constrained_columns"]), item["referred_table"])
+            for item in inspector.get_foreign_keys("commerce_purchase_orders")
+        }
+        assert (("organization_id", "warehouse_id"), "warehouses") in po_fks
+
+        command.downgrade(config, "0010_finance")
+        tables_after_rollback = set(sa.inspect(connection).get_table_names())
+        assert purchasing_tables.isdisjoint(tables_after_rollback)
+        assert (
+            connection.scalar(
+                sa.select(sa.func.count())
+                .select_from(Product)
+                .where(Product.id == legacy_product_id)
+            )
+            == 1
+        )
+        command.upgrade(config, "0011_purchasing")
+        assert purchasing_tables.issubset(set(sa.inspect(connection).get_table_names()))
 
 
 def test_shop_connection_revision_rollback_preserves_existing_shop_data(tmp_path: Path) -> None:

@@ -3,16 +3,15 @@
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
 Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
-Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`).
-Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`).
-Last completed task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit (`DONE`).
-The `0010_finance` models, service, API, SQLite/MySQL migrations, tenant/permission boundaries,
-idempotent/stale-event handling, Decimal calculations, persisted historical inputs, and full
-regression gates pass the formal Product, Architecture, Security, Testing, migration, and
-documentation Exit Review.
-The inventory/analytics/API/migration suite is green (`25 passed, 1 warning`), Compose smoke is
-green (`5 passed`), and the latest current-checkout full suite is green
-(`253 passed, 18 skipped, 1 warning`).
+Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`).
+Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`).
+Last completed task: `COM-P1-004` — Suppliers and Purchasing (`DONE`).
+The `0011_purchasing` models, service, API, SQLite/MySQL migrations, tenant/permission boundaries,
+approval separation, idempotent/monotonic inbound handling, and deterministic replenishment pass
+the formal Product, Architecture, Security, Testing, migration, and documentation Exit Review.
+The purchasing service/API slice is green (`5 passed, 1 warning`), migration suite is green
+(`13 passed`), and the latest current-checkout full suite is green
+(`265 passed, 18 skipped, 1 warning`).
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -83,8 +82,7 @@ incoming coverage is not ETA-bounded until purchasing/inbound shipment work exis
 APIs are locally verified on SQLite and MySQL. Profit snapshots preserve the actual Decimal cost,
 FX, refund, fee, logistics, advertising, adjustment, and settlement inputs used at calculation
 time; estimated and settled results are distinct. No real Douyin/TikTok inventory or finance
-synchronization is claimed. Phase 3 exit is satisfied; `COM-P1-004` is the next highest-priority
-dependency-satisfied task.
+synchronization is claimed. Phase 3 exit is satisfied.
 
 ## Phase 4 — Suppliers, Purchasing, and Approval
 
@@ -92,6 +90,19 @@ Dependencies: Phase 3.
 
 Implement suppliers, purchase lifecycle, inbound shipments, deterministic replenishment,
 approval enforcement, idempotent execution, and audit history.
+
+Current evidence: `COM-P1-004` is `DONE` at `L2 VERIFIED_LOCAL`. Tenant-scoped supplier and
+commercial-term models, Decimal purchase snapshots, independent approval, complete purchase and
+inbound lifecycle, idempotent shipment creation, monotonic cumulative receipts, bounded APIs,
+operation audit, and ETA-aware deterministic replenishment pass SQLite/MySQL and full regression
+gates. Authoritative physical WarehouseInventory remains RawEvent-bound; receiving a planned
+shipment does not fabricate a platform inventory snapshot. No platform order placement, Agent
+purchase tool, or real supplier integration is claimed. `COM-P1-005` now completes the approved
+execution/Agent boundary and concurrent retry evidence before Phase 4 exit.
+
+Exit: `COM-P1-005` must verify that validated recommendations can become drafts, approval cannot
+be bypassed, execution retries/concurrency are idempotent, and the LLM cannot replace the
+authoritative quantity.
 
 ## Phase 5 — Production Sync Operations and Imports
 

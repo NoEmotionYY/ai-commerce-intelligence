@@ -3,11 +3,11 @@
 ## V2 Status
 
 Phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`
-Current task: `COM-P1-004` — Suppliers and Purchasing (`IN_PROGRESS`)
-Next task: `COM-P1-005` — Alerts and Anomaly Detection (`TODO`)
-Last completed top-level task: `COM-P1-003` — Costs, Refunds, Settlements, and Profit
-Current verification slice: `COM-P1-004A` — Purchasing Model and Additive Migration (`IN_PROGRESS`)
-Last verified commit: `3fccd76`
+Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`)
+Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`)
+Last completed top-level task: `COM-P1-004` — Suppliers and Purchasing
+Current verification slice: `COM-P1-005A` — Approved Draft and Execution Boundary (`IN_PROGRESS`)
+Last verified commit: `2f31702`
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -939,3 +939,61 @@ Status:
 - P0 remaining: 0; P1 remaining: 7; active `BLOCKED_EXTERNAL`: 0.
 - The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS and do not
   represent finance implementation failures or external platform verification.
+
+## 2026-08-16 — COM-P1-004 Suppliers and Purchasing Exit
+
+Implemented:
+
+- Added additive `0011_purchasing` models for organization-scoped Supplier, SupplierProduct,
+  CommercePurchaseOrder/Item, and InboundShipment/Item while preserving legacy Demo purchase
+  tables and data.
+- Added Decimal commercial terms and purchase snapshots, MOQ/package-size validation, lead time,
+  complete purchase lifecycle, creator/approver separation, tenant-scoped permissions, and
+  operation audit records.
+- Added tenant-scoped supplier, purchase-order, inbound-shipment, receipt, and replenishment APIs.
+  API responses omit idempotency/request hashes and no unrestricted normalized inventory write is
+  exposed.
+- Added deterministic replenishment from unified order velocity, warehouse availability,
+  ETA-bounded open inbound quantities, lead time, safety-stock days, MOQ, and package size.
+- Made purchase creation and lifecycle retries idempotent. Shipment number retries return the
+  existing batch only when content is identical; cumulative receipt retries do not double count,
+  and older cumulative snapshots cannot reduce received stock.
+
+Formal Exit Review:
+
+- Product: arbitrary tenant/supplier/SKU/warehouse data is supported; purchase costs and quantities
+  are deterministic and no Demo identifier or Mock ERP is required.
+- Architecture: new production tables remain separate from legacy purchase fixtures; purchasing
+  planning does not mutate authoritative WarehouseInventory, which remains RawEvent-bound; no
+  universal connector abstraction or real-platform claim was introduced.
+- Security: reads and writes derive organization scope from the authenticated membership;
+  centralized permissions enforce commerce writes and approval; creators cannot approve their own
+  purchase orders; internal hashes, raw payloads, claims, and credentials are not serialized.
+- Testing/data integrity: tenant isolation, Decimal values, MOQ/package validation, request replay
+  and conflict, approval denial, state retries, partial/full and stale cumulative receipt,
+  deterministic replenishment, SQLite migration, and MySQL constraints/rollback/data preservation
+  pass. No unresolved Critical/High finding remains.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_purchasing_service.py tests/integration/test_purchasing_api.py
+  -q`: `5 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `13 passed`.
+- `python -m pytest -q`: `265 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`111 files already formatted`).
+- `mypy .`: PASS (`85 source files`).
+- `alembic heads`: one head, `0011_purchasing`; `git diff --check`: PASS.
+- Disposable official `mysql:8.4.11`, guarded empty `commerce_purchasing_test`: fresh install,
+  `0002 -> head`, `0011 -> 0010 -> 0011`, `head -> 0009 -> head`, full rollback/re-upgrade,
+  schema/behavior constraints, legacy/V2 data preservation, and existing synchronization/inventory
+  race checks PASS. Temporary container `ai-commerce-purchasing-mysql-test` was removed.
+
+Status:
+
+- `COM-P1-004A` through `COM-P1-004D` and parent `COM-P1-004`: `DONE` at
+  `L2 VERIFIED_LOCAL`.
+- Current phase remains `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`; current task is
+  `COM-P1-005` — Replenishment and Approval Execution.
+- P0 remaining: 0; P1 remaining: 6; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS. They do not
+  represent purchasing implementation failures and will be rerun in their relevant later phases.

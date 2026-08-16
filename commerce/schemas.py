@@ -330,3 +330,76 @@ class ProfitSnapshotCreate(FinanceInput):
     settlement_id: int | None = Field(default=None, gt=0)
     as_of: datetime | None = None
     exchange_rates: list[ExchangeRateInput] = Field(default_factory=list, max_length=32)
+
+
+class PurchasingInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, frozen=True)
+
+
+class SupplierCreate(PurchasingInput):
+    code: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+    name: str = Field(min_length=1, max_length=200)
+    payment_terms: str | None = Field(default=None, max_length=200)
+    contact_name: str | None = Field(default=None, max_length=200)
+    contact_email: str | None = Field(default=None, max_length=320)
+    contact_phone: str | None = Field(default=None, max_length=50)
+
+
+class SupplierProductCreate(PurchasingInput):
+    supplier_id: int = Field(gt=0)
+    master_sku_id: int = Field(gt=0)
+    supplier_product_code: str = Field(min_length=1, max_length=128)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    purchase_cost: str = Field(pattern=r"^(0|[1-9][0-9]{0,13})(\.[0-9]{1,4})?$")
+    moq: int = Field(default=1, ge=1, le=2_147_483_647)
+    package_size: int = Field(default=1, ge=1, le=2_147_483_647)
+    lead_time_days: int = Field(default=0, ge=0, le=3650)
+
+
+class PurchaseOrderItemCreate(PurchasingInput):
+    supplier_product_id: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=2_147_483_647)
+
+
+class PurchaseOrderCreate(PurchasingInput):
+    supplier_id: int = Field(gt=0)
+    warehouse_id: int = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    items: list[PurchaseOrderItemCreate] = Field(min_length=1, max_length=1000)
+
+
+class PurchaseOrderDecision(PurchasingInput):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class InboundShipmentItemCreate(PurchasingInput):
+    purchase_order_item_id: int = Field(gt=0)
+    quantity_shipped: int = Field(gt=0, le=2_147_483_647)
+
+
+class InboundShipmentCreate(PurchasingInput):
+    shipment_number: str = Field(min_length=1, max_length=128)
+    expected_at: datetime
+    items: list[InboundShipmentItemCreate] = Field(min_length=1, max_length=1000)
+
+
+class InboundReceiptItem(PurchasingInput):
+    purchase_order_item_id: int = Field(gt=0)
+    quantity_received: int = Field(
+        gt=0,
+        le=2_147_483_647,
+        description="Cumulative received quantity for this shipment line.",
+    )
+
+
+class InboundReceipt(PurchasingInput):
+    items: list[InboundReceiptItem] = Field(min_length=1, max_length=1000)
+
+
+class ReplenishmentQuery(PurchasingInput):
+    warehouse_id: int = Field(gt=0)
+    supplier_product_id: int = Field(gt=0)
+    as_of: datetime | None = None
+    sales_window_days: int = Field(default=30, ge=7, le=365)
+    safety_stock_days: int = Field(default=7, ge=0, le=365)

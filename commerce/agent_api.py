@@ -43,8 +43,10 @@ from commerce.models import (
     ChannelInventory,
     CommerceOrder,
     CommerceOrderStatus,
+    CommercePurchaseOrder,
     CrawlerTask,
     FinanceTransaction,
+    InboundShipment,
     MasterProduct,
     MasterSKU,
     OperationLog,
@@ -53,12 +55,15 @@ from commerce.models import (
     PlatformSKU,
     ProfitKind,
     ProfitSnapshot,
+    PurchaseOrderStatus,
     RawEventStatus,
     Refund,
     Settlement,
     Shop,
     ShopCapabilityStatus,
     SKUCost,
+    Supplier,
+    SupplierProduct,
     SyncJob,
     SyncJobStatus,
     Warehouse,
@@ -71,12 +76,16 @@ from commerce.schemas import (
     ChatResponse,
     ClaimInput,
     Evidence,
+    InboundReceipt,
+    InboundShipmentCreate,
     MasterProductCreate,
     MasterSKUCreate,
     PlatformSKUCreate,
     PlatformSKURemap,
     ProcessingFailure,
     ProfitSnapshotCreate,
+    PurchaseOrderCreate,
+    PurchaseOrderDecision,
     RawEventClaimInput,
     RawEventCreate,
     RawEventReplay,
@@ -84,6 +93,8 @@ from commerce.schemas import (
     ShopProfileUpdate,
     ShopStatusUpdate,
     SKUCostCreate,
+    SupplierCreate,
+    SupplierProductCreate,
     SyncCheckpointUpdate,
     SyncJobCreate,
     SyncJobFinish,
@@ -118,6 +129,12 @@ from commerce.services.order_import import (
     OrderImportNotFoundError,
     OrderImportService,
     OrderImportValidationError,
+)
+from commerce.services.purchasing import (
+    PurchasingConflictError,
+    PurchasingNotFoundError,
+    PurchasingService,
+    PurchasingValidationError,
 )
 from commerce.services.report import daily_report
 from commerce.services.shop import ShopService
@@ -225,6 +242,16 @@ def require_v2_commerce_writer(
 ) -> Principal:
     try:
         require_permission(principal, Permission.WRITE_COMMERCE)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return principal
+
+
+def require_v2_approver(
+    principal: Principal = Depends(require_v2_principal),
+) -> Principal:
+    try:
+        require_permission(principal, Permission.APPROVE_ACTION)
     except AuthorizationError as exc:
         raise HTTPException(403, str(exc)) from exc
     return principal
@@ -574,6 +601,91 @@ def profit_snapshot_dict(item: ProfitSnapshot) -> dict[str, object]:
     }
 
 
+def supplier_dict(item: Supplier) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "payment_terms": item.payment_terms,
+        "contact_name": item.contact_name,
+        "contact_email": item.contact_email,
+        "contact_phone": item.contact_phone,
+        "active": item.active,
+        "created_at": item.created_at,
+    }
+
+
+def supplier_product_dict(item: SupplierProduct) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "supplier_id": item.supplier_id,
+        "master_sku_id": item.master_sku_id,
+        "supplier_product_code": item.supplier_product_code,
+        "currency": item.currency,
+        "purchase_cost": str(item.purchase_cost),
+        "moq": item.moq,
+        "package_size": item.package_size,
+        "lead_time_days": item.lead_time_days,
+        "active": item.active,
+    }
+
+
+def purchase_order_dict(item: CommercePurchaseOrder) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "supplier_id": item.supplier_id,
+        "warehouse_id": item.warehouse_id,
+        "po_number": item.po_number,
+        "status": item.status.value,
+        "currency": item.currency,
+        "total_amount": str(item.total_amount),
+        "created_by_user_id": item.created_by_user_id,
+        "approved_by_user_id": item.approved_by_user_id,
+        "rejection_reason": item.rejection_reason,
+        "submitted_at": item.submitted_at,
+        "approved_at": item.approved_at,
+        "ordered_at": item.ordered_at,
+        "shipped_at": item.shipped_at,
+        "received_at": item.received_at,
+        "closed_at": item.closed_at,
+        "items": [
+            {
+                "id": order_item.id,
+                "supplier_product_id": order_item.supplier_product_id,
+                "master_sku_id": order_item.master_sku_id,
+                "quantity": order_item.quantity,
+                "received_quantity": order_item.received_quantity,
+                "unit_cost": str(order_item.unit_cost),
+                "total_amount": str(order_item.total_amount),
+            }
+            for order_item in item.items
+        ],
+    }
+
+
+def inbound_shipment_dict(item: InboundShipment) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "purchase_order_id": item.purchase_order_id,
+        "warehouse_id": item.warehouse_id,
+        "shipment_number": item.shipment_number,
+        "status": item.status.value,
+        "expected_at": item.expected_at,
+        "shipped_at": item.shipped_at,
+        "received_at": item.received_at,
+        "items": [
+            {
+                "id": shipment_item.id,
+                "purchase_order_item_id": shipment_item.purchase_order_item_id,
+                "master_sku_id": shipment_item.master_sku_id,
+                "quantity_shipped": shipment_item.quantity_shipped,
+                "quantity_received": shipment_item.quantity_received,
+            }
+            for shipment_item in item.items
+        ],
+    }
+
+
 def shop_dict(shop: Shop, connection_service: ShopConnectionService) -> dict[str, object]:
     connection = connection_service.connection_for_shop(shop.id)
     capabilities = connection_service.list_capabilities(shop.id)
@@ -639,6 +751,18 @@ def finance_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, FinanceValidationError):
         return HTTPException(400, str(exc))
     return HTTPException(500, "财务服务失败")
+
+
+def purchasing_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, PurchasingNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, PurchasingConflictError):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, PurchasingValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "采购服务失败")
 
 
 def require_operator(key: str) -> None:
@@ -1488,6 +1612,281 @@ def list_v2_profit_snapshots(
     except (AuthorizationError, FinanceNotFoundError, FinanceValidationError) as exc:
         raise finance_http_error(exc) from exc
     return [profit_snapshot_dict(item) for item in items]
+
+
+@app.post("/api/v2/suppliers")
+def create_v2_supplier(
+    payload: SupplierCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return supplier_dict(PurchasingService(session, principal).create_supplier(payload))
+    except (AuthorizationError, PurchasingConflictError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
+
+
+@app.get("/api/v2/suppliers")
+def list_v2_suppliers(
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = PurchasingService(session, principal).list_suppliers(after_id=after_id, limit=limit)
+    except (AuthorizationError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
+    return [supplier_dict(item) for item in items]
+
+
+@app.post("/api/v2/supplier-products")
+def create_v2_supplier_product(
+    payload: SupplierProductCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).create_supplier_product(payload)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return supplier_product_dict(item)
+
+
+@app.get("/api/v2/supplier-products")
+def list_v2_supplier_products(
+    supplier_id: int | None = Query(default=None, gt=0),
+    master_sku_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = PurchasingService(session, principal).list_supplier_products(
+            supplier_id=supplier_id,
+            master_sku_id=master_sku_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, PurchasingNotFoundError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
+    return [supplier_product_dict(item) for item in items]
+
+
+@app.post("/api/v2/purchase-orders")
+def create_v2_purchase_order(
+    payload: PurchaseOrderCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).create_purchase_order(payload)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.get("/api/v2/purchase-orders")
+def list_v2_purchase_orders(
+    status: PurchaseOrderStatus | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = PurchasingService(session, principal).list_purchase_orders(
+            status=status, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
+    return [purchase_order_dict(item) for item in items]
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/submit")
+def submit_v2_purchase_order(
+    purchase_order_id: int,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).submit_purchase_order(purchase_order_id)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/approve")
+def approve_v2_purchase_order(
+    purchase_order_id: int,
+    payload: PurchaseOrderDecision,
+    principal: Principal = Depends(require_v2_approver),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).decide_purchase_order(
+            purchase_order_id, approve=True, reason=payload.reason
+        )
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/reject")
+def reject_v2_purchase_order(
+    purchase_order_id: int,
+    payload: PurchaseOrderDecision,
+    principal: Principal = Depends(require_v2_approver),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).decide_purchase_order(
+            purchase_order_id, approve=False, reason=payload.reason
+        )
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/order")
+def order_v2_purchase_order(
+    purchase_order_id: int,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).mark_ordered(purchase_order_id)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/shipments")
+def create_v2_inbound_shipment(
+    purchase_order_id: int,
+    payload: InboundShipmentCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).create_inbound_shipment(
+            purchase_order_id, payload
+        )
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return inbound_shipment_dict(item)
+
+
+@app.post("/api/v2/inbound-shipments/{shipment_id}/receive")
+def receive_v2_inbound_shipment(
+    shipment_id: int,
+    payload: InboundReceipt,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).receive_shipment(shipment_id, payload)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return inbound_shipment_dict(item)
+
+
+@app.get("/api/v2/inbound-shipments")
+def list_v2_inbound_shipments(
+    purchase_order_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = PurchasingService(session, principal).list_shipments(
+            purchase_order_id=purchase_order_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, PurchasingNotFoundError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
+    return [inbound_shipment_dict(item) for item in items]
+
+
+@app.post("/api/v2/purchase-orders/{purchase_order_id}/close")
+def close_v2_purchase_order(
+    purchase_order_id: int,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = PurchasingService(session, principal).close_purchase_order(purchase_order_id)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return purchase_order_dict(item)
+
+
+@app.get("/api/v2/replenishment-recommendations")
+def get_v2_replenishment_recommendation(
+    warehouse_id: int = Query(gt=0),
+    supplier_product_id: int = Query(gt=0),
+    as_of: datetime | None = None,
+    sales_window_days: int = Query(default=30, ge=7, le=365),
+    safety_stock_days: int = Query(default=7, ge=0, le=365),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return PurchasingService(session, principal).replenishment_recommendation(
+            warehouse_id=warehouse_id,
+            supplier_product_id=supplier_product_id,
+            as_of=as_of,
+            sales_window_days=sales_window_days,
+            safety_stock_days=safety_stock_days,
+        )
+    except (AuthorizationError, PurchasingNotFoundError, PurchasingValidationError) as exc:
+        raise purchasing_http_error(exc) from exc
 
 
 @app.patch("/api/v2/shops/{shop_id}/status")
