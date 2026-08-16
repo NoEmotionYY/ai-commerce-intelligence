@@ -538,6 +538,58 @@ class InventoryService:
         if shop_id is not None:
             sales_statement = sales_statement.where(CommerceOrder.shop_id == shop_id)
         sales_units = int(self.session.scalar(sales_statement) or 0)
+        inventory_inputs = [
+            {
+                "inventory_id": int(row.id),
+                "snapshot_hash": str(row.snapshot_hash),
+                "source_event_id": int(row.last_source_event_id),
+            }
+            for row in self.session.execute(
+                select(
+                    WarehouseInventory.id,
+                    WarehouseInventory.snapshot_hash,
+                    WarehouseInventory.last_source_event_id,
+                )
+                .join(Warehouse, Warehouse.id == WarehouseInventory.warehouse_id)
+                .where(
+                    WarehouseInventory.organization_id == self.principal.organization_id,
+                    WarehouseInventory.master_sku_id == sku.id,
+                    Warehouse.active.is_(True),
+                )
+                .order_by(WarehouseInventory.id)
+            )
+        ]
+        demand_evidence_statement = (
+            select(
+                CommerceOrder.id,
+                CommerceOrderItem.id,
+                CommerceOrderItem.quantity,
+                CommerceOrder.last_source_event_id,
+            )
+            .join(CommerceOrder, CommerceOrder.id == CommerceOrderItem.order_id)
+            .where(
+                CommerceOrderItem.organization_id == self.principal.organization_id,
+                CommerceOrderItem.master_sku_id == sku.id,
+                CommerceOrder.status.in_(DEMAND_STATUSES),
+                CommerceOrder.ordered_at >= start,
+                CommerceOrder.ordered_at < as_of,
+            )
+        )
+        if shop_id is not None:
+            demand_evidence_statement = demand_evidence_statement.where(
+                CommerceOrder.shop_id == shop_id
+            )
+        demand_inputs = [
+            {
+                "order_id": int(row[0]),
+                "order_item_id": int(row[1]),
+                "quantity": int(row[2]),
+                "source_event_id": int(row[3]),
+            }
+            for row in self.session.execute(
+                demand_evidence_statement.order_by(CommerceOrderItem.id)
+            )
+        ]
         metrics = calculate_inventory_coverage(
             available_stock=int(physical[0]),
             incoming_stock=int(physical[2]),
@@ -562,6 +614,12 @@ class InventoryService:
             "channel_available": int(channel[0]),
             "channel_reserved": int(channel[1]),
             "channel_exposure_gap": int(channel[0]) - int(physical[0]),
+            "evidence": {
+                "inventory_input_count": len(inventory_inputs),
+                "inventory_inputs_digest": self._evidence_hash(inventory_inputs),
+                "demand_input_count": len(demand_inputs),
+                "demand_inputs_digest": self._evidence_hash(demand_inputs),
+            },
             **self._coverage_dict(metrics),
         }
 
@@ -741,6 +799,11 @@ class InventoryService:
         serialized = json.dumps(
             snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()
+
+    @staticmethod
+    def _evidence_hash(value: object) -> str:
+        serialized = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(serialized).hexdigest()
 
     @staticmethod

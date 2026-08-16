@@ -22,6 +22,7 @@ from commerce.models import (
     CommerceAlert,
     CommerceOrder,
     CommerceOrderItem,
+    CommercePurchaseOrder,
     DataImportJob,
     DataImportRecord,
     Inventory,
@@ -37,7 +38,9 @@ from commerce.models import (
     ShopConnection,
     ShopCredential,
     SKUCost,
+    Supplier,
     SyncJob,
+    TaskEffectMeasurement,
     User,
     Warehouse,
     WarehouseInventory,
@@ -72,6 +75,222 @@ def test_fresh_install_reaches_single_head_with_expected_tables(tmp_path: Path) 
             assert {column.name for column in table.columns}.issubset(actual_columns)
         current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
         assert current == ScriptDirectory.from_config(config).get_current_head()
+
+
+def test_task_effect_upgrade_constraints_rollback_and_reupgrade_preserve_tasks(
+    tmp_path: Path,
+) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'task-effects.db'}")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        config = _config(connection)
+        command.upgrade(config, "0014_douyin_webhook_lookup")
+        now = utcnow()
+        organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="task-effect-migration",
+                name="Task Effect Migration",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        user_id = connection.execute(
+            sa.insert(User).values(
+                email="task-effect-migration@example.com",
+                display_name="Task Effect Migration",
+                is_active=True,
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        shop_id = connection.execute(
+            sa.insert(Shop).values(
+                organization_id=organization_id,
+                name="Task Effect Shop",
+                platform="douyin",
+                external_shop_id="task-effect-shop",
+                country_code="CN",
+                currency="CNY",
+                timezone="Asia/Shanghai",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        warehouse_id = connection.execute(
+            sa.insert(Warehouse).values(
+                organization_id=organization_id,
+                code="TASK-EFFECT-MIGRATION",
+                name="Task Effect Warehouse",
+                country_code="CN",
+                timezone="Asia/Shanghai",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        supplier_id = connection.execute(
+            sa.insert(Supplier).values(
+                organization_id=organization_id,
+                code="task-effect-migration-supplier",
+                name="Task Effect Supplier",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        purchase_order_id = connection.execute(
+            sa.insert(CommercePurchaseOrder).values(
+                organization_id=organization_id,
+                supplier_id=supplier_id,
+                warehouse_id=warehouse_id,
+                po_number="PO-TASK-EFFECT-MIGRATION",
+                idempotency_key_hash=hashlib.sha256(b"task-effect-po-key").hexdigest(),
+                request_hash=hashlib.sha256(b"task-effect-po-request").hexdigest(),
+                status="ORDERED",
+                currency="CNY",
+                total_amount=1,
+                created_by_user_id=user_id,
+                ordered_at=now - timedelta(hours=2),
+                created_at=now - timedelta(days=2),
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        alert_id = connection.execute(
+            sa.insert(CommerceAlert).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                master_sku_id=None,
+                alert_type="SALES_DROP",
+                status="RESOLVED",
+                deduplication_key_hash=hashlib.sha256(b"task-effect-alert").hexdigest(),
+                metric_name="sales_change",
+                metric_value=0.5,
+                threshold_value=0.3,
+                summary="Sales dropped",
+                details={},
+                window_start=now - timedelta(days=14),
+                window_end=now - timedelta(days=7),
+                resolved_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=14),
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        task_id = connection.execute(
+            sa.insert(BusinessTask).values(
+                organization_id=organization_id,
+                alert_id=alert_id,
+                shop_id=shop_id,
+                master_sku_id=None,
+                idempotency_key_hash=hashlib.sha256(b"task-effect-task").hexdigest(),
+                request_hash=hashlib.sha256(b"task-effect-request").hexdigest(),
+                title="Recover sales",
+                status="DONE",
+                created_by_user_id=user_id,
+                completed_at=now - timedelta(hours=1),
+                created_at=now - timedelta(days=2),
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        second_task_id = connection.execute(
+            sa.insert(BusinessTask).values(
+                organization_id=organization_id,
+                alert_id=alert_id,
+                shop_id=shop_id,
+                master_sku_id=None,
+                idempotency_key_hash=hashlib.sha256(b"task-effect-second-task").hexdigest(),
+                request_hash=hashlib.sha256(b"task-effect-second-request").hexdigest(),
+                title="Second effect task",
+                status="DONE",
+                created_by_user_id=user_id,
+                completed_at=now - timedelta(hours=1),
+                created_at=now - timedelta(days=2),
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+
+        command.upgrade(config, "head")
+        assert "task_effect_measurements" in sa.inspect(connection).get_table_names()
+        values = {
+            "organization_id": organization_id,
+            "business_task_id": task_id,
+            "alert_id": alert_id,
+            "shop_id": shop_id,
+            "master_sku_id": None,
+            "execution_purchase_order_id": purchase_order_id,
+            "execution_status": "ORDERED",
+            "executed_at": now - timedelta(hours=2),
+            "metric_name": "sales_change",
+            "metric_unit": "RATIO",
+            "currency": "CNY",
+            "profit_kind": None,
+            "direction": "LOWER_IS_BETTER",
+            "baseline_value": 0.5,
+            "outcome_value": 0.1,
+            "delta_value": -0.4,
+            "assessment": "IMPROVED",
+            "baseline_window_start": now - timedelta(days=14),
+            "baseline_window_end": now - timedelta(days=7),
+            "outcome_window_start": now - timedelta(days=7),
+            "outcome_window_end": now,
+            "method_version": "TASK_EFFECT_V1",
+            "calculation_hash": hashlib.sha256(b"task-effect-calculation").hexdigest(),
+            "evidence": {"source": "migration"},
+            "measured_by_user_id": user_id,
+            "measured_at": now,
+            "created_at": now,
+        }
+        connection.execute(sa.insert(TaskEffectMeasurement).values(**values))
+        connection.commit()
+
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(TaskEffectMeasurement).values(
+                    **{
+                        **values,
+                        "calculation_hash": hashlib.sha256(b"duplicate-task").hexdigest(),
+                    }
+                )
+            )
+            connection.commit()
+        connection.rollback()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(TaskEffectMeasurement).values(
+                    **{
+                        **values,
+                        "business_task_id": task_id + 999,
+                        "calculation_hash": hashlib.sha256(b"missing-task").hexdigest(),
+                    }
+                )
+            )
+            connection.commit()
+        connection.rollback()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(TaskEffectMeasurement).values(
+                    **{
+                        **values,
+                        "business_task_id": second_task_id,
+                        "execution_purchase_order_id": purchase_order_id + 999,
+                        "calculation_hash": hashlib.sha256(b"missing-execution").hexdigest(),
+                    }
+                )
+            )
+            connection.commit()
+        connection.rollback()
+
+        command.downgrade(config, "0014_douyin_webhook_lookup")
+        assert "task_effect_measurements" not in sa.inspect(connection).get_table_names()
+        assert (
+            connection.scalar(
+                sa.select(sa.func.count())
+                .select_from(BusinessTask)
+                .where(BusinessTask.id == task_id)
+            )
+            == 1
+        )
+        command.upgrade(config, "head")
+        assert "task_effect_measurements" in sa.inspect(connection).get_table_names()
 
 
 def test_data_import_upgrade_constraints_rollback_and_reupgrade_preserve_existing_data(

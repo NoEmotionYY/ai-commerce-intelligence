@@ -75,6 +75,7 @@ from commerce.models import (
     SupplierProduct,
     SyncJob,
     SyncJobStatus,
+    TaskEffectMeasurement,
     Warehouse,
     WarehouseInventory,
     utcnow,
@@ -114,6 +115,7 @@ from commerce.schemas import (
     SyncCheckpointUpdate,
     SyncJobCreate,
     SyncJobFinish,
+    TaskEffectMeasure,
     TikTokShopSyncRun,
     ToolCallRecord,
     WarehouseCreate,
@@ -146,6 +148,12 @@ from commerce.services.douyin_webhook import (
     DouyinWebhookConflictError,
     DouyinWebhookService,
     DouyinWebhookValidationError,
+)
+from commerce.services.effects import (
+    TaskEffectConflictError,
+    TaskEffectNotFoundError,
+    TaskEffectService,
+    TaskEffectValidationError,
 )
 from commerce.services.finance import (
     FinanceConflictError,
@@ -809,6 +817,37 @@ def business_task_dict(item: BusinessTask) -> dict[str, object]:
     }
 
 
+def task_effect_measurement_dict(item: TaskEffectMeasurement) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "business_task_id": item.business_task_id,
+        "alert_id": item.alert_id,
+        "shop_id": item.shop_id,
+        "master_sku_id": item.master_sku_id,
+        "execution_purchase_order_id": item.execution_purchase_order_id,
+        "execution_status": item.execution_status,
+        "executed_at": item.executed_at,
+        "metric_name": item.metric_name,
+        "metric_unit": item.metric_unit,
+        "currency": item.currency,
+        "profit_kind": item.profit_kind,
+        "direction": item.direction.value,
+        "baseline_value": str(item.baseline_value),
+        "outcome_value": str(item.outcome_value),
+        "delta_value": str(item.delta_value),
+        "assessment": item.assessment.value,
+        "baseline_window_start": item.baseline_window_start,
+        "baseline_window_end": item.baseline_window_end,
+        "outcome_window_start": item.outcome_window_start,
+        "outcome_window_end": item.outcome_window_end,
+        "method_version": item.method_version,
+        "evidence": item.evidence,
+        "measured_by_user_id": item.measured_by_user_id,
+        "measured_at": item.measured_at,
+        "created_at": item.created_at,
+    }
+
+
 def data_import_record_dict(item: DataImportRecord) -> dict[str, object]:
     return {
         "id": item.id,
@@ -1050,6 +1089,16 @@ def alert_task_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AlertTaskValidationError):
         return HTTPException(400, str(exc))
     return HTTPException(500, "告警任务服务失败")
+
+
+def task_effect_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, TaskEffectNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, TaskEffectConflictError):
+        return HTTPException(409, str(exc))
+    return HTTPException(422, str(exc))
 
 
 def data_import_http_error(exc: Exception) -> HTTPException:
@@ -2508,6 +2557,47 @@ def list_v2_business_tasks(
     except (AuthorizationError, AlertTaskValidationError) as exc:
         raise alert_task_http_error(exc) from exc
     return [business_task_dict(item) for item in items]
+
+
+@app.post("/api/v2/business-tasks/{business_task_id}/effect-measurements")
+def measure_v2_business_task_effect(
+    business_task_id: int,
+    payload: TaskEffectMeasure,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = TaskEffectService(session, principal).measure(
+            business_task_id,
+            purchase_order_id=payload.purchase_order_id,
+        )
+    except (
+        AuthorizationError,
+        TaskEffectConflictError,
+        TaskEffectNotFoundError,
+        TaskEffectValidationError,
+    ) as exc:
+        raise task_effect_http_error(exc) from exc
+    return task_effect_measurement_dict(item)
+
+
+@app.get("/api/v2/task-effect-measurements")
+def list_v2_task_effect_measurements(
+    business_task_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = TaskEffectService(session, principal).list_measurements(
+            business_task_id=business_task_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, TaskEffectNotFoundError, TaskEffectValidationError) as exc:
+        raise task_effect_http_error(exc) from exc
+    return [task_effect_measurement_dict(item) for item in items]
 
 
 @app.patch("/api/v2/business-tasks/{task_id}/status")

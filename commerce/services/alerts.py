@@ -28,6 +28,7 @@ from commerce.models import (
     MembershipStatus,
     OperationLog,
     OrganizationMembership,
+    ProfitKind,
     ProfitSnapshot,
     Refund,
     RefundStatus,
@@ -45,6 +46,17 @@ SALES_CHANGE_THRESHOLD = Decimal("0.3000")
 REFUND_RATE_THRESHOLD = Decimal("0.2000")
 REFUND_RATE_DELTA = Decimal("0.1000")
 MARGIN_DROP_THRESHOLD = Decimal("0.1000")
+PAID_ORDER_STATUSES = frozenset(
+    {
+        CommerceOrderStatus.PAID,
+        CommerceOrderStatus.READY_TO_SHIP,
+        CommerceOrderStatus.SHIPPED,
+        CommerceOrderStatus.DELIVERED,
+        CommerceOrderStatus.COMPLETED,
+        CommerceOrderStatus.PARTIALLY_REFUNDED,
+        CommerceOrderStatus.REFUNDED,
+    }
+)
 
 
 class AlertTaskConflictError(ValueError):
@@ -82,7 +94,7 @@ class AlertTaskService:
                     CommerceOrder.shop_id == shop_id,
                     CommerceOrder.ordered_at >= previous_start,
                     CommerceOrder.ordered_at < as_of,
-                    CommerceOrder.status != CommerceOrderStatus.CANCELLED,
+                    CommerceOrder.status.in_(PAID_ORDER_STATUSES),
                 )
                 .distinct()
             )
@@ -215,6 +227,7 @@ class AlertTaskService:
                 "risk": metrics["risk"],
                 "sales_units": metrics["sales_units"],
                 "available": metrics["physical_available"],
+                "input_evidence": metrics["evidence"],
             },
         )
         self.session.commit()
@@ -397,7 +410,7 @@ class AlertTaskService:
                     CommerceOrder.shop_id == shop_id,
                     CommerceOrder.ordered_at >= start,
                     CommerceOrder.ordered_at < end,
-                    CommerceOrder.status != CommerceOrderStatus.CANCELLED,
+                    CommerceOrder.status.in_(PAID_ORDER_STATUSES),
                 )
             )
             or 0
@@ -444,9 +457,11 @@ class AlertTaskService:
             .where(
                 ProfitSnapshot.organization_id == self.principal.organization_id,
                 ProfitSnapshot.shop_id == shop_id,
+                ProfitSnapshot.kind == ProfitKind.ESTIMATED,
                 ProfitSnapshot.calculated_at <= end,
                 CommerceOrder.organization_id == self.principal.organization_id,
                 CommerceOrder.shop_id == shop_id,
+                CommerceOrder.status.in_(PAID_ORDER_STATUSES),
                 CommerceOrder.ordered_at >= start,
                 CommerceOrder.ordered_at < end,
             )

@@ -18,6 +18,9 @@ from commerce.models import (
     CommerceOrder,
     CommerceOrderItem,
     CommerceOrderStatus,
+    CommercePurchaseOrder,
+    CommercePurchaseOrderItem,
+    EffectAssessment,
     MembershipRole,
     OperationLog,
     Organization,
@@ -25,10 +28,14 @@ from commerce.models import (
     PlatformRawEvent,
     ProfitKind,
     ProfitSnapshot,
+    PurchaseOrderStatus,
     RawEventStatus,
     Refund,
     RefundStatus,
     Shop,
+    Supplier,
+    SupplierProduct,
+    TaskEffectMeasurement,
     User,
     Warehouse,
     WarehouseInventory,
@@ -41,6 +48,11 @@ from commerce.services.alerts import (
     AlertTaskValidationError,
 )
 from commerce.services.catalog import CatalogService
+from commerce.services.effects import (
+    TaskEffectNotFoundError,
+    TaskEffectService,
+    TaskEffectValidationError,
+)
 
 
 def _principal(
@@ -506,3 +518,308 @@ def test_alert_lifecycle_and_pagination_validation(db_session: Session) -> None:
         service.list_alerts(limit=0)
     with pytest.raises(AlertTaskValidationError):
         service.list_tasks(after_id=-1)
+
+
+def test_completed_task_effect_is_deterministic_idempotent_and_tenant_scoped(
+    db_session: Session,
+) -> None:
+    owner, _, _, shop, sku_id, mapping_id = _context(db_session, "task-effect")
+    other, _, _, _, _, _ = _context(db_session, "task-effect-other")
+    measured_at = datetime(2026, 8, 18, tzinfo=UTC)
+    event_id = _event(db_session, owner, shop, "effect-inventory", measured_at)
+    warehouse = Warehouse(
+        organization_id=owner.organization_id,
+        code="TASK-EFFECT-WH",
+        name="Effect Warehouse",
+        country_code="CN",
+        timezone="Asia/Shanghai",
+    )
+    db_session.add(warehouse)
+    db_session.flush()
+    db_session.add(
+        WarehouseInventory(
+            organization_id=owner.organization_id,
+            warehouse_id=warehouse.id,
+            master_sku_id=sku_id,
+            available=14,
+            reserved=0,
+            incoming=0,
+            damaged=0,
+            source="TEST",
+            source_reference="effect-inventory",
+            source_updated_at=measured_at,
+            snapshot_hash=hashlib.sha256(b"effect-inventory").hexdigest(),
+            last_source_shop_id=shop.id,
+            last_source_event_id=event_id,
+            observed_at=measured_at,
+        )
+    )
+    _order(
+        db_session,
+        owner,
+        shop,
+        "effect-demand",
+        "70",
+        measured_at - timedelta(days=2),
+        platform_sku_id=mapping_id,
+        master_sku_id=sku_id,
+        quantity=7,
+    )
+    alerts = AlertTaskService(db_session, owner)
+    alert = alerts._alert(
+        AlertType.STOCKOUT_RISK,
+        shop.id,
+        sku_id,
+        "days_of_stock",
+        Decimal("2"),
+        Decimal("7"),
+        datetime(2026, 8, 1, tzinfo=UTC),
+        datetime(2026, 8, 8, tzinfo=UTC),
+        "Stockout risk",
+        {
+            "risk": "CRITICAL",
+            "input_evidence": {
+                "inventory_input_count": 1,
+                "inventory_inputs_digest": hashlib.sha256(b"baseline-inventory").hexdigest(),
+                "demand_input_count": 1,
+                "demand_inputs_digest": hashlib.sha256(b"baseline-demand").hexdigest(),
+            },
+        },
+    )
+    db_session.commit()
+    task = alerts.create_task(
+        alert.id,
+        BusinessTaskCreate(
+            title="Replenish stock",
+            idempotency_key="task-effect-idempotency",
+        ),
+    )
+    purchase_order = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="task-effect",
+        status=PurchaseOrderStatus.ORDERED,
+        ordered_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+    task.status = BusinessTaskStatus.DONE
+    task.created_at = datetime(2026, 8, 8, 1, tzinfo=UTC)
+    task.completed_at = datetime(2026, 8, 10, tzinfo=UTC)
+    db_session.commit()
+
+    service = TaskEffectService(db_session, owner, clock=lambda: measured_at)
+    with pytest.raises(TaskEffectValidationError, match="结果窗口"):
+        TaskEffectService(
+            db_session,
+            owner,
+            clock=lambda: datetime(2026, 8, 12, tzinfo=UTC),
+        ).measure(task.id, purchase_order_id=purchase_order.id)
+    measurement = service.measure(task.id, purchase_order_id=purchase_order.id)
+    replay = service.measure(task.id, purchase_order_id=purchase_order.id)
+
+    assert replay.id == measurement.id
+    assert measurement.execution_purchase_order_id == purchase_order.id
+    assert measurement.execution_status == "ORDERED"
+    assert measurement.baseline_value == Decimal("2")
+    assert measurement.outcome_value == Decimal("14")
+    assert measurement.delta_value == Decimal("12")
+    assert measurement.assessment is EffectAssessment.IMPROVED
+    assert measurement.evidence["attribution"] == "ASSOCIATED_BEFORE_AFTER_OBSERVATION"
+    assert measurement.evidence["outcome"]["demand_input_count"] == 1
+    assert [item.id for item in service.list_measurements()] == [measurement.id]
+    assert TaskEffectService(db_session, other).list_measurements() == []
+    assert db_session.query(TaskEffectMeasurement).count() == 1
+
+
+def test_task_effect_rejects_incomplete_tasks(db_session: Session) -> None:
+    owner, _, _, shop, sku_id, _ = _context(db_session, "task-effect-incomplete")
+    alerts = AlertTaskService(db_session, owner)
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    alert = alerts._alert(
+        AlertType.STOCKOUT_RISK,
+        shop.id,
+        sku_id,
+        "days_of_stock",
+        Decimal("0.5"),
+        Decimal("0.3"),
+        start,
+        start + timedelta(days=7),
+        "Stockout risk",
+        {
+            "input_evidence": {
+                "inventory_input_count": 1,
+                "inventory_inputs_digest": hashlib.sha256(b"invalid-inventory").hexdigest(),
+                "demand_input_count": 1,
+                "demand_inputs_digest": hashlib.sha256(b"invalid-demand").hexdigest(),
+            }
+        },
+    )
+    db_session.commit()
+    task = alerts.create_task(
+        alert.id,
+        BusinessTaskCreate(
+            title="Not complete",
+            idempotency_key="task-effect-not-complete",
+        ),
+    )
+
+    with pytest.raises(TaskEffectValidationError, match="已完成"):
+        TaskEffectService(db_session, owner).measure(task.id, purchase_order_id=999999)
+
+
+def _effect_purchase_order(
+    session: Session,
+    principal: Principal,
+    warehouse: Warehouse,
+    sku_id: int,
+    *,
+    slug: str,
+    status: PurchaseOrderStatus,
+    ordered_at: datetime | None,
+) -> CommercePurchaseOrder:
+    supplier = Supplier(
+        organization_id=principal.organization_id,
+        code=f"{slug}-supplier",
+        name="Effect Supplier",
+    )
+    session.add(supplier)
+    session.flush()
+    supplier_product = SupplierProduct(
+        organization_id=principal.organization_id,
+        supplier_id=supplier.id,
+        master_sku_id=sku_id,
+        supplier_product_code=f"{slug}-supplier-product",
+        currency="CNY",
+        purchase_cost=Decimal("10"),
+        moq=1,
+        package_size=1,
+        lead_time_days=1,
+    )
+    session.add(supplier_product)
+    session.flush()
+    purchase_order = CommercePurchaseOrder(
+        organization_id=principal.organization_id,
+        supplier_id=supplier.id,
+        warehouse_id=warehouse.id,
+        po_number=f"PO-{slug}",
+        idempotency_key_hash=hashlib.sha256(f"{slug}-idempotency".encode()).hexdigest(),
+        request_hash=hashlib.sha256(f"{slug}-request".encode()).hexdigest(),
+        status=status,
+        currency="CNY",
+        total_amount=Decimal("100"),
+        created_by_user_id=principal.user_id,
+        ordered_at=ordered_at,
+    )
+    session.add(purchase_order)
+    session.flush()
+    session.add(
+        CommercePurchaseOrderItem(
+            organization_id=principal.organization_id,
+            purchase_order_id=purchase_order.id,
+            supplier_product_id=supplier_product.id,
+            master_sku_id=sku_id,
+            quantity=10,
+            unit_cost=Decimal("10"),
+            total_amount=Decimal("100"),
+        )
+    )
+    session.commit()
+    return purchase_order
+
+
+def test_task_effect_rejects_unexecuted_cross_tenant_and_unrelated_purchase(
+    db_session: Session,
+) -> None:
+    owner, _, _, shop, sku_id, _ = _context(db_session, "task-effect-invalid")
+    other, _, _, _, other_sku_id, _ = _context(db_session, "task-effect-invalid-other")
+    warehouse = Warehouse(
+        organization_id=owner.organization_id,
+        code="TASK-EFFECT-INVALID",
+        name="Effect Warehouse",
+        country_code="CN",
+        timezone="Asia/Shanghai",
+    )
+    other_warehouse = Warehouse(
+        organization_id=other.organization_id,
+        code="TASK-EFFECT-OTHER",
+        name="Other Warehouse",
+        country_code="CN",
+        timezone="Asia/Shanghai",
+    )
+    db_session.add_all([warehouse, other_warehouse])
+    db_session.commit()
+    alerts = AlertTaskService(db_session, owner)
+    alert = alerts._alert(
+        AlertType.STOCKOUT_RISK,
+        shop.id,
+        sku_id,
+        "days_of_stock",
+        Decimal("2"),
+        Decimal("7"),
+        datetime(2026, 8, 1, tzinfo=UTC),
+        datetime(2026, 8, 8, tzinfo=UTC),
+        "Stockout risk",
+        {
+            "input_evidence": {
+                "inventory_input_count": 1,
+                "inventory_inputs_digest": hashlib.sha256(b"invalid-po-inventory").hexdigest(),
+                "demand_input_count": 1,
+                "demand_inputs_digest": hashlib.sha256(b"invalid-po-demand").hexdigest(),
+            }
+        },
+    )
+    db_session.commit()
+    task = alerts.create_task(
+        alert.id,
+        BusinessTaskCreate(title="Replenish stock", idempotency_key="effect-invalid-task"),
+    )
+    task.status = BusinessTaskStatus.DONE
+    task.created_at = datetime(2026, 8, 8, 1, tzinfo=UTC)
+    task.completed_at = datetime(2026, 8, 10, tzinfo=UTC)
+    draft = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        sku_id,
+        slug="effect-draft",
+        status=PurchaseOrderStatus.DRAFT,
+        ordered_at=None,
+    )
+    other_order = _effect_purchase_order(
+        db_session,
+        other,
+        other_warehouse,
+        other_sku_id,
+        slug="effect-other",
+        status=PurchaseOrderStatus.ORDERED,
+        ordered_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+    product = CatalogService(db_session, owner).create_product(
+        code="effect-unrelated-product", name="Unrelated", category=None
+    )
+    unrelated_sku = CatalogService(db_session, owner).create_sku(
+        master_product_id=product.id,
+        sku_code="effect-unrelated-sku",
+        name="Unrelated",
+    )
+    unrelated = _effect_purchase_order(
+        db_session,
+        owner,
+        warehouse,
+        unrelated_sku.id,
+        slug="effect-unrelated",
+        status=PurchaseOrderStatus.ORDERED,
+        ordered_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+    service = TaskEffectService(
+        db_session,
+        owner,
+        clock=lambda: datetime(2026, 8, 18, tzinfo=UTC),
+    )
+    with pytest.raises(TaskEffectValidationError, match="尚未执行"):
+        service.measure(task.id, purchase_order_id=draft.id)
+    with pytest.raises(TaskEffectNotFoundError, match="采购单不存在"):
+        service.measure(task.id, purchase_order_id=other_order.id)
+    with pytest.raises(TaskEffectValidationError, match="不包含"):
+        service.measure(task.id, purchase_order_id=unrelated.id)

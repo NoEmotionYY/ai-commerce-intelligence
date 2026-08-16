@@ -468,3 +468,7 @@ class BusinessTaskCreate(AlertTaskInput):
 class BusinessTaskStatusUpdate(AlertTaskInput):
     status: str = Field(pattern=r"^(IN_PROGRESS|WAITING_APPROVAL|DONE|DISMISSED)$")
     reason: str | None = Field(default=None, max_length=500)
+
+
+class TaskEffectMeasure(AlertTaskInput):
+    purchase_order_id: int = Field(gt=0)

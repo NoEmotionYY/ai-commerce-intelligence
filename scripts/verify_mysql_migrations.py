@@ -43,11 +43,13 @@ from commerce.models import (  # noqa: E402
     ChannelInventory,
     CommerceAlert,
     CommerceOrder,
+    CommerceOrderItem,
     CommercePurchaseOrder,
     CommercePurchaseOrderItem,
     CredentialStatus,
     DataImportJob,
     DataImportRecord,
+    EffectAssessment,
     MasterProduct,
     MasterSKU,
     MembershipRole,
@@ -69,6 +71,7 @@ from commerce.models import (  # noqa: E402
     SupplierProduct,
     SyncJob,
     SyncJobStatus,
+    TaskEffectMeasurement,
     User,
     Warehouse,
     WarehouseInventory,
@@ -101,6 +104,7 @@ from commerce.services.credential_backfill import (  # noqa: E402
 )
 from commerce.services.douyin_sync import DouyinSyncService  # noqa: E402
 from commerce.services.douyin_webhook import DouyinWebhookService  # noqa: E402
+from commerce.services.effects import TaskEffectService  # noqa: E402
 from commerce.services.ingestion import IngestionService, IngestionTransitionError  # noqa: E402
 from commerce.services.inventory import InventoryService  # noqa: E402
 from commerce.services.purchasing import PurchasingService  # noqa: E402
@@ -154,6 +158,7 @@ V2_TABLES = {
     "commerce_alerts",
     "business_tasks",
     "business_task_history",
+    "task_effect_measurements",
     "data_import_jobs",
     "data_import_records",
 }
@@ -181,6 +186,7 @@ PURCHASING_TABLES = {
     "inbound_shipment_items",
 }
 ALERT_TASK_TABLES = {"commerce_alerts", "business_tasks", "business_task_history"}
+TASK_EFFECT_TABLES = {"task_effect_measurements"}
 DATA_IMPORT_TABLES = {"data_import_jobs", "data_import_records"}
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "organization_memberships": "uq_membership_org_user",
@@ -221,6 +227,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "inbound_shipment_items": "uq_inbound_shipment_items_order_item",
     "commerce_alerts": "uq_commerce_alerts_org_dedup",
     "business_tasks": "uq_business_tasks_org_idempotency",
+    "task_effect_measurements": "uq_task_effect_measurements_task",
     "data_import_jobs": "uq_data_import_jobs_org_idempotency",
     "data_import_records": "uq_data_import_records_job_key",
 }
@@ -229,6 +236,7 @@ EXPECTED_ADDITIONAL_UNIQUE_CONSTRAINTS = {
     "commerce_purchase_orders": {"uq_commerce_purchase_orders_org_idempotency"},
     "data_import_jobs": {"uq_data_import_jobs_org_shop_source"},
     "data_import_records": {"uq_data_import_records_raw_event"},
+    "task_effect_measurements": {"uq_task_effect_measurements_hash"},
 }
 EXPECTED_UNIQUE_INDEXES = {
     "shops": "ix_shops_org_id_unique",
@@ -254,6 +262,7 @@ EXPECTED_UNIQUE_INDEXES = {
     "inbound_shipment_items": "ix_inbound_shipment_items_org_id_unique",
     "commerce_alerts": "ix_commerce_alerts_org_id_unique",
     "business_tasks": "ix_business_tasks_org_id_unique",
+    "task_effect_measurements": "ix_task_effect_measurements_org_id_unique",
     "data_import_jobs": "ix_data_import_jobs_org_shop_id_unique",
     "data_import_records": "ix_data_import_records_org_job_id_unique",
 }
@@ -423,6 +432,14 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "business_task_id"), "business_tasks"),
         (("actor_user_id",), "users"),
     },
+    "task_effect_measurements": {
+        (("organization_id", "business_task_id"), "business_tasks"),
+        (("organization_id", "alert_id"), "commerce_alerts"),
+        (("organization_id", "shop_id"), "shops"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+        (("organization_id", "execution_purchase_order_id"), "commerce_purchase_orders"),
+        (("measured_by_user_id",), "users"),
+    },
     "data_import_jobs": {
         (("organization_id", "shop_id"), "shops"),
         (("created_by_user_id",), "users"),
@@ -505,6 +522,14 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "business_task_history": {
         "ck_business_task_history_from_status",
         "ck_business_task_history_to_status",
+    },
+    "task_effect_measurements": {
+        "ck_task_effect_measurements_values",
+        "ck_task_effect_measurements_windows",
+        "ck_task_effect_measurements_direction",
+        "ck_task_effect_measurements_assessment",
+        "ck_task_effect_measurements_profit_kind",
+        "ck_task_effect_measurements_execution_status",
     },
     "data_import_jobs": {
         "ck_data_import_jobs_type",
@@ -1842,6 +1867,298 @@ def _verify_alert_task_idempotency_races(engine: Engine) -> None:
         )
 
 
+def _verify_task_effect_measurement_race(engine: Engine) -> None:
+    now = utcnow()
+    with Session(engine, expire_on_commit=False) as session:
+        organization = Organization(slug="mysql-effect-race", name="MySQL Effect Race")
+        user = User(email="mysql-effect-race@example.com", display_name="Effect Operator")
+        session.add_all([organization, user])
+        session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OPERATOR,
+        )
+        shop = Shop(
+            organization_id=organization.id,
+            name="MySQL Effect Race Shop",
+            platform="douyin",
+            external_shop_id="mysql-effect-race-shop",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        )
+        warehouse = Warehouse(
+            organization_id=organization.id,
+            code="MYSQL-EFFECT-RACE",
+            name="Effect Race Warehouse",
+            country_code="CN",
+            timezone="Asia/Shanghai",
+        )
+        product = MasterProduct(
+            organization_id=organization.id,
+            code="MYSQL-EFFECT-RACE",
+            name="Effect Race Product",
+        )
+        supplier = Supplier(
+            organization_id=organization.id,
+            code="MYSQL-EFFECT-RACE-SUPPLIER",
+            name="Effect Race Supplier",
+        )
+        session.add_all([membership, shop, warehouse, product, supplier])
+        session.flush()
+        sku = MasterSKU(
+            organization_id=organization.id,
+            master_product_id=product.id,
+            sku_code="MYSQL-EFFECT-RACE-SKU",
+            name="Effect Race SKU",
+        )
+        session.add(sku)
+        session.flush()
+        mapping = PlatformSKU(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            master_sku_id=sku.id,
+            external_product_id="mysql-effect-product",
+            external_sku_id="mysql-effect-sku",
+            external_sku_key=hashlib.sha256(b"mysql-effect-sku").hexdigest(),
+            title="Effect Race SKU",
+        )
+        supplier_product = SupplierProduct(
+            organization_id=organization.id,
+            supplier_id=supplier.id,
+            master_sku_id=sku.id,
+            supplier_product_code="MYSQL-EFFECT-SUPPLIER-SKU",
+            currency="CNY",
+            purchase_cost=10,
+            moq=1,
+            package_size=1,
+            lead_time_days=1,
+        )
+        session.add_all([mapping, supplier_product])
+        session.flush()
+        raw_key = hashlib.sha256(b"mysql-effect-raw").hexdigest()
+        raw_event = PlatformRawEvent(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            platform="douyin",
+            event_type="ORDER.SNAPSHOT",
+            external_event_id="mysql-effect-raw",
+            source_event_key=raw_key,
+            payload={"source": "mysql-effect-race"},
+            payload_hash=raw_key,
+            status="PROCESSED",
+            processing_attempts=1,
+            replay_count=0,
+            occurred_at=now - timedelta(days=2),
+            received_at=now - timedelta(days=2),
+            processed_at=now - timedelta(days=2),
+        )
+        session.add(raw_event)
+        session.flush()
+        demand_order = CommerceOrder(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            platform="douyin",
+            external_order_id="mysql-effect-order",
+            external_order_key=hashlib.sha256(b"mysql-effect-order").hexdigest(),
+            status="COMPLETED",
+            external_status="COMPLETED",
+            currency="CNY",
+            total_amount=70,
+            ordered_at=now - timedelta(days=2),
+            paid_at=now - timedelta(days=2),
+            delivered_at=now - timedelta(days=2),
+            last_source_event_id=raw_event.id,
+            last_source_occurred_at=now - timedelta(days=2),
+        )
+        session.add(demand_order)
+        session.flush()
+        session.add(
+            CommerceOrderItem(
+                organization_id=organization.id,
+                shop_id=shop.id,
+                order_id=demand_order.id,
+                platform_sku_id=mapping.id,
+                master_sku_id=sku.id,
+                external_item_id="mysql-effect-order-item",
+                external_item_key=hashlib.sha256(b"mysql-effect-order-item").hexdigest(),
+                external_sku_id="mysql-effect-sku",
+                quantity=7,
+                currency="CNY",
+                unit_price=10,
+                line_amount=70,
+            )
+        )
+        session.add(
+            WarehouseInventory(
+                organization_id=organization.id,
+                warehouse_id=warehouse.id,
+                master_sku_id=sku.id,
+                available=14,
+                reserved=0,
+                incoming=0,
+                damaged=0,
+                source="TEST",
+                source_reference="mysql-effect-inventory",
+                source_updated_at=now,
+                snapshot_hash=hashlib.sha256(b"mysql-effect-inventory").hexdigest(),
+                last_source_shop_id=shop.id,
+                last_source_event_id=raw_event.id,
+                observed_at=now,
+            )
+        )
+        alert = CommerceAlert(
+            organization_id=organization.id,
+            shop_id=shop.id,
+            master_sku_id=sku.id,
+            alert_type=AlertType.STOCKOUT_RISK,
+            status="RESOLVED",
+            deduplication_key_hash=hashlib.sha256(b"mysql-effect-alert").hexdigest(),
+            metric_name="days_of_stock",
+            metric_value=2,
+            threshold_value=7,
+            summary="Stockout risk",
+            details={
+                "risk": "CRITICAL",
+                "input_evidence": {
+                    "inventory_input_count": 1,
+                    "inventory_inputs_digest": hashlib.sha256(
+                        b"mysql-effect-baseline-inventory"
+                    ).hexdigest(),
+                    "demand_input_count": 1,
+                    "demand_inputs_digest": hashlib.sha256(
+                        b"mysql-effect-baseline-demand"
+                    ).hexdigest(),
+                },
+            },
+            window_start=now - timedelta(days=21),
+            window_end=now - timedelta(days=14),
+        )
+        session.add(alert)
+        session.flush()
+        task = BusinessTask(
+            organization_id=organization.id,
+            alert_id=alert.id,
+            shop_id=shop.id,
+            master_sku_id=sku.id,
+            idempotency_key_hash=hashlib.sha256(b"mysql-effect-task-key").hexdigest(),
+            request_hash=hashlib.sha256(b"mysql-effect-task-request").hexdigest(),
+            title="Replenish stock",
+            status="DONE",
+            created_by_user_id=user.id,
+            completed_at=now - timedelta(days=8),
+            created_at=now - timedelta(days=14),
+        )
+        purchase_order = CommercePurchaseOrder(
+            organization_id=organization.id,
+            supplier_id=supplier.id,
+            warehouse_id=warehouse.id,
+            po_number="PO-MYSQL-EFFECT-RACE",
+            idempotency_key_hash=hashlib.sha256(b"mysql-effect-po-key").hexdigest(),
+            request_hash=hashlib.sha256(b"mysql-effect-po-request").hexdigest(),
+            status=PurchaseOrderStatus.ORDERED,
+            currency="CNY",
+            total_amount=100,
+            created_by_user_id=user.id,
+            ordered_at=now - timedelta(days=13),
+        )
+        session.add_all([task, purchase_order])
+        session.flush()
+        session.add(
+            CommercePurchaseOrderItem(
+                organization_id=organization.id,
+                purchase_order_id=purchase_order.id,
+                supplier_product_id=supplier_product.id,
+                master_sku_id=sku.id,
+                quantity=10,
+                unit_cost=10,
+                total_amount=100,
+            )
+        )
+        session.commit()
+        principal = Principal(user.id, organization.id, membership.id, MembershipRole.OPERATOR)
+        organization_id = organization.id
+        task_id = task.id
+        purchase_order_id = purchase_order.id
+
+    with Session(engine) as session:
+        audit_count_before = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "business_task.effect.measure")
+            )
+            or 0
+        )
+    rendezvous = Barrier(2, timeout=15)
+
+    def worker() -> int:
+        with Session(engine, expire_on_commit=False) as session:
+            session.execute(sa.text("SET SESSION innodb_lock_wait_timeout = 10"))
+            rendezvous.wait()
+            return (
+                TaskEffectService(session, principal, clock=lambda: now)
+                .measure(
+                    task_id,
+                    purchase_order_id=purchase_order_id,
+                )
+                .id
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        measurement_ids = list(executor.map(lambda _: worker(), range(2)))
+    if len(set(measurement_ids)) != 1:
+        raise RuntimeError(f"MySQL TaskEffect race returned {measurement_ids}")
+    with Session(engine) as session:
+        measurement_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(TaskEffectMeasurement)
+                .where(TaskEffectMeasurement.organization_id == organization_id)
+            )
+            or 0
+        )
+        audit_count_after = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "business_task.effect.measure")
+            )
+            or 0
+        )
+        measurement = session.get(TaskEffectMeasurement, measurement_ids[0])
+        if measurement_count != 1 or audit_count_after != audit_count_before + 1:
+            raise RuntimeError(
+                "MySQL TaskEffect race did not persist exactly one measurement and audit: "
+                f"measurements={measurement_count}, audits_added={audit_count_after - audit_count_before}"
+            )
+        if measurement is None or measurement.assessment is not EffectAssessment.IMPROVED:
+            raise RuntimeError("MySQL TaskEffect race persisted an invalid assessment")
+    with engine.connect() as connection:
+        _expect_integrity_error(
+            connection,
+            sa.update(TaskEffectMeasurement)
+            .where(TaskEffectMeasurement.id == measurement_ids[0])
+            .values(execution_status="DRAFT"),
+            label="unexecuted TaskEffect status",
+        )
+        _expect_integrity_error(
+            connection,
+            sa.update(TaskEffectMeasurement)
+            .where(TaskEffectMeasurement.id == measurement_ids[0])
+            .values(execution_purchase_order_id=purchase_order_id + 999999),
+            label="missing TaskEffect purchase execution",
+        )
+        _expect_integrity_error(
+            connection,
+            sa.update(TaskEffectMeasurement)
+            .where(TaskEffectMeasurement.id == measurement_ids[0])
+            .values(baseline_value=-1),
+            label="negative TaskEffect baseline",
+        )
+
+
 def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
     cipher = CredentialCipher({"v1": b"w" * 32}, "v1")
     app_id = "mysql-douyin-webhook-app"
@@ -2456,6 +2773,33 @@ def main() -> None:
         _assert_legacy_product_preserved(connection)
         _verify_alert_task_integrity(connection)
         import_shop_id, import_raw_event_id = _verify_data_import_integrity(connection)
+        alert_count_before_effect_rollback = int(
+            connection.scalar(sa.select(sa.func.count()).select_from(CommerceAlert)) or 0
+        )
+        task_count_before_effect_rollback = int(
+            connection.scalar(sa.select(sa.func.count()).select_from(BusinessTask)) or 0
+        )
+
+        command.downgrade(config, "0014_douyin_webhook_lookup")
+        tables_after_effect_rollback = set(sa.inspect(connection).get_table_names())
+        remaining_effect_tables = TASK_EFFECT_TABLES.intersection(tables_after_effect_rollback)
+        if remaining_effect_tables:
+            raise RuntimeError(
+                f"MySQL TaskEffect rollback left tables behind: {sorted(remaining_effect_tables)}"
+            )
+        if not (ALERT_TASK_TABLES | DATA_IMPORT_TABLES).issubset(tables_after_effect_rollback):
+            raise RuntimeError("MySQL TaskEffect rollback removed prerequisite tables")
+        command.upgrade(config, "head")
+        _assert_head_schema(connection, config)
+        if (
+            int(connection.scalar(sa.select(sa.func.count()).select_from(CommerceAlert)) or 0)
+            != alert_count_before_effect_rollback
+            or int(connection.scalar(sa.select(sa.func.count()).select_from(BusinessTask)) or 0)
+            != task_count_before_effect_rollback
+        ):
+            raise RuntimeError(
+                "MySQL TaskEffect rollback/re-upgrade did not preserve alert/task rows"
+            )
 
         command.downgrade(config, "0012_alert_tasks")
         tables_after_import_rollback = set(sa.inspect(connection).get_table_names())
@@ -2956,6 +3300,7 @@ def main() -> None:
     _verify_inventory_snapshot_race(engine)
     _verify_purchase_execution_race(engine)
     _verify_alert_task_idempotency_races(engine)
+    _verify_task_effect_measurement_race(engine)
     _verify_douyin_webhook_idempotency_race(engine)
     _verify_douyin_token_refresh_race(engine)
     _verify_tiktok_webhook_idempotency_race(engine)
@@ -2963,7 +3308,7 @@ def main() -> None:
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
         "legacy-reauth-catalog-raw-order-inventory-and-data-import-data-preservation-and-sync-and-"
-        "inventory-purchase-execution-alert-task-douyin-and-tiktok-webhook-idempotency-and-token-refresh-"
+        "inventory-purchase-execution-alert-task-effect-douyin-and-tiktok-webhook-idempotency-and-token-refresh-"
         "races: PASS"
     )
 

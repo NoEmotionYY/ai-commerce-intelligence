@@ -265,6 +265,17 @@ class BusinessTaskStatus(StrEnum):
     DISMISSED = "DISMISSED"
 
 
+class EffectDirection(StrEnum):
+    HIGHER_IS_BETTER = "HIGHER_IS_BETTER"
+    LOWER_IS_BETTER = "LOWER_IS_BETTER"
+
+
+class EffectAssessment(StrEnum):
+    IMPROVED = "IMPROVED"
+    UNCHANGED = "UNCHANGED"
+    WORSENED = "WORSENED"
+
+
 class InboundShipmentStatus(StrEnum):
     PLANNED = "PLANNED"
     SHIPPED = "SHIPPED"
@@ -2240,6 +2251,99 @@ class BusinessTaskHistory(Base):
     to_status: Mapped[str] = mapped_column(String(24))
     actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class TaskEffectMeasurement(Base):
+    __tablename__ = "task_effect_measurements"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "business_task_id"],
+            ["business_tasks.organization_id", "business_tasks.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "alert_id"],
+            ["commerce_alerts.organization_id", "commerce_alerts.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(["organization_id", "shop_id"], ["shops.organization_id", "shops.id"]),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "execution_purchase_order_id"],
+            ["commerce_purchase_orders.organization_id", "commerce_purchase_orders.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("business_task_id", name="uq_task_effect_measurements_task"),
+        UniqueConstraint("calculation_hash", name="uq_task_effect_measurements_hash"),
+        Index(
+            "ix_task_effect_measurements_org_id_unique",
+            "organization_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "baseline_value >= 0 AND outcome_value >= 0",
+            name="ck_task_effect_measurements_values",
+        ),
+        CheckConstraint(
+            "baseline_window_start < baseline_window_end AND "
+            "outcome_window_start < outcome_window_end",
+            name="ck_task_effect_measurements_windows",
+        ),
+        CheckConstraint(
+            "direction IN ('HIGHER_IS_BETTER','LOWER_IS_BETTER')",
+            name="ck_task_effect_measurements_direction",
+        ),
+        CheckConstraint(
+            "assessment IN ('IMPROVED','UNCHANGED','WORSENED')",
+            name="ck_task_effect_measurements_assessment",
+        ),
+        CheckConstraint(
+            "profit_kind IS NULL OR profit_kind IN ('ESTIMATED','SETTLED')",
+            name="ck_task_effect_measurements_profit_kind",
+        ),
+        CheckConstraint(
+            "execution_status IN ('ORDERED','SHIPPED','RECEIVED','CLOSED')",
+            name="ck_task_effect_measurements_execution_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    business_task_id: Mapped[int] = mapped_column(index=True)
+    alert_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    master_sku_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    execution_purchase_order_id: Mapped[int] = mapped_column(index=True)
+    execution_status: Mapped[str] = mapped_column(String(24))
+    executed_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    metric_name: Mapped[str] = mapped_column(String(64))
+    metric_unit: Mapped[str] = mapped_column(String(24))
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    profit_kind: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    direction: Mapped[EffectDirection] = mapped_column(
+        Enum(EffectDirection, native_enum=False, length=24)
+    )
+    baseline_value: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    outcome_value: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    delta_value: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    assessment: Mapped[EffectAssessment] = mapped_column(
+        Enum(EffectAssessment, native_enum=False, length=16)
+    )
+    baseline_window_start: Mapped[datetime] = mapped_column(UTCDateTime())
+    baseline_window_end: Mapped[datetime] = mapped_column(UTCDateTime())
+    outcome_window_start: Mapped[datetime] = mapped_column(UTCDateTime())
+    outcome_window_end: Mapped[datetime] = mapped_column(UTCDateTime())
+    method_version: Mapped[str] = mapped_column(String(64))
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON)
+    measured_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    measured_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
