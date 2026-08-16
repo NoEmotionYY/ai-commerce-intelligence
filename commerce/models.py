@@ -213,6 +213,32 @@ class PurchaseOrderStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class AlertType(StrEnum):
+    SALES_DROP = "SALES_DROP"
+    SALES_SPIKE = "SALES_SPIKE"
+    STOCKOUT_RISK = "STOCKOUT_RISK"
+    REFUND_SPIKE = "REFUND_SPIKE"
+    MARGIN_DROP = "MARGIN_DROP"
+    PRICE_ANOMALY = "PRICE_ANOMALY"
+    ORDER_ANOMALY = "ORDER_ANOMALY"
+    FINANCE_ANOMALY = "FINANCE_ANOMALY"
+
+
+class AlertStatus(StrEnum):
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+    DISMISSED = "DISMISSED"
+
+
+class BusinessTaskStatus(StrEnum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    WAITING_APPROVAL = "WAITING_APPROVAL"
+    DONE = "DONE"
+    DISMISSED = "DISMISSED"
+
+
 class InboundShipmentStatus(StrEnum):
     PLANNED = "PLANNED"
     SHIPPED = "SHIPPED"
@@ -1871,6 +1897,134 @@ class InboundShipmentItem(Base):
     quantity_shipped: Mapped[int] = mapped_column(Integer)
     quantity_received: Mapped[int] = mapped_column(Integer, default=0)
     shipment: Mapped[InboundShipment] = relationship(back_populates="items")
+
+
+class CommerceAlert(Base):
+    __tablename__ = "commerce_alerts"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "shop_id"], ["shops.organization_id", "shops.id"]),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+        ),
+        UniqueConstraint(
+            "organization_id", "deduplication_key_hash", name="uq_commerce_alerts_org_dedup"
+        ),
+        Index("ix_commerce_alerts_org_id_unique", "organization_id", "id", unique=True),
+        CheckConstraint("metric_value >= 0 AND threshold_value >= 0", name="ck_alert_metrics"),
+        CheckConstraint(
+            "alert_type IN ('SALES_DROP','SALES_SPIKE','STOCKOUT_RISK','REFUND_SPIKE',"
+            "'MARGIN_DROP','PRICE_ANOMALY','ORDER_ANOMALY','FINANCE_ANOMALY')",
+            name="ck_commerce_alerts_type",
+        ),
+        CheckConstraint(
+            "status IN ('OPEN','ACKNOWLEDGED','RESOLVED','DISMISSED')",
+            name="ck_commerce_alerts_status",
+        ),
+        CheckConstraint("window_start < window_end", name="ck_commerce_alerts_window"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    shop_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    master_sku_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    alert_type: Mapped[AlertType] = mapped_column(
+        Enum(AlertType, native_enum=False, length=24), index=True
+    )
+    status: Mapped[AlertStatus] = mapped_column(
+        Enum(AlertStatus, native_enum=False, length=20), default=AlertStatus.OPEN, index=True
+    )
+    deduplication_key_hash: Mapped[str] = mapped_column(String(64))
+    metric_name: Mapped[str] = mapped_column(String(64))
+    metric_value: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    threshold_value: Mapped[Decimal] = mapped_column(Numeric(24, 10))
+    summary: Mapped[str] = mapped_column(String(500))
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    window_start: Mapped[datetime] = mapped_column(UTCDateTime())
+    window_end: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class BusinessTask(Base):
+    __tablename__ = "business_tasks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "alert_id"],
+            ["commerce_alerts.organization_id", "commerce_alerts.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(["organization_id", "shop_id"], ["shops.organization_id", "shops.id"]),
+        ForeignKeyConstraint(
+            ["organization_id", "master_sku_id"],
+            ["master_skus.organization_id", "master_skus.id"],
+        ),
+        UniqueConstraint(
+            "organization_id", "idempotency_key_hash", name="uq_business_tasks_org_idempotency"
+        ),
+        Index("ix_business_tasks_org_id_unique", "organization_id", "id", unique=True),
+        CheckConstraint(
+            "status IN ('TODO','IN_PROGRESS','WAITING_APPROVAL','DONE','DISMISSED')",
+            name="ck_business_tasks_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    alert_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    master_sku_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[BusinessTaskStatus] = mapped_column(
+        Enum(BusinessTaskStatus, native_enum=False, length=24),
+        default=BusinessTaskStatus.TODO,
+        index=True,
+    )
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    assigned_to_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class BusinessTaskHistory(Base):
+    __tablename__ = "business_task_history"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "business_task_id"],
+            ["business_tasks.organization_id", "business_tasks.id"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_business_task_history_org_task", "organization_id", "business_task_id"),
+        CheckConstraint(
+            "from_status IS NULL OR from_status IN "
+            "('TODO','IN_PROGRESS','WAITING_APPROVAL','DONE','DISMISSED')",
+            name="ck_business_task_history_from_status",
+        ),
+        CheckConstraint(
+            "to_status IN ('TODO','IN_PROGRESS','WAITING_APPROVAL','DONE','DISMISSED')",
+            name="ck_business_task_history_to_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    business_task_id: Mapped[int] = mapped_column(index=True)
+    from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(24))
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 class Product(Base):

@@ -20,8 +20,11 @@ internal `MISSING` task, not an external blocker. Real credentials, developer ap
 seller authorization may become `BLOCKED_EXTERNAL` only after the corresponding connector
 implementation and contract verification exist.
 
-`COM-P1-005` has no external blocker. Its real supplier/platform execution gap is unimplemented
-future integration scope and therefore remains `MISSING`, not `BLOCKED_EXTERNAL`.
+`COM-P1-006` has no external blocker. Optional detectors, Agent registration, and effect tracking
+are internal future scope and therefore remain `MISSING`, not `BLOCKED_EXTERNAL`.
+
+`COM-P1-007` has no external blocker. CSV/XLSX parsing, preview, validation, and import are local
+implementation work.
 
 ---
 

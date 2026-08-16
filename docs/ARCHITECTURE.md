@@ -28,7 +28,8 @@ Existing and locally tested components include:
 - Streamlit internal/demo UI;
 - fixture seeding and fixed A102/B205/COMP-B regression tests.
 
-This is not yet a production unified commerce model. `COM-P0-002` provides Organization,
+This is not yet a complete production product: legacy Demo tables coexist with the verified V2
+unified domains. `COM-P0-002` provides Organization,
 User, OrganizationMembership, and Shop tables, signed V2 identity, centralized permission
 checks, tenant-scoped shop APIs, and the TenantContext/resolver foundation. No production Agent
 runtime currently calls that resolver or exposes tenant-aware commerce tools. Production denies
@@ -46,8 +47,10 @@ COM-P1-004 adds the locally verified supplier, purchasing, inbound shipment, and
 replenishment foundation described below. COM-P1-005 adds a locally verified
 recommendation-to-DRAFT API and isolated LangChain tool surface plus approved internal execution
 retry/concurrency evidence. That tool surface is not registered in production chat and contains no
-approval or execution operation. Alerts, BusinessTask, production supplier/platform execution,
-production Agent integration, and AuditLog remain TARGET.
+approval or execution operation. Production supplier/platform execution, production Agent
+integration, effect measurement, and AuditLog remain TARGET. COM-P1-006 adds the locally verified
+Alert and BusinessTask foundation described below; it does not add optional price/order/finance
+detectors or production Agent registration.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -97,8 +100,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0011_purchasing`. Revisions `0003`
-through `0011`
+The repository has one Alembic head at `0012_alert_tasks`. Revisions `0003`
+through `0012`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -118,6 +121,10 @@ MySQL 8.4.11 fresh/upgrade/rollback/re-upgrade, constraint, and data-preservatio
 Revision `0011` adds tenant-scoped supplier, supplier-product, commerce purchase-order, and inbound
 shipment tables. Its SQLite and disposable MySQL 8.4.11 checks cover fresh install,
 `0010 -> 0011 -> 0010 -> 0011`, constraints, and prior-data preservation.
+Revision `0012` adds tenant-scoped commerce alerts, business tasks, and immutable task transition
+history. SQLite and disposable MySQL 8.4 checks cover fresh install, `0011 -> 0012 -> 0011 ->
+0012`, constraints, legacy/V2 data preservation, and concurrent Alert deduplication and
+BusinessTask idempotency with exactly one row/history/audit.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -279,6 +286,29 @@ Receiving an inbound shipment does not directly mutate authoritative WarehouseIn
 physical snapshot boundary remains claimed PlatformRawEvent ingestion. This is `L2 VERIFIED_LOCAL`,
 not real supplier/platform execution or a production chat integration claim.
 
+## 3.12 CURRENT: Alerts and Business Tasks
+
+CommerceAlert stores organization scope, optional Shop/MasterSKU context, deterministic metric and
+threshold values, evaluation window, lifecycle timestamps, and a tenant-scoped deduplication hash.
+AlertTaskService implements the five mandatory detectors: equal-window sales drop/spike, completed-
+refund spike, latest-as-of immutable profit-snapshot margin drop, and stockout risk delegated to the
+verified deterministic InventoryService. Shop financial rules reject unnormalized mixed-currency
+aggregation rather than producing a misleading metric.
+
+BusinessTask is created from an Alert and preserves its current Shop/MasterSKU context. A hashed
+tenant-scoped idempotency key plus request hash rejects key/content conflicts; an assigned user must
+be an active member of the organization. The TODO, IN_PROGRESS, WAITING_APPROVAL, DONE, and
+DISMISSED state machine records BusinessTaskHistory and OperationLog evidence. Completion from
+WAITING_APPROVAL requires `APPROVE_ACTION`; all other mutations require `WRITE_COMMERCE`.
+Authenticated V2 list/evaluate/transition/create APIs derive tenant scope from the principal and do
+not serialize internal hashes. MySQL locking reads after unique-key races ensure repeatable-read
+transactions observe the winner; a two-thread verifier proves one alert, one task, one history row,
+and one audit for each logical operation.
+
+This is `L2 VERIFIED_LOCAL`. Optional PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors,
+production Agent alert/task registration, broader order/supplier/purchase-order context links, and
+measurable effect tracking remain TARGET.
+
 ## 4. TARGET: Production Data Flow
 
 ```text
@@ -297,8 +327,9 @@ OrganizationMembership, Shop, ShopCredential, MasterProduct, MasterSKU, Platform
 PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, ShopCapability,
 Warehouse, WarehouseInventory, ChannelInventory, Refund, RefundItem, SKUCost,
 FinanceTransaction, Settlement, ProfitSnapshot, Supplier, SupplierProduct,
-CommercePurchaseOrder, CommercePurchaseOrderItem, InboundShipment, and InboundShipmentItem, plus
-future Alert, BusinessTask, platform execution records, and AuditLog.
+CommercePurchaseOrder, CommercePurchaseOrderItem, InboundShipment, InboundShipmentItem,
+CommerceAlert, BusinessTask, and BusinessTaskHistory, plus future platform execution records,
+effect measurements, and AuditLog.
 
 ## 5. TARGET: Dependency Direction
 

@@ -409,3 +409,36 @@ class ReplenishmentDraftCreate(PurchasingInput):
     warehouse_id: int = Field(gt=0)
     supplier_product_id: int = Field(gt=0)
     idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class AlertTaskInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ShopAlertEvaluation(AlertTaskInput):
+    shop_id: int = Field(gt=0)
+    as_of: datetime
+    window_days: int = Field(default=7, ge=1, le=90)
+
+
+class StockoutAlertEvaluation(AlertTaskInput):
+    master_sku_id: int = Field(gt=0)
+    shop_id: int | None = Field(default=None, gt=0)
+    as_of: datetime
+    sales_window_days: int = Field(default=7, ge=1, le=90)
+
+
+class AlertStatusUpdate(AlertTaskInput):
+    status: str = Field(pattern=r"^(ACKNOWLEDGED|RESOLVED|DISMISSED)$")
+
+
+class BusinessTaskCreate(AlertTaskInput):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    assigned_to_user_id: int | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class BusinessTaskStatusUpdate(AlertTaskInput):
+    status: str = Field(pattern=r"^(IN_PROGRESS|WAITING_APPROVAL|DONE|DISMISSED)$")
+    reason: str | None = Field(default=None, max_length=500)

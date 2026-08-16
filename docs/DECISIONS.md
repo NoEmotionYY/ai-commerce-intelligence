@@ -456,3 +456,32 @@ full regression, and a disposable MySQL 8.4.11 two-thread execution race that pe
 Production chat registration remains COM-P1-010. With Phase 4 complete, COM-P1-006 is the next
 highest-priority dependency-satisfied task; Alerts and Business Tasks are Phase 5, ahead of the
 independent CSV/XLSX import slice.
+
+## ADR-022 — Deterministic Alerts and Permissioned Business Tasks
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: Operational alerts must be reproducible from normalized commerce data, must not aggregate
+incompatible currencies, and must not let retries or concurrent evaluation create duplicate work.
+BusinessTask completion may represent a consequential action and therefore needs a distinct
+approval boundary, tenant-safe context, and immutable transition evidence. MySQL repeatable-read
+transactions can retain an old snapshot after losing a unique-key insert race.
+
+Decision: Implement the five mandatory rules in Python/SQL: equal-window sales drop/spike,
+completed-refund spike, latest-as-of profit-snapshot margin drop, and InventoryService stockout
+risk. Fail closed on mixed order currencies. Store tenant-scoped Alert identity and Shop/MasterSKU
+context, and create tenant-scoped BusinessTasks from Alerts using hashed idempotency/request keys.
+Require active organization membership for assignees, `WRITE_COMMERCE` for ordinary transitions,
+and `APPROVE_ACTION` for `WAITING_APPROVAL -> DONE`. Persist BusinessTaskHistory and OperationLog
+evidence. After a unique-key race, use a locking read so MySQL observes the committed winner.
+
+Reasoning: Deterministic rules keep authoritative metrics outside the LLM. Explicit tenant and
+permission checks preserve business boundaries, while database uniqueness plus verified locking
+behavior prevents duplicate alerts, tasks, history, and audit under concurrent retries.
+
+Consequences: `COM-P1-006` is `DONE` at `L2 VERIFIED_LOCAL` after focused/API/full regression,
+SQLite, and disposable MySQL 8.4 migration/integrity/concurrency gates. Optional PRICE_ANOMALY,
+ORDER_ANOMALY, and FINANCE_ANOMALY detectors remain `MISSING`; production Agent registration and
+measurable effect tracking remain COM-P1-010/later product-loop work. No real-platform capability
+or `BLOCKED_EXTERNAL` is claimed. Phase 6 begins with COM-P1-007 CSV/XLSX Import.

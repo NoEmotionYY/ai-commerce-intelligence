@@ -2,15 +2,16 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`.
-Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`).
-Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`).
-Last completed task: `COM-P1-005` — Replenishment and Approval Execution (`DONE`).
-Phase 4 Exit Review passed. The locally verified boundary uses server-calculated replenishment
-quantities, schema-forbidden quantity/policy overrides, DRAFT-only Agent tools, independent human
-approval, idempotent replay, and a real MySQL concurrent internal execution race with one audit.
-It does not claim real supplier or platform order placement. The latest focused slice is
-`7 passed, 1 warning`; the full suite is `267 passed, 18 skipped, 1 warning`.
+Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`.
+Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`).
+Next task: `COM-P1-008` — Douyin Connector (`TODO`).
+Last completed task: `COM-P1-006` — Alerts and Business Tasks (`DONE`).
+Phase 5 Exit Review passed. Five deterministic alert rules, tenant-scoped Alert/BusinessTask
+lifecycle, permissioned approval completion, audit history, SQLite/MySQL migration evidence, and
+real MySQL concurrent deduplication/idempotency are verified locally. Optional price/order/finance
+detectors, production Agent registration, and effect measurement remain later internal work. The
+latest focused slice is `21 passed, 1 warning`; the full suite is
+`275 passed, 18 skipped, 1 warning`.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -109,8 +110,14 @@ retries/concurrency are idempotent, and the LLM cannot replace the authoritative
 Dependencies: Phases 3–4.
 
 Implement deterministic anomaly rules, Alert lifecycle, BusinessTask lifecycle, links to
-business context, permissioned transitions, and measurable effect tracking. These rules operate on
-the already verified commerce domains and do not depend on CSV/XLSX import completion.
+business context, and permissioned transitions. These rules operate on the already verified
+commerce domains and do not depend on CSV/XLSX import completion.
+
+Exit: satisfied at `L2 VERIFIED_LOCAL`. SALES_DROP, SALES_SPIKE, STOCKOUT_RISK, REFUND_SPIKE, and
+MARGIN_DROP plus Alert/BusinessTask lifecycle, tenant scope, idempotency, permission, history, and
+audit pass local and MySQL gates. Optional PRICE/ORDER/FINANCE detectors are not required for this
+phase and remain `MISSING`. Effect measurement remains a mandatory complete-loop outcome and moves
+to Phase 9, where stable dashboard metrics and execution outcomes are available.
 
 ## Phase 6 — Production Sync Operations and Imports
 
@@ -139,8 +146,9 @@ webhooks, retries, and contract tests without merging unrelated adapter APIs.
 
 Dependencies: Phases 3, 5, and 6.
 
-Expose real normalized metrics, alerts, tasks, platform/shop comparisons, and validated
-Agent tools. AI remains interpretive and cannot replace deterministic calculations.
+Expose real normalized metrics, alerts, tasks, platform/shop comparisons, validated Agent tools,
+and measurable before/after effect tracking for executed tasks. AI remains interpretive and cannot
+replace deterministic calculations.
 
 ## Phase 10 — Frontend and Production Hardening
 

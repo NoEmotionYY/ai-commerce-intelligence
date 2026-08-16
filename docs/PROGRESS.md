@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`
-Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`)
-Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`)
-Last completed top-level task: `COM-P1-005` — Replenishment and Approval Execution
-Current verification slice: `COM-P1-006A` — Alert and BusinessTask Foundation (`IN_PROGRESS`)
-Last verified commit: `9373416`
+Phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`
+Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`)
+Next task: `COM-P1-008` — Douyin Connector (`TODO`)
+Last completed top-level task: `COM-P1-006` — Alerts and Business Tasks
+Current verification slice: `COM-P1-007A` — Import Contract and Preview (`IN_PROGRESS`)
+Last verified checkpoint: `COM-P1-006` (local commit follows this evidence record)
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1058,3 +1058,64 @@ Status:
 - The 18 Compose/browser/DeepSeek environment-gated skips are not PASS and do not verify this
   task. They are environment-gated later-phase checks, not COM-P1-005 implementation gaps or
   external blockers.
+
+## 2026-08-16 — COM-P1-006 Alerts and Business Tasks Exit
+
+Scope completed:
+
+- Added additive `0012_alert_tasks` models for tenant-scoped CommerceAlert, BusinessTask, and
+  immutable BusinessTaskHistory while preserving legacy tables and data.
+- Implemented deterministic SALES_DROP, SALES_SPIKE, REFUND_SPIKE, MARGIN_DROP, and STOCKOUT_RISK
+  rules. Sales uses equal adjacent windows, refunds include only completed source-currency values,
+  margin uses each order's latest immutable snapshot available at the window end, and stockout risk
+  reuses InventoryService.
+- Added mixed-currency fail-closed behavior, tenant-scoped deduplication, Alert lifecycle, Alert-to-
+  BusinessTask creation, active-member assignee validation, task idempotency/key-content conflict,
+  permissioned lifecycle, immutable history, and OperationLog evidence.
+- Added authenticated, bounded V2 evaluation/list/lifecycle/task APIs. Responses omit internal
+  deduplication, idempotency, and request hashes.
+- Exit Review found and fixed a MySQL `REPEATABLE READ` race risk: after a unique-key conflict the
+  loser now uses a locking read to observe the committed winner. A real two-thread MySQL verifier
+  confirms one Alert, one BusinessTask, one history row, and one audit per logical operation.
+
+Formal Exit Review:
+
+- Product: rules operate on arbitrary tenant Shop/SKU commerce data and deterministic metrics; no
+  Demo identifier, Mock ERP, fixed competitor, or LLM-authored number is required.
+- Architecture: Alert/BusinessTask are unified-domain consumers downstream of normalized data;
+  optional platform-specific detectors and adapters were not prematurely generalized. Effect
+  measurement remains a Phase 9 complete-loop responsibility, not a falsely claimed current feature.
+- Security: API authentication, tenant-scoped reads/writes, centralized write/approve permissions,
+  cross-tenant resource/assignee denial, replay permission checks, hash redaction, and audit pass.
+  `WAITING_APPROVAL -> DONE` cannot be completed by an operator.
+- Testing/data integrity: rule thresholds, currency rejection, latest-as-of profit selection,
+  duplicate evaluation, task retry/conflict, lifecycle including dismissal and invalid transitions,
+  tenant isolation, history/audit, API validation, SQLite migration, MySQL constraints/rollback/
+  re-upgrade/data preservation, and real MySQL concurrency pass. No unresolved Critical/High issue
+  remains in COM-P1-006 scope.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_alert_task_service.py tests/integration/test_alert_task_api.py
+  tests/migration/test_migrations.py -q`: `21 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `14 passed`.
+- `python -m pytest -q`: `275 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`116 files already formatted`).
+- `mypy .`: PASS (`89 source files`).
+- `alembic heads`: one head, `0012_alert_tasks`; `git diff --check`: PASS.
+- Guarded disposable official `mysql:8.4` database `commerce_test_alert_0012_race`:
+  `python scripts/verify_mysql_migrations.py` fresh/upgrade/rollback/re-upgrade/schema/integrity/
+  preservation, existing sync/inventory/purchase races, and Alert/BusinessTask idempotency races
+  PASS. Final temporary container `codex-commerce-alert-mysql-0012-final` was removed.
+
+Status:
+
+- `COM-P1-006`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 5 exit is satisfied.
+- Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`; current task:
+  `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`); next task: `COM-P1-008`.
+- P0 remaining: 0; P1 remaining: 4; active `BLOCKED_EXTERNAL`: 0.
+- Optional PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors, production Agent
+  registration, and effect measurement remain internal `MISSING` work. They are not
+  `BLOCKED_EXTERNAL` and are not represented as COM-P1-006 PASS.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not block this
+  backend task and will be reevaluated in the corresponding integration/productization phases.

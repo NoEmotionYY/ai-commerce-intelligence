@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from threading import Barrier, Event, current_thread, local
 from types import ModuleType
@@ -31,7 +32,11 @@ from commerce.authorization import Principal  # noqa: E402
 from commerce.credentials import CredentialCipher, CredentialService  # noqa: E402
 from commerce.database import Base  # noqa: E402
 from commerce.models import (  # noqa: E402
+    AlertType,
+    BusinessTask,
+    BusinessTaskHistory,
     ChannelInventory,
+    CommerceAlert,
     CommerceOrder,
     CommercePurchaseOrder,
     CommercePurchaseOrderItem,
@@ -63,7 +68,8 @@ from commerce.models import (  # noqa: E402
     WarehouseInventorySourceEvent,
     utcnow,
 )
-from commerce.schemas import WarehouseInventorySnapshotInput  # noqa: E402
+from commerce.schemas import BusinessTaskCreate, WarehouseInventorySnapshotInput  # noqa: E402
+from commerce.services.alerts import AlertTaskService  # noqa: E402
 from commerce.services.ingestion import IngestionService, IngestionTransitionError  # noqa: E402
 from commerce.services.inventory import InventoryService  # noqa: E402
 from commerce.services.purchasing import PurchasingService  # noqa: E402
@@ -111,6 +117,9 @@ V2_TABLES = {
     "commerce_purchase_order_items",
     "inbound_shipments",
     "inbound_shipment_items",
+    "commerce_alerts",
+    "business_tasks",
+    "business_task_history",
 }
 FINANCE_TABLES = {
     "sku_costs",
@@ -135,6 +144,7 @@ PURCHASING_TABLES = {
     "inbound_shipments",
     "inbound_shipment_items",
 }
+ALERT_TASK_TABLES = {"commerce_alerts", "business_tasks", "business_task_history"}
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "organization_memberships": "uq_membership_org_user",
     "shops": "uq_shop_org_platform_external",
@@ -172,6 +182,8 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "commerce_purchase_order_items": "uq_commerce_purchase_order_items_product",
     "inbound_shipments": "uq_inbound_shipments_org_number",
     "inbound_shipment_items": "uq_inbound_shipment_items_order_item",
+    "commerce_alerts": "uq_commerce_alerts_org_dedup",
+    "business_tasks": "uq_business_tasks_org_idempotency",
 }
 EXPECTED_ADDITIONAL_UNIQUE_CONSTRAINTS = {
     "supplier_products": {"uq_supplier_products_supplier_code"},
@@ -199,6 +211,8 @@ EXPECTED_UNIQUE_INDEXES = {
     "commerce_purchase_order_items": "ix_commerce_purchase_order_items_org_id_unique",
     "inbound_shipments": "ix_inbound_shipments_org_id_unique",
     "inbound_shipment_items": "ix_inbound_shipment_items_org_id_unique",
+    "commerce_alerts": "ix_commerce_alerts_org_id_unique",
+    "business_tasks": "ix_business_tasks_org_id_unique",
 }
 EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
     "organization_memberships": {
@@ -349,6 +363,23 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "purchase_order_item_id"), "commerce_purchase_order_items"),
         (("organization_id", "master_sku_id"), "master_skus"),
     },
+    "commerce_alerts": {
+        (("organization_id",), "organizations"),
+        (("organization_id", "shop_id"), "shops"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+    },
+    "business_tasks": {
+        (("organization_id",), "organizations"),
+        (("organization_id", "alert_id"), "commerce_alerts"),
+        (("organization_id", "shop_id"), "shops"),
+        (("organization_id", "master_sku_id"), "master_skus"),
+        (("created_by_user_id",), "users"),
+        (("assigned_to_user_id",), "users"),
+    },
+    "business_task_history": {
+        (("organization_id", "business_task_id"), "business_tasks"),
+        (("actor_user_id",), "users"),
+    },
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "shop_connections": {"ck_shop_connections_authorization_status"},
@@ -413,6 +444,17 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "commerce_purchase_order_items": {"ck_commerce_purchase_order_items_values"},
     "inbound_shipments": {"ck_inbound_shipments_status"},
     "inbound_shipment_items": {"ck_inbound_shipment_items_quantities"},
+    "commerce_alerts": {
+        "ck_alert_metrics",
+        "ck_commerce_alerts_type",
+        "ck_commerce_alerts_status",
+        "ck_commerce_alerts_window",
+    },
+    "business_tasks": {"ck_business_tasks_status"},
+    "business_task_history": {
+        "ck_business_task_history_from_status",
+        "ck_business_task_history_to_status",
+    },
 }
 
 
@@ -582,6 +624,182 @@ def _expect_integrity_error(
             f"MySQL integrity check for {label} failed with unexpected error code {error_code}"
         ) from exc
     raise RuntimeError(f"MySQL integrity behavior did not reject {label}")
+
+
+def _verify_alert_task_integrity(connection: Connection) -> None:
+    now = utcnow()
+    first_org = connection.execute(
+        sa.insert(Organization).values(
+            slug="mysql-alert-integrity-first",
+            name="MySQL Alert Integrity First",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    second_org = connection.execute(
+        sa.insert(Organization).values(
+            slug="mysql-alert-integrity-second",
+            name="MySQL Alert Integrity Second",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    user_id = connection.execute(
+        sa.insert(User).values(
+            email="mysql-alert-integrity@example.com",
+            display_name="MySQL Alert Integrity",
+            is_active=True,
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    shop_id = connection.execute(
+        sa.insert(Shop).values(
+            organization_id=first_org,
+            name="MySQL Alert Integrity Shop",
+            platform="douyin",
+            external_shop_id="mysql-alert-integrity-shop",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    product_id = connection.execute(
+        sa.insert(MasterProduct).values(
+            organization_id=first_org,
+            code="MYSQL-ALERT-INTEGRITY",
+            name="MySQL Alert Integrity",
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    sku_id = connection.execute(
+        sa.insert(MasterSKU).values(
+            organization_id=first_org,
+            master_product_id=product_id,
+            sku_code="MYSQL-ALERT-INTEGRITY-SKU",
+            name="MySQL Alert Integrity SKU",
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    ).inserted_primary_key[0]
+    alert_values = {
+        "organization_id": first_org,
+        "shop_id": shop_id,
+        "master_sku_id": sku_id,
+        "alert_type": "STOCKOUT_RISK",
+        "status": "OPEN",
+        "deduplication_key_hash": hashlib.sha256(b"mysql-alert-integrity").hexdigest(),
+        "metric_name": "days_of_stock",
+        "metric_value": 2,
+        "threshold_value": 7,
+        "summary": "Stockout risk",
+        "details": {"risk": "CRITICAL"},
+        "window_start": now,
+        "window_end": now + timedelta(seconds=1),
+        "created_at": now,
+        "updated_at": now,
+    }
+    alert_id = connection.execute(
+        sa.insert(CommerceAlert).values(**alert_values)
+    ).inserted_primary_key[0]
+    task_values = {
+        "organization_id": first_org,
+        "alert_id": alert_id,
+        "shop_id": shop_id,
+        "master_sku_id": sku_id,
+        "idempotency_key_hash": hashlib.sha256(b"mysql-alert-task-key").hexdigest(),
+        "request_hash": hashlib.sha256(b"mysql-alert-task-request").hexdigest(),
+        "title": "Investigate",
+        "status": "TODO",
+        "created_by_user_id": user_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    task_id = connection.execute(
+        sa.insert(BusinessTask).values(**task_values)
+    ).inserted_primary_key[0]
+    connection.execute(
+        sa.insert(BusinessTaskHistory).values(
+            organization_id=first_org,
+            business_task_id=task_id,
+            from_status=None,
+            to_status="TODO",
+            actor_user_id=user_id,
+            created_at=now,
+        )
+    )
+    connection.commit()
+    _expect_integrity_error(
+        connection,
+        sa.insert(CommerceAlert).values(
+            **{
+                **alert_values,
+                "organization_id": second_org,
+                "deduplication_key_hash": hashlib.sha256(b"mysql-alert-cross-tenant").hexdigest(),
+            }
+        ),
+        label="cross-organization CommerceAlert context",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(CommerceAlert).values(
+            **{
+                **alert_values,
+                "metric_value": -1,
+                "deduplication_key_hash": hashlib.sha256(b"mysql-alert-negative").hexdigest(),
+            }
+        ),
+        label="negative CommerceAlert metric",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(CommerceAlert).values(
+            **{
+                **alert_values,
+                "alert_type": "UNKNOWN",
+                "deduplication_key_hash": hashlib.sha256(b"mysql-alert-type").hexdigest(),
+            }
+        ),
+        label="unknown CommerceAlert type",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(CommerceAlert).values(
+            **{
+                **alert_values,
+                "window_start": now + timedelta(seconds=2),
+                "deduplication_key_hash": hashlib.sha256(b"mysql-alert-window").hexdigest(),
+            }
+        ),
+        label="invalid CommerceAlert window",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(BusinessTask).values(
+            **{
+                **task_values,
+                "organization_id": second_org,
+                "idempotency_key_hash": hashlib.sha256(b"mysql-alert-task-cross").hexdigest(),
+            }
+        ),
+        label="cross-organization BusinessTask alert context",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(BusinessTaskHistory).values(
+            organization_id=first_org,
+            business_task_id=task_id,
+            from_status="UNKNOWN",
+            to_status="TODO",
+            actor_user_id=user_id,
+            created_at=now,
+        ),
+        label="unknown BusinessTaskHistory status",
+    )
 
 
 def _seed_sync_race(
@@ -1187,6 +1405,125 @@ def _verify_purchase_execution_race(engine: Engine) -> None:
             raise RuntimeError("MySQL purchase execution race duplicated the execution audit")
 
 
+def _verify_alert_task_idempotency_races(engine: Engine) -> None:
+    with Session(engine, expire_on_commit=False) as session:
+        organization = Organization(slug="mysql-alert-race", name="MySQL Alert Race")
+        user = User(email="mysql-alert-race@example.com", display_name="Alert Operator")
+        session.add_all([organization, user])
+        session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OPERATOR,
+        )
+        shop = Shop(
+            organization_id=organization.id,
+            name="MySQL Alert Race Shop",
+            platform="douyin",
+            external_shop_id="mysql-alert-race-shop",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        )
+        session.add_all([membership, shop])
+        session.commit()
+        principal = Principal(user.id, organization.id, membership.id, MembershipRole.OPERATOR)
+        organization_id = organization.id
+        shop_id = shop.id
+
+    as_of = utcnow()
+    rendezvous = Barrier(2, timeout=15)
+
+    def create_alert() -> int:
+        with Session(engine, expire_on_commit=False) as session:
+            session.execute(sa.text("SET SESSION innodb_lock_wait_timeout = 10"))
+            rendezvous.wait()
+            alert = AlertTaskService(session, principal)._alert(
+                AlertType.SALES_DROP,
+                shop_id,
+                None,
+                "sales_change",
+                Decimal("0.5"),
+                Decimal("0.3"),
+                as_of - timedelta(days=7),
+                as_of,
+                "Sales drop",
+                {"source": "mysql-race"},
+            )
+            session.commit()
+            return alert.id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        alert_ids = list(executor.map(lambda _: create_alert(), range(2)))
+    if len(set(alert_ids)) != 1:
+        raise RuntimeError(f"MySQL alert deduplication race returned {alert_ids}")
+    alert_id = alert_ids[0]
+
+    rendezvous = Barrier(2, timeout=15)
+    payload = BusinessTaskCreate(
+        title="Investigate MySQL alert race",
+        idempotency_key="mysql-alert-task-race-key",
+    )
+
+    def create_task() -> int:
+        with Session(engine, expire_on_commit=False) as session:
+            session.execute(sa.text("SET SESSION innodb_lock_wait_timeout = 10"))
+            rendezvous.wait()
+            return AlertTaskService(session, principal).create_task(alert_id, payload).id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        task_ids = list(executor.map(lambda _: create_task(), range(2)))
+    if len(set(task_ids)) != 1:
+        raise RuntimeError(f"MySQL BusinessTask idempotency race returned {task_ids}")
+
+    with Session(engine) as session:
+        alert_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(CommerceAlert)
+                .where(CommerceAlert.organization_id == organization_id)
+            )
+            or 0
+        )
+        task_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(BusinessTask)
+                .where(BusinessTask.organization_id == organization_id)
+            )
+            or 0
+        )
+        history_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(BusinessTaskHistory)
+                .where(BusinessTaskHistory.organization_id == organization_id)
+            )
+            or 0
+        )
+        alert_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "alerts.detect")
+            )
+            or 0
+        )
+        task_audits = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "business_task.create")
+            )
+            or 0
+        )
+    if (alert_count, task_count, history_count, alert_audits, task_audits) != (1, 1, 1, 1, 1):
+        raise RuntimeError(
+            "MySQL alert/task races duplicated persisted state or audit: "
+            f"{(alert_count, task_count, history_count, alert_audits, task_audits)}"
+        )
+
+
 def main() -> None:
     raw_url = os.environ.get("TEST_MYSQL_URL", "")
     if not raw_url:
@@ -1223,6 +1560,20 @@ def main() -> None:
         command.upgrade(config, "head")
         _assert_head_schema(connection, config)
         _assert_legacy_product_preserved(connection)
+        _verify_alert_task_integrity(connection)
+
+        command.downgrade(config, "0011_purchasing")
+        tables_after_alert_rollback = set(sa.inspect(connection).get_table_names())
+        remaining_alert_tables = ALERT_TASK_TABLES.intersection(tables_after_alert_rollback)
+        if remaining_alert_tables:
+            raise RuntimeError(
+                f"MySQL alert/task rollback left tables behind: {sorted(remaining_alert_tables)}"
+            )
+        if not PURCHASING_TABLES.issubset(tables_after_alert_rollback):
+            raise RuntimeError("MySQL alert/task rollback removed purchasing tables")
+        _assert_legacy_product_preserved(connection)
+        command.upgrade(config, "head")
+        _assert_head_schema(connection, config)
 
         command.downgrade(config, "0010_finance")
         tables_after_purchasing_rollback = set(sa.inspect(connection).get_table_names())
@@ -1692,10 +2043,11 @@ def main() -> None:
     _verify_sync_mutation_races(engine)
     _verify_inventory_snapshot_race(engine)
     _verify_purchase_execution_race(engine)
+    _verify_alert_task_idempotency_races(engine)
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
         "legacy-reauth-catalog-raw-order-inventory-data-preservation-and-sync-and-inventory-"
-        "and-purchase-execution-races: PASS"
+        "purchase-execution-and-alert-task-idempotency-races: PASS"
     )
 
 

@@ -4,6 +4,7 @@ import hashlib
 import os
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -15,13 +16,17 @@ from sqlalchemy.engine import Connection
 from alembic import command
 from commerce.database import Base
 from commerce.models import (
+    BusinessTask,
+    BusinessTaskHistory,
     ChannelInventory,
+    CommerceAlert,
     CommerceOrder,
     CommerceOrderItem,
     Inventory,
     MasterProduct,
     MasterSKU,
     Organization,
+    OrganizationMembership,
     PlatformRawEvent,
     PlatformSKU,
     Product,
@@ -377,6 +382,198 @@ def test_purchasing_revision_constraints_and_rollback_are_additive(tmp_path: Pat
         )
         command.upgrade(config, "0011_purchasing")
         assert purchasing_tables.issubset(set(sa.inspect(connection).get_table_names()))
+
+
+def test_alert_task_revision_constraints_and_rollback_are_additive(tmp_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'alert-task-upgrade.db'}")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        config = _config(connection)
+        command.upgrade(config, "0011_purchasing")
+        now = utcnow()
+        first_org = connection.execute(
+            sa.insert(Organization).values(
+                slug="alert-migration-first",
+                name="Alert Migration First",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        second_org = connection.execute(
+            sa.insert(Organization).values(
+                slug="alert-migration-second",
+                name="Alert Migration Second",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        user_id = connection.execute(
+            sa.insert(User).values(
+                email="alert-migration@example.com",
+                display_name="Alert Migration",
+                is_active=True,
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.execute(
+            sa.insert(OrganizationMembership).values(
+                organization_id=first_org,
+                user_id=user_id,
+                role="OPERATOR",
+                status="ACTIVE",
+                created_at=now,
+            )
+        )
+        shop_id = connection.execute(
+            sa.insert(Shop).values(
+                organization_id=first_org,
+                name="Alert Migration Shop",
+                platform="douyin",
+                external_shop_id="alert-migration-shop",
+                country_code="CN",
+                currency="CNY",
+                timezone="Asia/Shanghai",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        product_id = connection.execute(
+            sa.insert(MasterProduct).values(
+                organization_id=first_org,
+                code="ALERT-MIGRATION",
+                name="Alert Migration",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        sku_id = connection.execute(
+            sa.insert(MasterSKU).values(
+                organization_id=first_org,
+                master_product_id=product_id,
+                sku_code="ALERT-MIGRATION-SKU",
+                name="Alert Migration SKU",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+
+        command.upgrade(config, "head")
+        tables = set(sa.inspect(connection).get_table_names())
+        alert_tables = {"commerce_alerts", "business_tasks", "business_task_history"}
+        assert alert_tables.issubset(tables)
+        alert_values = {
+            "organization_id": first_org,
+            "shop_id": shop_id,
+            "master_sku_id": sku_id,
+            "alert_type": "STOCKOUT_RISK",
+            "status": "OPEN",
+            "deduplication_key_hash": hashlib.sha256(b"alert-migration").hexdigest(),
+            "metric_name": "days_of_stock",
+            "metric_value": 2,
+            "threshold_value": 7,
+            "summary": "Stockout risk",
+            "details": {"risk": "CRITICAL"},
+            "window_start": now,
+            "window_end": now + timedelta(seconds=1),
+            "created_at": now,
+            "updated_at": now,
+        }
+        alert_id = connection.execute(
+            sa.insert(CommerceAlert).values(**alert_values)
+        ).inserted_primary_key[0]
+        task_id = connection.execute(
+            sa.insert(BusinessTask).values(
+                organization_id=first_org,
+                alert_id=alert_id,
+                shop_id=shop_id,
+                master_sku_id=sku_id,
+                idempotency_key_hash=hashlib.sha256(b"alert-task-key").hexdigest(),
+                request_hash=hashlib.sha256(b"alert-task-request").hexdigest(),
+                title="Investigate",
+                status="TODO",
+                created_by_user_id=user_id,
+                created_at=now,
+                updated_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.execute(
+            sa.insert(BusinessTaskHistory).values(
+                organization_id=first_org,
+                business_task_id=task_id,
+                from_status=None,
+                to_status="TODO",
+                actor_user_id=user_id,
+                created_at=now,
+            )
+        )
+        connection.commit()
+
+        def rejects_integrity(statement: sa.Executable) -> None:
+            with pytest.raises(sa.exc.IntegrityError):
+                connection.execute(statement)
+                connection.commit()
+            connection.rollback()
+
+        rejects_integrity(
+            sa.insert(CommerceAlert).values(
+                **{
+                    **alert_values,
+                    "organization_id": second_org,
+                    "deduplication_key_hash": hashlib.sha256(b"cross-tenant").hexdigest(),
+                }
+            )
+        )
+        rejects_integrity(
+            sa.insert(CommerceAlert).values(
+                **{
+                    **alert_values,
+                    "metric_value": -1,
+                    "deduplication_key_hash": hashlib.sha256(b"negative-metric").hexdigest(),
+                }
+            )
+        )
+        rejects_integrity(
+            sa.insert(CommerceAlert).values(
+                **{
+                    **alert_values,
+                    "alert_type": "UNKNOWN",
+                    "deduplication_key_hash": hashlib.sha256(b"unknown-type").hexdigest(),
+                }
+            )
+        )
+        rejects_integrity(
+            sa.insert(CommerceAlert).values(
+                **{
+                    **alert_values,
+                    "window_start": now + timedelta(seconds=2),
+                    "deduplication_key_hash": hashlib.sha256(b"invalid-window").hexdigest(),
+                }
+            )
+        )
+        rejects_integrity(
+            sa.insert(BusinessTaskHistory).values(
+                organization_id=first_org,
+                business_task_id=task_id,
+                from_status="UNKNOWN",
+                to_status="TODO",
+                actor_user_id=user_id,
+                created_at=now,
+            )
+        )
+
+        command.downgrade(config, "0011_purchasing")
+        assert alert_tables.isdisjoint(set(sa.inspect(connection).get_table_names()))
+        assert (
+            connection.scalar(
+                sa.select(sa.func.count()).select_from(MasterSKU).where(MasterSKU.id == sku_id)
+            )
+            == 1
+        )
+        command.upgrade(config, "head")
+        assert alert_tables.issubset(set(sa.inspect(connection).get_table_names()))
 
 
 def test_shop_connection_revision_rollback_preserves_existing_shop_data(tmp_path: Path) -> None:

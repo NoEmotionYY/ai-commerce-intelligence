@@ -4,15 +4,15 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`.
-Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`).
-Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`).
-Last completed task: `COM-P1-005` — Replenishment and Approval Execution (`DONE`).
-`COM-P1-005` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. The focused purchasing service/API slice is green (`7 passed, 1 warning`), the latest
-current-checkout full suite is green (`267 passed, 18 skipped, 1 warning`), and the disposable
-MySQL execution race proves one `APPROVED -> ORDERED` transition and one audit under concurrent
-retry. This is local internal execution evidence, not real supplier/platform execution.
+Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`.
+Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`).
+Next task: `COM-P1-008` — Douyin Connector (`TODO`).
+Last completed task: `COM-P1-006` — Alerts and Business Tasks (`DONE`).
+`COM-P1-006` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
+Review. The focused service/API/migration slice is green (`21 passed, 1 warning`), the latest
+current-checkout full suite is green (`275 passed, 18 skipped, 1 warning`), and the disposable
+MySQL verifier proves concurrent Alert deduplication and BusinessTask idempotency with one logical
+row/history/audit. Optional detectors, Agent registration, and effect tracking are not claimed.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -657,15 +657,22 @@ tool surface is locally verified but production chat registration remains COM-P1
 
 ### COM-P1-006 — Alerts and Business Tasks
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-003, COM-P1-005.
-Scope: anomaly types, Alert lifecycle, BusinessTask lifecycle and context links.
-Acceptance: alerts create auditable tasks and task transitions are permissioned.
-Verification: rule, API, workflow, and audit tests.
+Scope: five mandatory deterministic anomaly types, Alert lifecycle, BusinessTask lifecycle, and
+Shop/MasterSKU context links.
+Acceptance: alerts create tenant-scoped auditable tasks; task transitions are permissioned;
+WAITING_APPROVAL completion requires approval; duplicate evaluations and task requests are
+idempotent. Optional PRICE/ORDER/FINANCE detectors, Agent registration, and effect tracking remain
+later scope.
+Verification: focused service/API/migration suite `21 passed, 1 warning`; full suite `275 passed,
+18 skipped, 1 warning`; SQLite migration `14 passed`; Ruff, format, MyPy, Alembic single-head, and
+diff checks PASS. Disposable MySQL 8.4 fresh/upgrade/rollback/re-upgrade, integrity, preservation,
+and two-thread Alert/BusinessTask races PASS. Exit Review found no unresolved Critical/High issue.
 
 ### COM-P1-007 — CSV/XLSX Import
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P0-006, COM-P0-007.
 Scope: preview, mapping, validation, error reporting, source/idempotency metadata.
 Acceptance: products/SKUs, orders, inventory, and costs can be imported without direct raw writes.
@@ -704,5 +711,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 5 (`COM-P1-006` through `COM-P1-010`); `COM-P1-001` through `COM-P1-005` are `DONE`.
+- P1 remaining: 4 (`COM-P1-007` through `COM-P1-010`); `COM-P1-001` through `COM-P1-006` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

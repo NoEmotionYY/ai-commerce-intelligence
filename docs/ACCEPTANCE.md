@@ -119,11 +119,11 @@ it does not claim a real supplier/platform order was placed, and production chat
 
 At minimum:
 
-- [ ] SALES_DROP
-- [ ] SALES_SPIKE
-- [ ] STOCKOUT_RISK
-- [ ] REFUND_SPIKE
-- [ ] MARGIN_DROP
+- [x] SALES_DROP
+- [x] SALES_SPIKE
+- [x] STOCKOUT_RISK
+- [x] REFUND_SPIKE
+- [x] MARGIN_DROP
 
 Additionally where justified:
 
@@ -131,22 +131,33 @@ Additionally where justified:
 - [ ] ORDER_ANOMALY
 - [ ] FINANCE_ANOMALY
 
-- [ ] Alert lifecycle exists.
-- [ ] Alerts link to relevant business entities.
-- [ ] Alerts can produce BusinessTasks.
+- [x] Alert lifecycle exists.
+- [x] Alerts link to relevant business entities.
+- [x] Alerts can produce BusinessTasks.
+
+The five mandatory rules use deterministic Python/SQL over unified Shop, Order, Refund, Profit,
+WarehouseInventory, and MasterSKU data. Alert identity is tenant-scoped and deduplicated; MySQL
+concurrency verifies one row and one detection audit. Current business links cover Shop and
+MasterSKU where applicable. The optional PRICE/ORDER/FINANCE detectors remain `MISSING`, and no
+production Agent explanation or effect-measurement capability is claimed here.
 
 ---
 
 ## J. Business Tasks
 
-- [ ] BusinessTask implemented.
-- [ ] TODO supported.
-- [ ] IN_PROGRESS supported.
-- [ ] WAITING_APPROVAL supported.
-- [ ] DONE supported.
-- [ ] DISMISSED supported.
-- [ ] Tasks link to business context.
-- [ ] Task history is auditable.
+- [x] BusinessTask implemented.
+- [x] TODO supported.
+- [x] IN_PROGRESS supported.
+- [x] WAITING_APPROVAL supported.
+- [x] DONE supported.
+- [x] DISMISSED supported.
+- [x] Tasks link to business context.
+- [x] Task history is auditable.
+
+BusinessTask creation copies the Alert's Shop/MasterSKU context, validates any assignee against an
+active membership, hashes idempotency material, and records immutable transition history plus
+OperationLog evidence. `WAITING_APPROVAL -> DONE` requires `APPROVE_ACTION`; other mutations require
+`WRITE_COMMERCE`. This is local workflow evidence, not an external execution claim.
 
 ---
 
@@ -398,7 +409,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-005 completion the current local suite is `267 passed, 18 skipped, 1 warning` under
+COM-P1-006 completion the current local suite is `275 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
@@ -425,6 +436,10 @@ inbound quantities, lead time, safety days, MOQ, and package size. The validated
 tool can read this recommendation and create an idempotent DRAFT without accepting quantity or
 policy overrides; it is not yet registered into production chat. Real supplier/platform execution
 and integrations remain `MISSING`, not `BLOCKED_EXTERNAL`.
+The five mandatory deterministic alert rules and the tenant-scoped Alert/BusinessTask lifecycle are
+locally verified, including MySQL concurrent deduplication/idempotency. Optional price/order/finance
+detectors, production Agent alert/task tools, and measurable effect tracking remain later internal
+work and are not represented as PASS.
 
 ## V2 Complete Gate
 

@@ -38,9 +38,13 @@ from commerce.llm_agent import run_model_tool_loop
 from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
 from commerce.logging import configure_logging
 from commerce.models import (
+    AlertStatus,
     ApprovalStatus,
     ApprovalTask,
+    BusinessTask,
+    BusinessTaskStatus,
     ChannelInventory,
+    CommerceAlert,
     CommerceOrder,
     CommerceOrderStatus,
     CommercePurchaseOrder,
@@ -71,7 +75,10 @@ from commerce.models import (
     utcnow,
 )
 from commerce.schemas import (
+    AlertStatusUpdate,
     AuthenticationStatus,
+    BusinessTaskCreate,
+    BusinessTaskStatusUpdate,
     ChatRequest,
     ChatResponse,
     ClaimInput,
@@ -90,10 +97,12 @@ from commerce.schemas import (
     RawEventCreate,
     RawEventReplay,
     ReplenishmentDraftCreate,
+    ShopAlertEvaluation,
     ShopCapabilityUpdate,
     ShopProfileUpdate,
     ShopStatusUpdate,
     SKUCostCreate,
+    StockoutAlertEvaluation,
     SupplierCreate,
     SupplierProductCreate,
     SyncCheckpointUpdate,
@@ -101,6 +110,12 @@ from commerce.schemas import (
     SyncJobFinish,
     ToolCallRecord,
     WarehouseCreate,
+)
+from commerce.services.alerts import (
+    AlertTaskConflictError,
+    AlertTaskNotFoundError,
+    AlertTaskService,
+    AlertTaskValidationError,
 )
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
 from commerce.services.catalog import CatalogConflictError, CatalogNotFoundError, CatalogService
@@ -687,6 +702,41 @@ def inbound_shipment_dict(item: InboundShipment) -> dict[str, object]:
     }
 
 
+def commerce_alert_dict(item: CommerceAlert) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "master_sku_id": item.master_sku_id,
+        "alert_type": item.alert_type.value,
+        "status": item.status.value,
+        "metric_name": item.metric_name,
+        "metric_value": str(item.metric_value),
+        "threshold_value": str(item.threshold_value),
+        "summary": item.summary,
+        "details": item.details,
+        "window_start": item.window_start,
+        "window_end": item.window_end,
+        "created_at": item.created_at,
+    }
+
+
+def business_task_dict(item: BusinessTask) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "alert_id": item.alert_id,
+        "shop_id": item.shop_id,
+        "master_sku_id": item.master_sku_id,
+        "title": item.title,
+        "description": item.description,
+        "status": item.status.value,
+        "created_by_user_id": item.created_by_user_id,
+        "assigned_to_user_id": item.assigned_to_user_id,
+        "completed_at": item.completed_at,
+        "dismissed_at": item.dismissed_at,
+        "created_at": item.created_at,
+    }
+
+
 def shop_dict(shop: Shop, connection_service: ShopConnectionService) -> dict[str, object]:
     connection = connection_service.connection_for_shop(shop.id)
     capabilities = connection_service.list_capabilities(shop.id)
@@ -764,6 +814,18 @@ def purchasing_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, PurchasingValidationError):
         return HTTPException(400, str(exc))
     return HTTPException(500, "采购服务失败")
+
+
+def alert_task_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, AlertTaskNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, AlertTaskConflictError):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, AlertTaskValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "告警任务服务失败")
 
 
 def require_operator(key: str) -> None:
@@ -1912,6 +1974,117 @@ def create_v2_replenishment_draft(
         "recommendation": recommendation,
         "idempotent_replay": replayed,
     }
+
+
+@app.post("/api/v2/alerts/evaluate-shop")
+def evaluate_v2_shop_alerts(
+    payload: ShopAlertEvaluation,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = AlertTaskService(session, principal).evaluate_shop(**payload.model_dump())
+    except (AuthorizationError, AlertTaskNotFoundError, AlertTaskValidationError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return [commerce_alert_dict(item) for item in items]
+
+
+@app.post("/api/v2/alerts/evaluate-stockout")
+def evaluate_v2_stockout_alert(
+    payload: StockoutAlertEvaluation,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object] | None:
+    try:
+        item = AlertTaskService(session, principal).evaluate_stockout(**payload.model_dump())
+    except (AuthorizationError, AlertTaskNotFoundError, AlertTaskValidationError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return commerce_alert_dict(item) if item is not None else None
+
+
+@app.get("/api/v2/alerts")
+def list_v2_alerts(
+    status: AlertStatus | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = AlertTaskService(session, principal).list_alerts(
+            status=status, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, AlertTaskValidationError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return [commerce_alert_dict(item) for item in items]
+
+
+@app.patch("/api/v2/alerts/{alert_id}/status")
+def transition_v2_alert(
+    alert_id: int,
+    payload: AlertStatusUpdate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = AlertTaskService(session, principal).transition_alert(
+            alert_id, AlertStatus(payload.status)
+        )
+    except (AuthorizationError, AlertTaskConflictError, AlertTaskNotFoundError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return commerce_alert_dict(item)
+
+
+@app.post("/api/v2/alerts/{alert_id}/tasks")
+def create_v2_business_task(
+    alert_id: int,
+    payload: BusinessTaskCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = AlertTaskService(session, principal).create_task(alert_id, payload)
+    except (
+        AuthorizationError,
+        AlertTaskConflictError,
+        AlertTaskNotFoundError,
+        AlertTaskValidationError,
+    ) as exc:
+        raise alert_task_http_error(exc) from exc
+    return business_task_dict(item)
+
+
+@app.get("/api/v2/business-tasks")
+def list_v2_business_tasks(
+    status: BusinessTaskStatus | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = AlertTaskService(session, principal).list_tasks(
+            status=status, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, AlertTaskValidationError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return [business_task_dict(item) for item in items]
+
+
+@app.patch("/api/v2/business-tasks/{task_id}/status")
+def transition_v2_business_task(
+    task_id: int,
+    payload: BusinessTaskStatusUpdate,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = AlertTaskService(session, principal).transition_task(
+            task_id, BusinessTaskStatus(payload.status), reason=payload.reason
+        )
+    except (AuthorizationError, AlertTaskConflictError, AlertTaskNotFoundError) as exc:
+        raise alert_task_http_error(exc) from exc
+    return business_task_dict(item)
 
 
 @app.patch("/api/v2/shops/{shop_id}/status")
