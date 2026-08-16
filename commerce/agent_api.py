@@ -2,35 +2,270 @@ from __future__ import annotations
 
 import re
 import secrets
-from datetime import timedelta
-from typing import cast
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
-from commerce.config import get_settings
+from commerce.authentication import AuthenticationError, verify_access_token
+from commerce.authorization import (
+    AuthorizationError,
+    Permission,
+    Principal,
+    require_permission,
+    resolve_principal,
+    resolve_shop,
+)
+from commerce.config import RuntimeConfigurationError, get_settings
+from commerce.credentials import (
+    CredentialCipher,
+    CredentialConfigurationError,
+    CredentialService,
+    CredentialUnavailableError,
+)
 from commerce.database import get_session
+from commerce.error_codes import safe_error_code
 from commerce.llm_agent import run_model_tool_loop
 from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
-from commerce.models import ApprovalStatus, ApprovalTask, CrawlerTask, OperationLog, Order
+from commerce.logging import configure_logging
+from commerce.models import (
+    ApprovalStatus,
+    ApprovalTask,
+    ChannelInventory,
+    CommerceOrder,
+    CommerceOrderStatus,
+    CrawlerTask,
+    MasterProduct,
+    MasterSKU,
+    OperationLog,
+    Order,
+    PlatformRawEvent,
+    PlatformSKU,
+    RawEventStatus,
+    Shop,
+    ShopCapabilityStatus,
+    SyncJob,
+    SyncJobStatus,
+    Warehouse,
+    WarehouseInventory,
+    utcnow,
+)
 from commerce.schemas import (
     AuthenticationStatus,
     ChatRequest,
     ChatResponse,
+    ClaimInput,
     Evidence,
+    MasterProductCreate,
+    MasterSKUCreate,
+    PlatformSKUCreate,
+    PlatformSKURemap,
+    ProcessingFailure,
+    RawEventClaimInput,
+    RawEventCreate,
+    RawEventReplay,
+    ShopCapabilityUpdate,
+    ShopProfileUpdate,
+    ShopStatusUpdate,
+    SyncCheckpointUpdate,
+    SyncJobCreate,
+    SyncJobFinish,
     ToolCallRecord,
+    WarehouseCreate,
 )
-from commerce.seed import AS_OF
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
+from commerce.services.catalog import CatalogConflictError, CatalogNotFoundError, CatalogService
 from commerce.services.combined import compose_a102
+from commerce.services.ingestion import (
+    IngestionConflictError,
+    IngestionNotFoundError,
+    IngestionService,
+    IngestionTransitionError,
+    IngestionValidationError,
+)
+from commerce.services.inventory import (
+    InventoryConflictError,
+    InventoryNotFoundError,
+    InventoryService,
+    InventoryValidationError,
+)
 from commerce.services.marketing import competitor_products, negative_comment_topics
+from commerce.services.order_import import (
+    OrderImportConflictError,
+    OrderImportNotFoundError,
+    OrderImportService,
+    OrderImportValidationError,
+)
 from commerce.services.report import daily_report
+from commerce.services.shop import ShopService
+from commerce.services.shop_connection import (
+    ShopConnectionService,
+    ShopConnectionUnavailableError,
+    ShopConnectionValidationError,
+)
 from commerce.tools import CommerceTools
 from commerce.workflow import create_purchase_draft, decide_approval, execute_approved_purchase
 
-app = FastAPI(title="Commerce Agent API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    configure_logging(get_settings().log_level)
+    yield
+
+
+app = FastAPI(title="Commerce Agent API", version="0.1.0", lifespan=lifespan)
+
+MAX_SYNC_REQUEST_BYTES = 1_100_000
+
+
+@app.exception_handler(RequestValidationError)
+async def sanitized_validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    del request
+    details = [
+        {
+            "loc": error.get("loc", ()),
+            "msg": error.get("msg", "请求参数无效"),
+            "type": error.get("type", "value_error"),
+        }
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": details})
+
+
+@app.middleware("http")
+async def enforce_production_tenant_api_boundary(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    path = request.url.path
+    if path.startswith(("/api/v2/raw-events", "/api/v2/sync-jobs")):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                body_size = int(content_length)
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Content-Length 无效"})
+            if body_size > MAX_SYNC_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "数据接入请求体超过限制"})
+    if (
+        get_settings().is_production
+        and path.startswith("/api/")
+        and not path.startswith("/api/v2/")
+    ):
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "该 legacy API 未提供租户隔离，生产环境必须使用 /api/v2 接口"},
+        )
+    return await call_next(request)
+
+
+def require_v2_principal(
+    authorization: str = Header(default=""),
+    x_organization_id: int | None = Header(default=None),
+    session: Session = Depends(get_session),
+) -> Principal:
+    """Resolve bearer identity and validate the requested organization scope."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "需要有效的 V2 身份令牌")
+    if x_organization_id is None:
+        raise HTTPException(400, "需要明确的组织范围")
+    settings = get_settings()
+    if len(settings.auth_signing_key) < 32:
+        raise HTTPException(503, "V2 身份认证未配置")
+    try:
+        identity = verify_access_token(authorization[7:].strip(), settings.auth_signing_key)
+        return resolve_principal(
+            session,
+            user_id=identity.user_id,
+            organization_id=x_organization_id,
+            permission=Permission.READ_COMMERCE,
+        )
+    except AuthenticationError as exc:
+        raise HTTPException(401, "需要有效的 V2 身份令牌") from exc
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+
+def require_v2_shop_manager(
+    principal: Principal = Depends(require_v2_principal),
+) -> Principal:
+    try:
+        require_permission(principal, Permission.MANAGE_SHOP)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return principal
+
+
+def require_v2_commerce_writer(
+    principal: Principal = Depends(require_v2_principal),
+) -> Principal:
+    try:
+        require_permission(principal, Permission.WRITE_COMMERCE)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return principal
+
+
+def require_v2_sync_operator(
+    principal: Principal = Depends(require_v2_principal),
+) -> Principal:
+    try:
+        require_permission(principal, Permission.OPERATE_SYNC)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return principal
+
+
+def _credential_service(session: Session, principal: Principal) -> CredentialService:
+    try:
+        cipher = CredentialCipher.from_settings(get_settings())
+    except CredentialConfigurationError as exc:
+        raise HTTPException(503, "店铺凭据加密服务未配置") from exc
+    return CredentialService(session, principal, cipher)
+
+
+def _parse_credential_request(body: Any) -> tuple[str, dict[str, str], datetime | None]:
+    if not isinstance(body, dict):
+        raise HTTPException(400, "店铺凭据请求无效")
+    credential_type = body.get("credential_type")
+    payload = body.get("credentials")
+    expires_at_raw = body.get("expires_at")
+    if (
+        not isinstance(credential_type, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,49}", credential_type) is None
+        or not isinstance(payload, dict)
+        or not payload
+        or len(payload) > 20
+        or not all(
+            isinstance(key, str)
+            and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key) is not None
+            and isinstance(value, str)
+            and 0 < len(value) <= 8192
+            for key, value in payload.items()
+        )
+    ):
+        raise HTTPException(400, "店铺凭据请求无效")
+    expires_at: datetime | None = None
+    if expires_at_raw is not None:
+        if not isinstance(expires_at_raw, str):
+            raise HTTPException(400, "店铺凭据请求无效")
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(400, "店铺凭据请求无效") from exc
+        if expires_at.tzinfo is None:
+            raise HTTPException(400, "店铺凭据请求无效")
+    return credential_type, cast(dict[str, str], payload), expires_at
 
 
 def approval_dict(item: ApprovalTask) -> dict[str, object]:
@@ -48,6 +283,229 @@ def approval_dict(item: ApprovalTask) -> dict[str, object]:
         "expires_at": item.expires_at,
         "reject_reason": item.reject_reason,
     }
+
+
+def master_product_dict(item: MasterProduct) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "code": item.code,
+        "name": item.name,
+        "category": item.category,
+        "active": item.active,
+    }
+
+
+def master_sku_dict(item: MasterSKU) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "master_product_id": item.master_product_id,
+        "sku_code": item.sku_code,
+        "name": item.name,
+        "active": item.active,
+    }
+
+
+def platform_sku_dict(item: PlatformSKU) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "shop_id": item.shop_id,
+        "master_sku_id": item.master_sku_id,
+        "external_product_id": item.external_product_id,
+        "external_sku_id": item.external_sku_id,
+        "title": item.title,
+        "active": item.active,
+    }
+
+
+def sync_job_dict(item: SyncJob) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "shop_id": item.shop_id,
+        "job_type": item.job_type,
+        "required_capability": item.required_capability,
+        "status": item.status.value,
+        "has_checkpoint": item.checkpoint is not None,
+        "attempts": item.attempts,
+        "max_attempts": item.max_attempts,
+        "last_error": safe_error_code(item.last_error),
+        "lease_expires_at": item.lease_expires_at,
+        "started_at": item.started_at,
+        "finished_at": item.finished_at,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def raw_event_dict(item: PlatformRawEvent, *, include_payload: bool = False) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "shop_id": item.shop_id,
+        "platform": item.platform,
+        "event_type": item.event_type,
+        "external_event_id": item.external_event_id,
+        "payload_hash": item.payload_hash,
+        "status": item.status.value,
+        "processing_attempts": item.processing_attempts,
+        "replay_count": item.replay_count,
+        "last_error": safe_error_code(item.last_error),
+        "processing_lease_expires_at": item.processing_lease_expires_at,
+        "occurred_at": item.occurred_at,
+        "received_at": item.received_at,
+        "processed_at": item.processed_at,
+    }
+    if include_payload:
+        result["payload"] = item.payload
+    return result
+
+
+def commerce_order_dict(item: CommerceOrder, *, include_details: bool = False) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "shop_id": item.shop_id,
+        "platform": item.platform,
+        "external_order_id": item.external_order_id,
+        "status": item.status.value,
+        "external_status": item.external_status,
+        "currency": item.currency,
+        "total_amount": str(item.total_amount),
+        "ordered_at": item.ordered_at,
+        "paid_at": item.paid_at,
+        "shipped_at": item.shipped_at,
+        "delivered_at": item.delivered_at,
+        "refunded_at": item.refunded_at,
+        "settled_at": item.settled_at,
+        "last_source_event_id": item.last_source_event_id,
+        "last_source_occurred_at": item.last_source_occurred_at,
+    }
+    if include_details:
+        result["items"] = [
+            {
+                "id": order_item.id,
+                "platform_sku_id": order_item.platform_sku_id,
+                "master_sku_id": order_item.master_sku_id,
+                "external_item_id": order_item.external_item_id,
+                "external_sku_id": order_item.external_sku_id,
+                "quantity": order_item.quantity,
+                "currency": order_item.currency,
+                "unit_price": str(order_item.unit_price),
+                "line_amount": str(order_item.line_amount),
+                "title": order_item.title,
+            }
+            for order_item in sorted(item.items, key=lambda value: value.external_item_id)
+        ]
+        result["source_events"] = [
+            {
+                "raw_event_id": source.raw_event_id,
+                "normalizer_version": source.normalizer_version,
+                "source_occurred_at": source.source_occurred_at,
+                "applied": source.applied,
+            }
+            for source in sorted(item.source_events, key=lambda value: value.raw_event_id)
+        ]
+    return result
+
+
+def warehouse_dict(item: Warehouse) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "country_code": item.country_code,
+        "timezone": item.timezone,
+        "active": item.active,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def warehouse_inventory_dict(item: WarehouseInventory) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "warehouse_id": item.warehouse_id,
+        "master_sku_id": item.master_sku_id,
+        "available": item.available,
+        "reserved": item.reserved,
+        "incoming": item.incoming,
+        "damaged": item.damaged,
+        "source": item.source,
+        "source_updated_at": item.source_updated_at,
+        "observed_at": item.observed_at,
+    }
+
+
+def channel_inventory_dict(item: ChannelInventory) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "platform_sku_id": item.platform_sku_id,
+        "master_sku_id": item.master_sku_id,
+        "available": item.available,
+        "reserved": item.reserved,
+        "source": item.source,
+        "source_updated_at": item.source_updated_at,
+        "observed_at": item.observed_at,
+    }
+
+
+def shop_dict(shop: Shop, connection_service: ShopConnectionService) -> dict[str, object]:
+    connection = connection_service.connection_for_shop(shop.id)
+    capabilities = connection_service.list_capabilities(shop.id)
+    return {
+        "id": shop.id,
+        "name": shop.name,
+        "platform": shop.platform,
+        "external_shop_id": shop.external_shop_id,
+        "country_code": shop.country_code,
+        "currency": shop.currency,
+        "timezone": shop.timezone,
+        "status": shop.status.value,
+        "connection": connection_service.connection_metadata(connection, shop_id=shop.id),
+        "capabilities": [
+            connection_service.capability_metadata(capability) for capability in capabilities
+        ],
+    }
+
+
+def ingestion_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, IngestionNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, (IngestionConflictError, IngestionTransitionError)):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, IngestionValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "数据接入服务失败")
+
+
+def order_import_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, (IngestionNotFoundError, OrderImportNotFoundError)):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, (IngestionTransitionError, OrderImportConflictError)):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, (IngestionValidationError, OrderImportValidationError)):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "订单服务失败")
+
+
+def inventory_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, InventoryNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, (InventoryConflictError, ShopConnectionUnavailableError)):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, InventoryValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "库存服务失败")
 
 
 def require_operator(key: str) -> None:
@@ -70,6 +528,780 @@ def health(session: Session = Depends(get_session)) -> dict[str, str]:
     return {"status": "ok", "service": "agent-api"}
 
 
+@app.get("/api/v2/shops")
+def v2_shops(
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    """Return only shops owned by the authenticated principal's organization."""
+    service = ShopConnectionService(session, principal)
+    return [
+        shop_dict(shop, service)
+        for shop in session.scalars(
+            select(Shop).where(Shop.organization_id == principal.organization_id).order_by(Shop.id)
+        )
+    ]
+
+
+@app.get("/api/v2/shops/{shop_id}")
+def v2_shop(
+    shop_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        shop = resolve_shop(session, principal, shop_id, require_active=False)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return shop_dict(shop, ShopConnectionService(session, principal))
+
+
+@app.patch("/api/v2/shops/{shop_id}")
+def update_v2_shop_profile(
+    shop_id: int,
+    payload: ShopProfileUpdate,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        shop = ShopService(session, principal).update_profile(shop_id, **payload.model_dump())
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return shop_dict(shop, ShopConnectionService(session, principal))
+
+
+@app.get("/api/v2/shops/{shop_id}/connection")
+def get_v2_shop_connection(
+    shop_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    service = ShopConnectionService(session, principal)
+    try:
+        connection = service.connection_for_shop(shop_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return service.connection_metadata(connection, shop_id=shop_id)
+
+
+@app.get("/api/v2/shops/{shop_id}/capabilities")
+def list_v2_shop_capabilities(
+    shop_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    service = ShopConnectionService(session, principal)
+    try:
+        capabilities = service.list_capabilities(shop_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return [service.capability_metadata(item) for item in capabilities]
+
+
+@app.put("/api/v2/shops/{shop_id}/capabilities/{capability_code}")
+def upsert_v2_shop_capability(
+    shop_id: int,
+    capability_code: str,
+    payload: ShopCapabilityUpdate,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    service = ShopConnectionService(session, principal)
+    try:
+        capability = service.upsert_capability(
+            shop_id=shop_id,
+            code=capability_code,
+            status=ShopCapabilityStatus(payload.status),
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ShopConnectionValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return service.capability_metadata(capability)
+
+
+@app.get("/api/v2/catalog/products")
+def list_v2_master_products(
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    return [
+        master_product_dict(item) for item in CatalogService(session, principal).list_products()
+    ]
+
+
+@app.post("/api/v2/catalog/products")
+def create_v2_master_product(
+    payload: MasterProductCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        product = CatalogService(session, principal).create_product(**payload.model_dump())
+    except CatalogConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return master_product_dict(product)
+
+
+@app.get("/api/v2/catalog/skus")
+def list_v2_master_skus(
+    master_product_id: int | None = None,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = CatalogService(session, principal).list_skus(master_product_id=master_product_id)
+    except CatalogNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return [master_sku_dict(item) for item in items]
+
+
+@app.post("/api/v2/catalog/products/{master_product_id}/skus")
+def create_v2_master_sku(
+    master_product_id: int,
+    payload: MasterSKUCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        sku = CatalogService(session, principal).create_sku(
+            master_product_id=master_product_id,
+            **payload.model_dump(),
+        )
+    except CatalogNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except CatalogConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return master_sku_dict(sku)
+
+
+@app.get("/api/v2/catalog/platform-skus")
+def list_v2_platform_skus(
+    shop_id: int | None = None,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = CatalogService(session, principal).list_platform_skus(shop_id=shop_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return [platform_sku_dict(item) for item in items]
+
+
+@app.post("/api/v2/catalog/platform-skus")
+def create_v2_platform_sku(
+    payload: PlatformSKUCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        mapping = CatalogService(session, principal).map_platform_sku(**payload.model_dump())
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except CatalogNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except CatalogConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return platform_sku_dict(mapping)
+
+
+@app.patch("/api/v2/catalog/platform-skus/{mapping_id}/mapping")
+def remap_v2_platform_sku(
+    mapping_id: int,
+    payload: PlatformSKURemap,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        mapping = CatalogService(session, principal).remap_platform_sku(
+            mapping_id, master_sku_id=payload.master_sku_id
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except CatalogNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return platform_sku_dict(mapping)
+
+
+@app.get("/api/v2/sync-jobs")
+def list_v2_sync_jobs(
+    shop_id: int | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    status: SyncJobStatus | None = None,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = IngestionService(session, principal).list_jobs(
+            shop_id=shop_id, after_id=after_id, limit=limit, status=status
+        )
+    except (AuthorizationError, IngestionValidationError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return [sync_job_dict(item) for item in items]
+
+
+@app.get("/api/v2/sync-jobs/{job_id}")
+def get_v2_sync_job(
+    job_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).get_job(job_id)
+    except (AuthorizationError, IngestionNotFoundError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs")
+def create_v2_sync_job(
+    payload: SyncJobCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).create_job(**payload.model_dump())
+    except (AuthorizationError, IngestionConflictError, IngestionValidationError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs/{job_id}/start")
+def start_v2_sync_job(
+    job_id: int,
+    payload: ClaimInput,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).start_job(
+            job_id, claim_token=payload.claim_token
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs/{job_id}/heartbeat")
+def heartbeat_v2_sync_job(
+    job_id: int,
+    payload: ClaimInput,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).heartbeat_job(
+            job_id, claim_token=payload.claim_token
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs/{job_id}/recover")
+def recover_v2_sync_job(
+    job_id: int,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).recover_expired_job(job_id)
+    except (AuthorizationError, IngestionNotFoundError, IngestionTransitionError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.patch("/api/v2/sync-jobs/{job_id}/checkpoint")
+def checkpoint_v2_sync_job(
+    job_id: int,
+    payload: SyncCheckpointUpdate,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).update_checkpoint(
+            job_id, payload.checkpoint, claim_token=payload.claim_token
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs/{job_id}/finish")
+def finish_v2_sync_job(
+    job_id: int,
+    payload: SyncJobFinish,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).finish_job(
+            job_id,
+            status=SyncJobStatus(payload.status),
+            claim_token=payload.claim_token,
+            error_code=payload.error_code,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.post("/api/v2/sync-jobs/{job_id}/retry")
+def retry_v2_sync_job(
+    job_id: int,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).retry_job(job_id)
+    except (IngestionNotFoundError, IngestionTransitionError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return sync_job_dict(item)
+
+
+@app.get("/api/v2/raw-events")
+def list_v2_raw_events(
+    shop_id: int | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    status: RawEventStatus | None = None,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = IngestionService(session, principal).list_events(
+            shop_id=shop_id, after_id=after_id, limit=limit, status=status
+        )
+    except (AuthorizationError, IngestionValidationError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return [raw_event_dict(item) for item in items]
+
+
+@app.get("/api/v2/raw-events/{event_id}")
+def get_v2_raw_event(
+    event_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).get_event(event_id)
+    except (AuthorizationError, IngestionNotFoundError) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item, include_payload=True)
+
+
+@app.post("/api/v2/raw-events")
+def ingest_v2_raw_event(
+    payload: RawEventCreate,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).ingest_event(**payload.model_dump())
+    except (
+        AuthorizationError,
+        IngestionConflictError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item, include_payload=True)
+
+
+@app.post("/api/v2/raw-events/{event_id}/begin")
+def begin_v2_raw_event(
+    event_id: int,
+    payload: RawEventClaimInput,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).begin_event(
+            event_id,
+            claim_token=payload.claim_token,
+            sync_job_id=payload.sync_job_id,
+            sync_job_claim_token=payload.sync_job_claim_token,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.post("/api/v2/raw-events/{event_id}/heartbeat")
+def heartbeat_v2_raw_event(
+    event_id: int,
+    payload: RawEventClaimInput,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).heartbeat_event(
+            event_id,
+            claim_token=payload.claim_token,
+            sync_job_id=payload.sync_job_id,
+            sync_job_claim_token=payload.sync_job_claim_token,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.post("/api/v2/raw-events/{event_id}/recover")
+def recover_v2_raw_event(
+    event_id: int,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).recover_expired_event(event_id)
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.post("/api/v2/raw-events/{event_id}/complete")
+def complete_v2_raw_event(
+    event_id: int,
+    payload: RawEventClaimInput,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).complete_event(
+            event_id,
+            claim_token=payload.claim_token,
+            sync_job_id=payload.sync_job_id,
+            sync_job_claim_token=payload.sync_job_claim_token,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.post("/api/v2/raw-events/{event_id}/fail")
+def fail_v2_raw_event(
+    event_id: int,
+    payload: ProcessingFailure,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).fail_event(
+            event_id,
+            error_code=payload.error_code,
+            claim_token=payload.claim_token,
+            sync_job_id=payload.sync_job_id,
+            sync_job_claim_token=payload.sync_job_claim_token,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.post("/api/v2/raw-events/{event_id}/replay")
+def replay_v2_raw_event(
+    event_id: int,
+    payload: RawEventReplay,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        item = IngestionService(session, principal).replay_event(
+            event_id,
+            sync_job_id=payload.sync_job_id,
+            sync_job_claim_token=payload.sync_job_claim_token,
+        )
+    except (
+        AuthorizationError,
+        IngestionNotFoundError,
+        IngestionTransitionError,
+        IngestionValidationError,
+    ) as exc:
+        raise ingestion_http_error(exc) from exc
+    return raw_event_dict(item)
+
+
+@app.get("/api/v2/orders")
+def list_v2_orders(
+    shop_id: int | None = None,
+    platform: str | None = Query(default=None, max_length=50),
+    status: CommerceOrderStatus | None = None,
+    ordered_from: datetime | None = None,
+    ordered_to: datetime | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        orders = OrderImportService(session, principal).list_orders(
+            shop_id=shop_id,
+            platform=platform,
+            status=status,
+            ordered_from=ordered_from,
+            ordered_to=ordered_to,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, OrderImportValidationError) as exc:
+        raise order_import_http_error(exc) from exc
+    return [commerce_order_dict(order) for order in orders]
+
+
+@app.get("/api/v2/orders/{order_id}")
+def get_v2_order(
+    order_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        order = OrderImportService(session, principal).get_order(order_id)
+    except (AuthorizationError, OrderImportNotFoundError) as exc:
+        raise order_import_http_error(exc) from exc
+    return commerce_order_dict(order, include_details=True)
+
+
+@app.post("/api/v2/inventory/warehouses")
+def create_v2_warehouse(
+    payload: WarehouseCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        warehouse = InventoryService(session, principal).create_warehouse(
+            code=payload.code,
+            name=payload.name,
+            country_code=payload.country_code,
+            timezone=payload.timezone,
+        )
+    except (AuthorizationError, InventoryConflictError, InventoryValidationError) as exc:
+        raise inventory_http_error(exc) from exc
+    return warehouse_dict(warehouse)
+
+
+@app.get("/api/v2/inventory/warehouses")
+def list_v2_warehouses(
+    active: bool | None = None,
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = InventoryService(session, principal).list_warehouses(
+            active=active,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, InventoryValidationError) as exc:
+        raise inventory_http_error(exc) from exc
+    return [warehouse_dict(item) for item in items]
+
+
+@app.get("/api/v2/inventory/physical")
+def list_v2_physical_inventory(
+    warehouse_id: int | None = Query(default=None, gt=0),
+    master_sku_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = InventoryService(session, principal).list_warehouse_inventory(
+            warehouse_id=warehouse_id,
+            master_sku_id=master_sku_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, InventoryNotFoundError, InventoryValidationError) as exc:
+        raise inventory_http_error(exc) from exc
+    return [warehouse_inventory_dict(item) for item in items]
+
+
+@app.get("/api/v2/inventory/channels")
+def list_v2_channel_inventory(
+    shop_id: int | None = Query(default=None, gt=0),
+    master_sku_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = InventoryService(session, principal).list_channel_inventory(
+            shop_id=shop_id,
+            master_sku_id=master_sku_id,
+            after_id=after_id,
+            limit=limit,
+        )
+    except (AuthorizationError, InventoryNotFoundError, InventoryValidationError) as exc:
+        raise inventory_http_error(exc) from exc
+    return [channel_inventory_dict(item) for item in items]
+
+
+@app.get("/api/v2/inventory/risk")
+def get_v2_inventory_risk(
+    master_sku_id: int = Query(gt=0),
+    shop_id: int | None = Query(default=None, gt=0),
+    as_of: datetime | None = None,
+    sales_window_days: int = Query(default=7, ge=1, le=90),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return InventoryService(session, principal).inventory_risk(
+            master_sku_id=master_sku_id,
+            shop_id=shop_id,
+            as_of=as_of or utcnow(),
+            sales_window_days=sales_window_days,
+        )
+    except (AuthorizationError, InventoryNotFoundError, InventoryValidationError) as exc:
+        raise inventory_http_error(exc) from exc
+
+
+@app.patch("/api/v2/shops/{shop_id}/status")
+def update_v2_shop_status(
+    shop_id: int,
+    payload: ShopStatusUpdate,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    from commerce.models import ShopStatus
+
+    try:
+        shop = ShopService(session, principal).update_status(shop_id, ShopStatus(payload.status))
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "id": shop.id,
+        "organization_id": shop.organization_id,
+        "status": shop.status.value,
+    }
+
+
+@app.post("/api/v2/shops/{shop_id}/credentials")
+async def upsert_v2_shop_credential(
+    shop_id: int,
+    request: Request,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "店铺凭据请求无效") from exc
+    credential_type, payload, expires_at = _parse_credential_request(body)
+    try:
+        credential = _credential_service(session, principal).upsert(
+            shop_id=shop_id,
+            credential_type=credential_type,
+            payload=payload,
+            expires_at=expires_at,
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(403, "无权管理该店铺凭据") from exc
+    except ValueError as exc:
+        raise HTTPException(400, "店铺凭据请求无效") from exc
+    return CredentialService.metadata(credential)
+
+
+@app.get("/api/v2/shops/{shop_id}/credentials")
+def list_v2_shop_credentials(
+    shop_id: int,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        credentials = _credential_service(session, principal).list_for_shop(shop_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, "无权管理该店铺凭据") from exc
+    return [CredentialService.metadata(item) for item in credentials]
+
+
+@app.post("/api/v2/credentials/{credential_id}/rotate")
+def rotate_v2_shop_credential(
+    credential_id: int,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        credential = _credential_service(session, principal).rotate_encryption(credential_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, "无权管理该店铺凭据") from exc
+    except CredentialUnavailableError as exc:
+        raise HTTPException(409, "店铺凭据不可用") from exc
+    return CredentialService.metadata(credential)
+
+
+@app.post("/api/v2/credentials/{credential_id}/revoke")
+def revoke_v2_shop_credential(
+    credential_id: int,
+    principal: Principal = Depends(require_v2_shop_manager),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        credential = _credential_service(session, principal).revoke(credential_id)
+    except AuthorizationError as exc:
+        raise HTTPException(403, "无权管理该店铺凭据") from exc
+    except CredentialUnavailableError as exc:
+        raise HTTPException(409, "店铺凭据不可用") from exc
+    return CredentialService.metadata(credential)
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
@@ -79,7 +1311,8 @@ def chat(
     require_operator(x_operator_key)
     session_id = payload.session_id or str(uuid4())
     message = payload.message
-    tools = CommerceTools(session, AS_OF, session_id, use_service_apis=True)
+    as_of = utcnow()
+    tools = CommerceTools(session, as_of, session_id, use_service_apis=True)
     model_tools = [
         item for item in tools.langchain_tools() if getattr(item, "name", "") != "run_crawler"
     ]
@@ -91,10 +1324,16 @@ def chat(
         raise HTTPException(504, "云模型请求超时，请稍后重试") from exc
     except LLMServiceError as exc:
         raise HTTPException(502, "云模型当前不可用，请稍后重试") from exc
+    except RuntimeConfigurationError as exc:
+        raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, "云模型当前不可用，请稍后重试") from exc
     if model_result is not None:
-        if "A102" in message.upper() and ("下降" in message or "下滑" in message):
+        if (
+            get_settings().allows_fixtures
+            and "A102" in message.upper()
+            and ("下降" in message or "下滑" in message)
+        ):
             required = model_result.tool_results
             sales = cast(dict[str, object], required["get_sku_sales"])
             ads = cast(dict[str, object], required["get_advertising_data"])
@@ -130,7 +1369,7 @@ def chat(
             approval = create_purchase_draft(
                 session,
                 sku_match.group(0),
-                AS_OF,
+                as_of,
                 f"{model_result.provider}-agent",
                 idempotency_key,
             )
@@ -166,7 +1405,11 @@ def chat(
             llm_provider=model_result.provider,
             llm_model=model_result.model,
         )
-    if "A102" in message and ("下降" in message or "为什么" in message):
+    if (
+        get_settings().allows_fixtures
+        and "A102" in message
+        and ("下降" in message or "为什么" in message)
+    ):
         result = tools.combined_a102()
         return ChatResponse(
             session_id=session_id,
@@ -178,9 +1421,13 @@ def chat(
             ],
             tool_calls=[ToolCallRecord.model_validate(item) for item in tools.trace],
         )
-    if "B205" in message and ("补货" in message or "采购" in message or "创建" in message):
+    if (
+        get_settings().allows_fixtures
+        and "B205" in message
+        and ("补货" in message or "采购" in message or "创建" in message)
+    ):
         idempotency_key = payload.idempotency_key or f"chat:{session_id}:purchase:B205"
-        approval = create_purchase_draft(session, "B205", AS_OF, "agent-user", idempotency_key)
+        approval = create_purchase_draft(session, "B205", as_of, "agent-user", idempotency_key)
         data = approval.action_data
         return ChatResponse(
             session_id=session_id,
@@ -197,7 +1444,7 @@ def chat(
             ],
         )
     if "缺货" in message or "库存" in message:
-        alerts = inventory_alerts(session, AS_OF)
+        alerts = inventory_alerts(session, as_of)
         critical = [
             row
             for row in alerts
@@ -218,6 +1465,12 @@ def chat(
             ],
         )
     if "负面" in message or "差评" in message:
+        if not get_settings().allows_fixtures:
+            return ChatResponse(
+                session_id=session_id,
+                intent="market_intelligence_unavailable",
+                answer="请先配置并同步明确的真实竞品数据，再进行评论分析。",
+            )
         analysis = negative_comment_topics(session, "COMP-B")
         topics = cast(list[dict[str, object]], analysis["topics"])
         summary = "、".join(f"{item['topic']} {item['percentage']}%" for item in topics)
@@ -236,7 +1489,7 @@ def chat(
             ],
         )
     if "经营" in message or "日报" in message:
-        report_data = daily_report(session, AS_OF)
+        report_data = daily_report(session, as_of)
         business = cast(dict[str, float], report_data["business"])
         return ChatResponse(
             session_id=session_id,
@@ -257,10 +1510,13 @@ def chat(
         days_match = re.search(r"(?:近|最近)(\d+)天", message)
         days = int(days_match.group(1)) if days_match else (1 if "今天" in message else 7)
         tool_map = {item.name: item for item in tools.langchain_tools()}  # type: ignore[attr-defined]
-        sales_result = cast(
-            dict[str, object],
-            tool_map["get_sales_summary"].invoke({"sku": sku, "days": days}),  # type: ignore[attr-defined]
-        )
+        try:
+            sales_result = cast(
+                dict[str, object],
+                tool_map["get_sales_summary"].invoke({"sku": sku, "days": days}),  # type: ignore[attr-defined]
+            )
+        except RuntimeConfigurationError as exc:
+            raise HTTPException(503, str(exc)) from exc
         if sku:
             answer = (
                 f"{sku} 最近{days}天销售 {sales_result['units']} 件，销售额 ¥{sales_result['gross_sales']}，"
@@ -284,32 +1540,33 @@ def chat(
     return ChatResponse(
         session_id=session_id,
         intent="help",
-        answer="可询问经营情况、A102 销量下降、未来三天缺货、竞品评论或创建 B205 补货单。",
+        answer="可询问经营指标、订单、库存风险、退款、利润或已同步的市场情报。",
     )
 
 
 @app.get("/api/dashboard")
 def dashboard(session: Session = Depends(get_session)) -> dict[str, object]:
-    metrics = finance_summary(session, AS_OF - timedelta(days=1), AS_OF + timedelta(seconds=1))
-    anomalies = business_anomalies(session, AS_OF)
+    as_of = utcnow()
+    metrics = finance_summary(session, as_of - timedelta(days=1), as_of + timedelta(seconds=1))
+    anomalies = business_anomalies(session, as_of)
     order_count = session.scalar(
         select(func.count(Order.id)).where(
-            Order.ordered_at >= AS_OF - timedelta(days=1),
-            Order.ordered_at < AS_OF + timedelta(seconds=1),
+            Order.ordered_at >= as_of - timedelta(days=1),
+            Order.ordered_at < as_of + timedelta(seconds=1),
         )
     )
     return {
         **{k: float(v) for k, v in metrics.to_dict().items()},
-        "inventory_alerts": inventory_alerts(session, AS_OF),
+        "inventory_alerts": inventory_alerts(session, as_of),
         "market_anomalies": len(anomalies),
         "order_count": int(order_count or 0),
-        "as_of": AS_OF,
+        "as_of": as_of,
     }
 
 
 @app.get("/api/inventory/alerts")
 def alerts(session: Session = Depends(get_session)) -> list[dict[str, object]]:
-    return inventory_alerts(session, AS_OF)
+    return inventory_alerts(session, utcnow())
 
 
 @app.get("/api/competitors/products")
@@ -319,8 +1576,13 @@ def competitors(session: Session = Depends(get_session)) -> list[dict[str, objec
 
 @app.get("/api/competitors/comments/analysis")
 def comments_analysis(
-    target_id: str = "COMP-B", session: Session = Depends(get_session)
+    target_id: str | None = None, session: Session = Depends(get_session)
 ) -> dict[str, object]:
+    if not target_id:
+        if get_settings().allows_fixtures:
+            target_id = "COMP-B"
+        else:
+            raise HTTPException(422, "评论分析需要明确的真实竞品标识")
     return negative_comment_topics(session, target_id)
 
 
@@ -366,7 +1628,7 @@ def competitor_comments(session: Session = Depends(get_session)) -> list[dict[st
 
 @app.get("/api/reports/daily")
 def report(session: Session = Depends(get_session)) -> dict[str, object]:
-    return daily_report(session, AS_OF)
+    return daily_report(session, utcnow())
 
 
 @app.get("/api/crawler/tasks")
@@ -478,11 +1740,15 @@ def run_crawler(
     if source not in {"products", "contents", "comments", "dynamic"}:
         raise HTTPException(400, "不支持的受控采集来源")
     settings = get_settings()
+    try:
+        crawler_base_url = settings.require_service("crawler")
+    except RuntimeConfigurationError as exc:
+        raise HTTPException(503, str(exc)) from exc
     import httpx
 
     try:
         response = httpx.post(
-            f"{settings.crawler_base_url}/crawler/{source}",
+            f"{crawler_base_url}/crawler/{source}",
             headers={"X-Crawler-Token": settings.crawler_service_token},
             timeout=120,
         )

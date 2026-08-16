@@ -7,12 +7,15 @@ from typing import cast
 
 from sqlalchemy.orm import Session
 
+from commerce.config import get_settings
 from commerce.services.business import advertising_summary, product, sku_sales
 from commerce.services.marketing import competitor_price_change, content_trend, percentage_change
 from commerce.time_windows import trailing_windows
 
 
 def analyze_a102(session: Session, as_of: datetime) -> dict[str, object]:
+    if not get_settings().allows_fixtures:
+        raise RuntimeError("固定 Demo 联合分析仅允许在 test/demo 运行模式使用")
     sku = "A102"
     previous_start, current_start, end = trailing_windows(as_of)
     recent_sales = sku_sales(session, sku, current_start, end)

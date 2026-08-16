@@ -2,10 +2,26 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
+
+from commerce.config import get_settings
 
 app = FastAPI(title="Mock Competitor Website", version="0.1.0")
+
+
+@app.middleware("http")
+async def reject_production_runtime(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    if get_settings().is_production:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "Mock competitor site 仅允许在 development/test/demo 运行模式使用"},
+        )
+    return await call_next(request)
 
 
 def product_rows(page: int, page_size: int) -> list[dict[str, object]]:

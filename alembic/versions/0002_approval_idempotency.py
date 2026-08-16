@@ -19,11 +19,18 @@ def upgrade() -> None:
             "approval_tasks",
             sa.Column("idempotency_key", sa.String(length=128), nullable=True),
         )
-    op.execute(
-        "UPDATE approval_tasks "
-        "SET idempotency_key = CONCAT('legacy-approval-', id) "
-        "WHERE idempotency_key IS NULL"
-    )
+    if bind.dialect.name == "sqlite":
+        op.execute(
+            "UPDATE approval_tasks "
+            "SET idempotency_key = 'legacy-approval-' || CAST(id AS TEXT) "
+            "WHERE idempotency_key IS NULL"
+        )
+    else:
+        op.execute(
+            "UPDATE approval_tasks "
+            "SET idempotency_key = CONCAT('legacy-approval-', id) "
+            "WHERE idempotency_key IS NULL"
+        )
     column = next(
         item
         for item in sa.inspect(bind).get_columns("approval_tasks")

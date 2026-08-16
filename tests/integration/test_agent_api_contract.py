@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +17,7 @@ from commerce.seed import reset_and_seed
 
 
 @pytest.fixture
-def agent_client(db_session: Session) -> TestClient:
+def agent_client(db_session: Session) -> Generator[TestClient, None, None]:
     reset_and_seed(db_session, order_count=1000)
     settings = get_settings()
     settings.operator_api_key = "valid-operator"
@@ -38,10 +40,12 @@ def test_protected_agent_routes_reject_operator_gracefully(
         ("get", "/api/operations"),
         ("post", "/api/crawler/run/products"),
     ):
-        kwargs = {"headers": headers}
-        if path == "/api/chat":
-            kwargs["json"] = {"message": "经营情况"}
-        response = getattr(agent_client, method)(path, **kwargs)
+        response = agent_client.request(
+            method.upper(),
+            path,
+            headers=headers,
+            json={"message": "经营情况"} if path == "/api/chat" else None,
+        )
         assert response.status_code == 403
         assert response.json() == {"detail": "操作员凭据无效"}
 
@@ -53,6 +57,33 @@ def test_valid_operator_can_read_protected_contracts(agent_client: TestClient) -
     chat = agent_client.post("/api/chat", json={"message": "经营情况"}, headers=headers)
     assert chat.status_code == 200
     assert chat.json()["answer"]
+
+
+def test_model_never_receives_crawler_side_effect_tool(
+    agent_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured_names: set[str] = set()
+
+    def fake_loop(message: str, tools: list[object]) -> AgentStructuredResult:
+        captured_names.update(getattr(item, "name", "") for item in tools)
+        return AgentStructuredResult(
+            intent="help",
+            answer="受控回答",
+            evidence=[],
+            provider="offline",
+            model="",
+        )
+
+    monkeypatch.setattr("commerce.agent_api.run_model_tool_loop", fake_loop)
+    response = agent_client.post(
+        "/api/chat",
+        json={"message": "经营情况"},
+        headers={"X-Operator-Key": "valid-operator"},
+    )
+
+    assert response.status_code == 200
+    assert "run_crawler" not in captured_names
+    assert captured_names
 
 
 @pytest.mark.parametrize(

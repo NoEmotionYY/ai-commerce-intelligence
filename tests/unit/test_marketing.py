@@ -1,3 +1,5 @@
+from typing import cast
+
 from sqlalchemy.orm import Session
 
 from commerce.seed import AS_OF, reset_and_seed
@@ -9,10 +11,12 @@ from commerce.tools import CommerceTools
 def test_a102_combined_analysis_uses_required_evidence(db_session: Session) -> None:
     reset_and_seed(db_session, order_count=1000)
     result = analyze_a102(db_session, AS_OF)
-    sources = {item["source"] for item in result["evidence"]}
+    evidence = cast(list[dict[str, object]], result["evidence"])
+    answer = cast(str, result["answer"])
+    sources = {item["source"] for item in evidence}
     assert sources == {"ERP订单", "ERP广告", "ERP商品", "Crawler竞品价格历史", "Crawler竞品内容"}
-    assert "15W快充" in result["answer"]
-    assert "因果" in result["answer"]
+    assert "15W快充" in answer
+    assert "因果" in answer
 
 
 def test_combined_agent_trace_represents_real_calls(db_session: Session) -> None:
@@ -45,16 +49,19 @@ def test_a102_answer_depends_on_tool_outputs(db_session: Session) -> None:
 
     tools._service_get = fake_service  # type: ignore[method-assign]
     result = tools.combined_a102()
-    assert "50.0%" in result["answer"]
-    assert "¥777.00" in {item["value"] for item in result["evidence"]}
-    assert "测试卖点" in result["answer"]
+    evidence = cast(list[dict[str, object]], result["evidence"])
+    answer = cast(str, result["answer"])
+    assert "50.0%" in answer
+    assert "¥777.00" in {item["value"] for item in evidence}
+    assert "测试卖点" in answer
 
 
 def test_negative_comment_topics_are_counted_in_python(db_session: Session) -> None:
     reset_and_seed(db_session, order_count=1000)
     result = negative_comment_topics(db_session, "COMP-B")
     assert result["analyzed_comments"] == 900
-    assert {topic["topic"] for topic in result["topics"]} == {"固定问题", "发热问题", "兼容问题"}
+    topics = cast(list[dict[str, object]], result["topics"])
+    assert {topic["topic"] for topic in topics} == {"固定问题", "发热问题", "兼容问题"}
 
 
 def test_order_and_sales_tools_are_registered(db_session: Session) -> None:

@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from commerce.config import Settings
-from commerce.llm_provider import LLMConfigurationError, OfflineProvider, get_llm_provider
+from commerce.llm_provider import (
+    LLMConfigurationError,
+    LLMProvider,
+    OfflineProvider,
+    get_llm_provider,
+)
 
 
 def settings(**overrides: object) -> Settings:
@@ -13,7 +18,8 @@ def settings(**overrides: object) -> Settings:
 def test_offline_provider_never_creates_cloud_model() -> None:
     provider = get_llm_provider(settings(llm_provider="offline"))
     assert isinstance(provider, OfflineProvider)
-    assert provider.create_chat_model() is None
+    provider_interface: LLMProvider = provider
+    assert provider_interface.create_chat_model() is None
 
 
 def test_deepseek_provider_uses_official_endpoint_and_configured_model() -> None:

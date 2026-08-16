@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 
 from sqlalchemy.orm import Session
 
@@ -15,8 +16,10 @@ def test_anomalies_and_daily_report_come_from_seeded_data(db_session: Session) -
     assert any(row["sku"] == "A102" and row["type"] == "SALES" for row in anomalies)
     assert any(row["sku"] == "B205" and row["type"] == "INVENTORY" for row in anomalies)
     report = daily_report(db_session, AS_OF)
-    assert report["competitor_price"]["change_pct"] < 0
-    assert report["comment_topics"]["analyzed_comments"] == 900
+    competitor_price = cast(dict[str, float], report["competitor_price"])
+    comment_topics = cast(dict[str, object], report["comment_topics"])
+    assert competitor_price["change_pct"] < 0
+    assert comment_topics["analyzed_comments"] == 900
 
 
 def test_finance_excludes_cancelled_and_counts_order_costs_once(db_session: Session) -> None:

@@ -743,3 +743,59 @@ Real completion requires sustained workflows using real or faithfully imported c
 - mock verification;
 - sandbox verification;
 - real-platform verification.
+
+---
+
+## 36. Tenant and Membership Semantics
+
+The future production model is organization-scoped:
+
+- `Organization` owns merchant data and operational policy.
+- `User` is a platform identity and may belong to multiple organizations.
+- `OrganizationMembership` links a user to an organization and carries role and status.
+- `Shop` belongs to exactly one organization and represents one authorized platform shop.
+
+Initial roles are `OWNER`, `OPERATOR`, and `APPROVER`. Future authorization must be
+permission-based and centralized; business services must not scatter role-string checks
+throughout the codebase. Every business read and write must resolve organization and shop
+scope before accessing data.
+
+---
+
+## 37. Financial and Temporal Semantics
+
+Authoritative monetary values use decimal or database numeric types, never binary floating
+point. Financial records must carry or resolve:
+
+- amount and currency;
+- exchange rate, effective time, and source;
+- `ordered_at`, `paid_at`, `shipped_at`, `delivered_at`, `refunded_at`, and `settled_at`;
+- platform fees, refunds, logistics, advertising, and settlement references.
+
+Estimated profit is an operational estimate before settlement. Actual/settled profit is
+based on settled platform data and actual costs. Historical results must retain the cost,
+exchange rate, platform fee, refund, logistics, advertising, and settlement inputs used at
+calculation time. Later cost or exchange-rate changes must not silently rewrite history.
+
+---
+
+## 38. Data Import and Trust Boundary
+
+Production data may enter through Platform API, Webhook, CSV, or XLSX. Platform data must
+follow:
+
+`External Source -> PlatformRawEvent -> validate/normalize/deduplicate -> unified domain model`
+
+Raw payloads are recoverable evidence, not authoritative business entities. CSV/XLSX imports
+must provide preview, validation errors, source identity, and idempotency where feasible.
+
+---
+
+## 39. V2 Completion Gate
+
+V2 is not complete because tests, a Demo E2E, or Streamlit startup succeeds. Completion
+requires all mandatory P0 and P1 tasks to be `DONE`, no unexplained `PARTIAL` or internal
+`MISSING` acceptance item, verified migrations, tenant isolation, permission/security,
+credential-leakage tests, API integration, workflow, Compose, and browser E2E evidence.
+Only explicitly unavailable real-platform approvals, seller authorization, credentials, or
+platform environments may remain `BLOCKED_EXTERNAL`.

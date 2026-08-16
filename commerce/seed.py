@@ -7,6 +7,7 @@ from decimal import Decimal
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from commerce.config import RuntimeConfigurationError, get_settings
 from commerce.models import (
     Advertising,
     AgentSession,
@@ -30,6 +31,10 @@ AS_OF = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
 
 def reset_and_seed(session: Session, *, order_count: int = 10000) -> None:
+    if not get_settings().allows_fixtures:
+        raise RuntimeConfigurationError(
+            "种子数据仅允许在 test、demo 或显式开启 fixture 的 development 模式运行"
+        )
     for model in (
         PurchaseOrder,
         WorkflowCheckpoint,

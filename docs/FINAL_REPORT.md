@@ -1,8 +1,15 @@
-# 最终验收报告
+# V1 / Demo Historical Verification Evidence
+
+> This report records historical V1/Demo verification only. It is not evidence that AI
+> Commerce Operations Copilot V2 is COMPLETE. V2 requires the mandatory P0/P1 acceptance,
+> migration, tenant isolation, permission, credential, API, workflow, Compose, browser, and
+> real-data gates defined in `docs/ACCEPTANCE.md`.
+
+# 历史验收报告
 
 ## 结论
 
-项目于 2026-08-14 完成 DeepSeek 真实云模型 Tool Calling 验收，并在保留离线确定性路径的前提下恢复 `COMPLETE`。
+项目于 2026-08-14 完成 V1/Demo 的 DeepSeek 真实云模型 Tool Calling 验收；该历史结论不适用于 V2，V2 当前状态为 `NOT_COMPLETE`。
 
 本报告只记录实际执行的检查。DeepSeek 密钥仅从本地环境加载，未写入源码、日志、界面、Git 或本报告。
 

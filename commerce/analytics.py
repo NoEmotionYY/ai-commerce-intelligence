@@ -87,6 +87,18 @@ class InventoryMetrics:
     risk: InventoryRisk
 
 
+@dataclass(frozen=True)
+class InventoryCoverageMetrics:
+    available_stock: int
+    incoming_stock: int
+    projected_stock: int
+    daily_sales: Decimal
+    days_of_stock: Decimal | None
+    projected_days_of_stock: Decimal | None
+    risk: InventoryRisk
+    projected_risk: InventoryRisk
+
+
 def classify_inventory_risk(days_of_stock: Decimal | None) -> InventoryRisk:
     if days_of_stock is None or days_of_stock > Decimal("14"):
         return InventoryRisk.NORMAL
@@ -106,6 +118,40 @@ def calculate_inventory_metrics(stock: int, reserved_stock: int, sales_7d: int) 
     )
     return InventoryMetrics(
         available, daily_sales, displayed_days, classify_inventory_risk(raw_days)
+    )
+
+
+def calculate_inventory_coverage(
+    *,
+    available_stock: int,
+    incoming_stock: int,
+    sales_units: int,
+    window_days: int,
+) -> InventoryCoverageMetrics:
+    if min(available_stock, incoming_stock, sales_units) < 0:
+        raise ValueError("inventory coverage inputs cannot be negative")
+    if not 1 <= window_days <= 90:
+        raise ValueError("inventory coverage window must be between 1 and 90 days")
+    raw_daily_sales = Decimal(sales_units) / Decimal(window_days)
+    daily_sales = raw_daily_sales.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    projected_stock = available_stock + incoming_stock
+    raw_days = None if raw_daily_sales == 0 else Decimal(available_stock) / raw_daily_sales
+    raw_projected_days = (
+        None if raw_daily_sales == 0 else Decimal(projected_stock) / raw_daily_sales
+    )
+
+    def display(value: Decimal | None) -> Decimal | None:
+        return None if value is None else value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+    return InventoryCoverageMetrics(
+        available_stock=available_stock,
+        incoming_stock=incoming_stock,
+        projected_stock=projected_stock,
+        daily_sales=daily_sales,
+        days_of_stock=display(raw_days),
+        projected_days_of_stock=display(raw_projected_days),
+        risk=classify_inventory_risk(raw_days),
+        projected_risk=classify_inventory_risk(raw_projected_days),
     )
 
 

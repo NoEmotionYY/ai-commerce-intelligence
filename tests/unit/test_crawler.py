@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import httpx
 import pytest
@@ -41,7 +42,7 @@ async def test_crawler_failure_is_persisted(db_session: object) -> None:
     manager = CrawlerManager(db_session, settings)  # type: ignore[arg-type]
     task = manager.create_task("products_json", "http://mock-competitor-site:8003/api/products")
 
-    async def fail(url: str, pages: int) -> list[dict[str, object]]:
+    async def fail(url: str, max_pages: int) -> list[dict[str, Any]]:
         raise httpx.ReadTimeout("测试超时")
 
     manager._json_pages = fail  # type: ignore[method-assign]
@@ -61,7 +62,7 @@ async def test_crawler_persists_running_before_work_finishes(db_session: Session
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def gated(url: str, pages: int) -> list[dict[str, object]]:
+    async def gated(url: str, max_pages: int) -> list[dict[str, Any]]:
         entered.set()
         await release.wait()
         return []
