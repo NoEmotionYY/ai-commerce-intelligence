@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     douyin_max_attempts: int = Field(default=2, ge=1, le=2)
     douyin_sync_deadline_seconds: float = Field(default=20.0, ge=5.0, le=60.0)
     douyin_webhook_applications: str = Field(default="", repr=False)
+    tiktok_shop_api_base_url: str = "https://open-api.tiktokglobalshop.com"
+    tiktok_shop_token_base_url: str = "https://auth.tiktok-shops.com"
+    tiktok_shop_max_attempts: int = Field(default=2, ge=1, le=2)
+    tiktok_shop_sync_deadline_seconds: float = Field(default=20.0, ge=5.0, le=60.0)
     allowed_crawler_hosts: str = "localhost,127.0.0.1,mock-competitor-site"
     agent_api_url: str = "http://localhost:8000"
     llm_provider: Literal["offline", "deepseek", "openai"] = "offline"

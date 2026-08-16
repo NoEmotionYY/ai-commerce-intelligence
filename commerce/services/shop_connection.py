@@ -419,7 +419,7 @@ class ShopConnectionService:
         capability_code: str,
         *,
         for_update: bool = False,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> ShopCapability:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         shop = self._shop(shop_id, require_active=False, for_update=for_update)
@@ -442,11 +442,12 @@ class ShopConnectionService:
             ) from exc
         normalized_code = self._normalize_capability(capability_code)
         connection = self._connection(shop, create=False, for_update=for_update)
-        douyin_refresh_path = (
-            allow_douyin_token_refresh and shop.platform.strip().upper() == "DOUYIN"
-        )
+        platform_refresh_path = allow_platform_token_refresh and shop.platform.strip().upper() in {
+            "DOUYIN",
+            "TIKTOK_SHOP",
+        }
         refreshable_reauth = (
-            douyin_refresh_path
+            platform_refresh_path
             and connection is not None
             and connection.authorization_status is ShopAuthorizationStatus.REAUTH_REQUIRED
             and connection.authorization_error_code == "CREDENTIAL_EXPIRED"
@@ -486,7 +487,7 @@ class ShopConnectionService:
             expires_at = expires_at.replace(tzinfo=UTC)
         token_expired = expires_at is not None and expires_at <= utcnow()
         refreshable_status = (
-            douyin_refresh_path
+            platform_refresh_path
             and required_type == "OAUTH"
             and credential.status in {CredentialStatus.ACTIVE, CredentialStatus.EXPIRED}
             and (credential.status is CredentialStatus.EXPIRED or token_expired)

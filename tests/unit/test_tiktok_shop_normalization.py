@@ -193,7 +193,10 @@ def test_finance_normalization_emits_explicit_components_without_fake_settlement
         "DEBIT",
         "CREDIT",
     ]
-    assert all(item.snapshot.external_settlement_id == "ST-1" for item in transactions)
+    assert all(item.snapshot.external_settlement_id is None for item in transactions)
+    assert all(
+        item.snapshot.external_transaction_id.startswith("ST-1:TX-1:") for item in transactions
+    )
     assert all(item.snapshot.exchange_rate == "1" for item in transactions)
 
 

@@ -70,6 +70,7 @@ class TikTokShopCredentials:
     access_token: str = field(repr=False)
     shop_cipher: str = field(repr=False)
     refresh_token: str | None = field(default=None, repr=False)
+    refresh_token_expires_at: int | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return "TikTokShopCredentials(<redacted>)"
@@ -95,12 +96,25 @@ class TikTokShopCredentials:
                 "TikTok Shop 店铺凭据不完整",
                 error_code="TIKTOK_CREDENTIAL_INVALID",
             )
+        refresh_expiry_value = payload.get("refresh_token_expires_at")
+        refresh_expiry: int | None = None
+        if refresh_expiry_value is not None:
+            try:
+                refresh_expiry = int(refresh_expiry_value)
+            except (TypeError, ValueError):
+                refresh_expiry = None
+            if refresh_expiry is None or refresh_expiry <= 0:
+                raise TikTokShopAuthenticationError(
+                    "TikTok Shop 店铺凭据不完整",
+                    error_code="TIKTOK_CREDENTIAL_INVALID",
+                )
         return cls(
             app_key=values["app_key"],
             app_secret=values["app_secret"],
             access_token=values["access_token"],
             shop_cipher=values["shop_cipher"],
             refresh_token=refresh_token.strip() if refresh_token else None,
+            refresh_token_expires_at=refresh_expiry,
         )
 
 

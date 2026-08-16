@@ -183,6 +183,22 @@ class DouyinSyncRun(SyncInput):
     max_pages: int = Field(default=10, ge=1, le=10)
 
 
+class TikTokShopSyncRun(SyncInput):
+    shop_id: int = Field(gt=0)
+    job_type: Literal[
+        "PRODUCTS.PULL",
+        "ORDERS.PULL",
+        "INVENTORY.PULL",
+        "REFUNDS.PULL",
+        "FINANCE.PULL",
+    ]
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    page_size: int = Field(default=100, ge=1, le=100)
+    max_pages: int = Field(default=10, ge=1, le=10)
+
+
 class RawEventCreate(SyncInput):
     shop_id: int = Field(gt=0)
     sync_job_id: int = Field(gt=0)

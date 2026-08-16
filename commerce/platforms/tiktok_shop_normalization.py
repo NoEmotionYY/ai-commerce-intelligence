@@ -287,7 +287,9 @@ def normalize_statement_transactions(
             results.append(
                 TikTokShopNormalizedFinanceTransaction(
                     snapshot=FinanceTransactionSnapshotInput(
-                        external_transaction_id=f"{transaction_id}:{field_name.upper()}",
+                        external_transaction_id=(
+                            f"{statement_id}:{transaction_id}:{field_name.upper()}"
+                        ),
                         transaction_type=transaction_type,
                         direction=direction,
                         amount=amount,
@@ -298,7 +300,7 @@ def normalize_statement_transactions(
                         exchange_rate_source="TIKTOK_SHOP_IDENTITY_RATE",
                         occurred_at=occurred_at,
                         external_order_id=external_order_id,
-                        external_settlement_id=statement_id,
+                        external_settlement_id=None,
                     ),
                     updated_at=statement_time,
                 )

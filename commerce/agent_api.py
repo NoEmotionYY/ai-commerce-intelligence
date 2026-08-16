@@ -114,6 +114,7 @@ from commerce.schemas import (
     SyncCheckpointUpdate,
     SyncJobCreate,
     SyncJobFinish,
+    TikTokShopSyncRun,
     ToolCallRecord,
     WarehouseCreate,
 )
@@ -184,6 +185,12 @@ from commerce.services.shop_connection import (
     ShopConnectionUnavailableError,
     ShopConnectionValidationError,
 )
+from commerce.services.tiktok_shop_sync import (
+    TikTokShopSyncExecutionError,
+    TikTokShopSyncResult,
+    TikTokShopSyncService,
+    TikTokShopSyncValidationError,
+)
 from commerce.tools import CommerceTools
 from commerce.workflow import create_purchase_draft, decide_approval, execute_approved_purchase
 
@@ -200,8 +207,10 @@ MAX_SYNC_REQUEST_BYTES = 1_100_000
 MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 256_000
 DOUYIN_SYNC_MAX_CONCURRENCY = 2
 DOUYIN_WEBHOOK_MAX_CONCURRENCY = 8
+TIKTOK_SHOP_SYNC_MAX_CONCURRENCY = 2
 _douyin_sync_admission = threading.BoundedSemaphore(DOUYIN_SYNC_MAX_CONCURRENCY)
 _douyin_webhook_admission = threading.BoundedSemaphore(DOUYIN_WEBHOOK_MAX_CONCURRENCY)
+_tiktok_shop_sync_admission = threading.BoundedSemaphore(TIKTOK_SHOP_SYNC_MAX_CONCURRENCY)
 
 
 @app.exception_handler(RequestValidationError)
@@ -231,7 +240,7 @@ async def enforce_production_tenant_api_boundary(
             "/api/v2/raw-events",
             "/api/v2/sync-jobs",
             "/api/v2/imports",
-            "/api/v2/platforms/douyin/webhook",
+            "/api/v2/platforms/",
         )
     ):
         max_bytes = (
@@ -918,6 +927,53 @@ def _douyin_webhook_service(session: Session) -> DouyinWebhookService:
     return DouyinWebhookService(session, cipher, applications)
 
 
+def tiktok_shop_sync_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, TikTokShopSyncValidationError):
+        return HTTPException(400, str(exc))
+    if isinstance(exc, (IngestionConflictError, IngestionTransitionError)):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, (CredentialConfigurationError, CredentialUnavailableError)):
+        return HTTPException(503, "TikTok Shop 店铺凭据服务不可用")
+    if isinstance(exc, TikTokShopSyncExecutionError):
+        if exc.error_code == "TIKTOK_JOB_RETRY_REQUIRED":
+            status = 409
+        elif exc.error_code in {
+            "TIKTOK_CREDENTIAL_MISSING",
+            "TIKTOK_CREDENTIAL_UNAVAILABLE",
+            "TIKTOK_REFRESH_TOKEN_MISSING",
+            "TIKTOK_REFRESH_TOKEN_EXPIRED",
+        }:
+            status = 503
+        else:
+            status = 502
+        return HTTPException(status, {"message": str(exc), "error_code": exc.error_code})
+    if isinstance(exc, IngestionValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "TikTok Shop 同步服务失败")
+
+
+def tiktok_shop_sync_result_dict(item: TikTokShopSyncResult) -> dict[str, object]:
+    return {
+        "sync_job_id": item.sync_job_id,
+        "status": item.status.value,
+        "pages": item.pages,
+        "received": item.received,
+        "processed": item.processed,
+        "failed": item.failed,
+        "checkpoint": item.checkpoint,
+    }
+
+
+def _tiktok_shop_sync_service(session: Session, principal: Principal) -> TikTokShopSyncService:
+    try:
+        cipher = CredentialCipher.from_settings(get_settings())
+    except CredentialConfigurationError as exc:
+        raise HTTPException(503, "店铺凭据加密服务未配置") from exc
+    return TikTokShopSyncService(session, principal, cipher)
+
+
 def order_import_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AuthorizationError):
         return HTTPException(403, str(exc))
@@ -1401,6 +1457,33 @@ async def receive_v2_douyin_webhook(
     finally:
         _douyin_webhook_admission.release()
     return {"code": 0, "msg": "success"}
+
+
+@app.post("/api/v2/platforms/tiktok-shop/sync")
+def run_v2_tiktok_shop_sync(
+    payload: TikTokShopSyncRun,
+    principal: Principal = Depends(require_v2_sync_operator),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    if not _tiktok_shop_sync_admission.acquire(blocking=False):
+        raise HTTPException(429, "TikTok Shop 同步服务繁忙", headers={"Retry-After": "5"})
+    try:
+        try:
+            result = _tiktok_shop_sync_service(session, principal).run(**payload.model_dump())
+        except (
+            AuthorizationError,
+            CredentialConfigurationError,
+            CredentialUnavailableError,
+            IngestionConflictError,
+            IngestionTransitionError,
+            IngestionValidationError,
+            TikTokShopSyncExecutionError,
+            TikTokShopSyncValidationError,
+        ) as exc:
+            raise tiktok_shop_sync_http_error(exc) from exc
+    finally:
+        _tiktok_shop_sync_admission.release()
+    return tiktok_shop_sync_result_dict(result)
 
 
 @app.post("/api/v2/sync-jobs/{job_id}/start")

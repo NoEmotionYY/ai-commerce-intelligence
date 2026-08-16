@@ -188,14 +188,14 @@ class IngestionService:
         capability_code: str,
         *,
         for_update: bool = False,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> None:
         try:
             ShopConnectionService(self.session, self.principal).assert_sync_ready(
                 shop_id,
                 capability_code,
                 for_update=for_update,
-                allow_douyin_token_refresh=allow_douyin_token_refresh,
+                allow_platform_token_refresh=allow_platform_token_refresh,
             )
         except ShopConnectionUnavailableError as exc:
             raise IngestionTransitionError(str(exc)) from exc
@@ -237,7 +237,7 @@ class IngestionService:
         job_id: int,
         *,
         expected_shop_id: int | None = None,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> tuple[SyncJob, Shop]:
         snapshot = self._job(job_id)
         if expected_shop_id is not None and snapshot.shop_id != expected_shop_id:
@@ -261,7 +261,7 @@ class IngestionService:
                 shop.id,
                 expected_capability,
                 for_update=True,
-                allow_douyin_token_refresh=allow_douyin_token_refresh,
+                allow_platform_token_refresh=allow_platform_token_refresh,
             )
         except ShopConnectionUnavailableError as exc:
             job = self._job(job_id, for_update=True)
@@ -290,7 +290,7 @@ class IngestionService:
         max_attempts: int = 3,
         request_fingerprint: str | None = None,
         single_flight: bool = False,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         normalized_type = _token(job_type, label="同步任务类型", max_length=64)
@@ -302,7 +302,7 @@ class IngestionService:
             shop_id,
             required_capability,
             for_update=True,
-            allow_douyin_token_refresh=allow_douyin_token_refresh,
+            allow_platform_token_refresh=allow_platform_token_refresh,
         )
         shop = resolve_shop(
             self.session,
@@ -421,11 +421,11 @@ class IngestionService:
         job_id: int,
         *,
         claim_token: str,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.OPERATE_SYNC)
         job, _ = self._locked_ready_job(
-            job_id, allow_douyin_token_refresh=allow_douyin_token_refresh
+            job_id, allow_platform_token_refresh=allow_platform_token_refresh
         )
         if job.status is SyncJobStatus.RUNNING:
             if self._claim_matches(job.lease_token_hash, claim_token):
@@ -528,7 +528,7 @@ class IngestionService:
         status: SyncJobStatus,
         claim_token: str,
         error_code: str | None = None,
-        allow_douyin_token_refresh: bool = False,
+        allow_platform_token_refresh: bool = False,
     ) -> SyncJob:
         require_permission(self.principal, Permission.OPERATE_SYNC)
         try:
@@ -540,7 +540,7 @@ class IngestionService:
         snapshot = self._job(job_id)
         if snapshot.status is SyncJobStatus.RUNNING:
             job, _ = self._locked_ready_job(
-                job_id, allow_douyin_token_refresh=allow_douyin_token_refresh
+                job_id, allow_platform_token_refresh=allow_platform_token_refresh
             )
         else:
             job = self._job(job_id, for_update=True)

@@ -35,6 +35,31 @@ def _credentials() -> TikTokShopCredentials:
     )
 
 
+def test_encrypted_credential_contract_preserves_refresh_expiry() -> None:
+    credentials = TikTokShopCredentials.from_mapping(
+        {
+            "app_key": APP_KEY,
+            "app_secret": APP_SECRET,
+            "access_token": ACCESS_TOKEN,
+            "refresh_token": REFRESH_TOKEN,
+            "refresh_token_expires_at": "1900000000",
+            "shop_cipher": SHOP_CIPHER,
+        }
+    )
+    assert credentials.refresh_token_expires_at == 1_900_000_000
+    with pytest.raises(TikTokShopAuthenticationError):
+        TikTokShopCredentials.from_mapping(
+            {
+                "app_key": APP_KEY,
+                "app_secret": APP_SECRET,
+                "access_token": ACCESS_TOKEN,
+                "refresh_token": REFRESH_TOKEN,
+                "refresh_token_expires_at": "invalid",
+                "shop_cipher": SHOP_CIPHER,
+            }
+        )
+
+
 def _response(data: dict[str, object], *, status: int = 200) -> httpx.Response:
     return httpx.Response(status, json={"code": 0, "message": "Success", "data": data})
 
