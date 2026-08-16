@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from typing import TypedDict
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -173,3 +174,87 @@ def test_purchasing_api_rejects_cross_tenant_and_hides_internal_hashes(
     for row in response.json():
         assert "idempotency_key_hash" not in row
         assert "request_hash" not in row
+
+
+def test_replenishment_draft_api_rejects_client_quantity_override(
+    purchasing_client: PurchasingClient,
+) -> None:
+    client, context = purchasing_client
+    response = client.post(
+        "/api/v2/replenishment-drafts",
+        headers=_headers(context),
+        json={
+            "warehouse_id": context["warehouse_id"],
+            "supplier_product_id": context["supplier_product_id"],
+            "idempotency_key": "api-replenishment-draft",
+            "quantity": 999,
+        },
+    )
+    assert response.status_code == 422
+    assert client.get("/api/v2/purchase-orders", headers=_headers(context)).json() == []
+
+
+def test_replenishment_draft_api_uses_server_quantity_and_enforces_scope(
+    purchasing_client: PurchasingClient,
+) -> None:
+    client, context = purchasing_client
+    recommendation = {
+        "warehouse_id": context["warehouse_id"],
+        "supplier_product_id": context["supplier_product_id"],
+        "recommended_quantity": 10,
+    }
+    with patch.object(
+        PurchasingService,
+        "replenishment_recommendation",
+        return_value=recommendation,
+    ):
+        response = client.post(
+            "/api/v2/replenishment-drafts",
+            headers=_headers(context),
+            json={
+                "warehouse_id": context["warehouse_id"],
+                "supplier_product_id": context["supplier_product_id"],
+                "idempotency_key": "api-replenishment-success",
+            },
+        )
+        replay = client.post(
+            "/api/v2/replenishment-drafts",
+            headers=_headers(context),
+            json={
+                "warehouse_id": context["warehouse_id"],
+                "supplier_product_id": context["supplier_product_id"],
+                "idempotency_key": "api-replenishment-success",
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["purchase_order"]["items"][0]["quantity"] == 10
+    assert response.json()["idempotent_replay"] is False
+    assert replay.status_code == 200
+    assert replay.json()["purchase_order"]["id"] == response.json()["purchase_order"]["id"]
+    assert replay.json()["idempotent_replay"] is True
+
+    approver_denied = client.post(
+        "/api/v2/replenishment-drafts",
+        headers=_headers(context, approver=True),
+        json={
+            "warehouse_id": context["warehouse_id"],
+            "supplier_product_id": context["supplier_product_id"],
+            "idempotency_key": "api-replenishment-approver",
+        },
+    )
+    assert approver_denied.status_code == 403
+
+    other_headers = {
+        "Authorization": f"Bearer {context['other_owner_token']}",
+        "X-Organization-Id": str(context["other_organization_id"]),
+    }
+    cross_tenant = client.post(
+        "/api/v2/replenishment-drafts",
+        headers=other_headers,
+        json={
+            "warehouse_id": context["warehouse_id"],
+            "supplier_product_id": context["supplier_product_id"],
+            "idempotency_key": "api-replenishment-other-org",
+        },
+    )
+    assert cross_tenant.status_code == 404

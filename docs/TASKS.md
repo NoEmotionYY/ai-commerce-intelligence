@@ -4,15 +4,15 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
-Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`).
-Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`).
-Last completed task: `COM-P1-004` — Suppliers and Purchasing (`DONE`).
-`COM-P1-004A` through `COM-P1-004D` are `DONE`; the formal exit review found no blocking Product,
-Architecture, Security, Testing, migration, or documentation issue. The `0011_purchasing` SQLite
-and MySQL migration/integrity/data-preservation gates pass. The purchasing service/API slice is
-green (`5 passed, 1 warning`), migration suite is green (`13 passed`), and the latest
-current-checkout full suite is green (`265 passed, 18 skipped, 1 warning`).
+Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`.
+Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`).
+Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`).
+Last completed task: `COM-P1-005` — Replenishment and Approval Execution (`DONE`).
+`COM-P1-005` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
+Review. The focused purchasing service/API slice is green (`7 passed, 1 warning`), the latest
+current-checkout full suite is green (`267 passed, 18 skipped, 1 warning`), and the disposable
+MySQL execution race proves one `APPROVED -> ORDERED` transition and one audit under concurrent
+retry. This is local internal execution evidence, not real supplier/platform execution.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -640,15 +640,24 @@ gates listed on the parent task PASS; CURRENT/TARGET and real-platform verificat
 
 ### COM-P1-005 — Replenishment and Approval Execution
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-002, COM-P1-004.
-Scope: deterministic reorder quantity, MOQ/lead time, approved execution and audit.
-Acceptance: AI can explain but cannot change authoritative quantity or bypass approval.
-Verification: calculation, workflow, retry, and concurrent execution tests.
+Scope: deterministic reorder quantity, MOQ/lead time, validated recommendation-to-draft tool/API,
+approved internal execution, retry/concurrency safety, and audit.
+Acceptance: server-owned policy calculates quantity; API and Agent schemas reject quantity/policy
+overrides; tools can read recommendations and create DRAFT orders but expose no approve or execute
+operation; unapproved orders cannot execute; approval remains a distinct human permission;
+idempotent replay preserves the original draft even when current inputs change; concurrent approved
+execution records one state transition and one audit. No real supplier/platform placement is claimed.
+Verification: `7 passed, 1 warning` focused service/API tests; final full suite `267 passed,
+18 skipped, 1 warning`; MySQL 8.4.11 concurrent execution race PASS; Ruff, format, MyPy,
+Alembic single-head, and diff checks PASS. Independent Exit Review found no unresolved Critical/High
+correctness, security, tenancy, approval, audit, or data-integrity issue. The isolated LangChain
+tool surface is locally verified but production chat registration remains COM-P1-010.
 
 ### COM-P1-006 — Alerts and Business Tasks
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P1-003, COM-P1-005.
 Scope: anomaly types, Alert lifecycle, BusinessTask lifecycle and context links.
 Acceptance: alerts create auditable tasks and task transitions are permissioned.
@@ -695,5 +704,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 6 (`COM-P1-005` through `COM-P1-010`); `COM-P1-001` through `COM-P1-004` are `DONE`.
+- P1 remaining: 5 (`COM-P1-006` through `COM-P1-010`); `COM-P1-001` through `COM-P1-005` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

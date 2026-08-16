@@ -33,14 +33,19 @@ from commerce.database import Base  # noqa: E402
 from commerce.models import (  # noqa: E402
     ChannelInventory,
     CommerceOrder,
+    CommercePurchaseOrder,
+    CommercePurchaseOrderItem,
     CredentialStatus,
     MasterProduct,
     MasterSKU,
     MembershipRole,
+    OperationLog,
     Organization,
+    OrganizationMembership,
     PlatformRawEvent,
     PlatformSKU,
     Product,
+    PurchaseOrderStatus,
     Shop,
     ShopAuthorizationStatus,
     ShopCapability,
@@ -48,8 +53,11 @@ from commerce.models import (  # noqa: E402
     ShopConnection,
     ShopCredential,
     ShopStatus,
+    Supplier,
+    SupplierProduct,
     SyncJob,
     SyncJobStatus,
+    User,
     Warehouse,
     WarehouseInventory,
     WarehouseInventorySourceEvent,
@@ -58,6 +66,7 @@ from commerce.models import (  # noqa: E402
 from commerce.schemas import WarehouseInventorySnapshotInput  # noqa: E402
 from commerce.services.ingestion import IngestionService, IngestionTransitionError  # noqa: E402
 from commerce.services.inventory import InventoryService  # noqa: E402
+from commerce.services.purchasing import PurchasingService  # noqa: E402
 from commerce.services.shop import ShopService  # noqa: E402
 from commerce.services.shop_connection import ShopConnectionService  # noqa: E402
 
@@ -1053,6 +1062,131 @@ def _verify_inventory_snapshot_race(engine: Engine) -> None:
             raise RuntimeError("MySQL inventory race did not complete both RawEvents")
 
 
+def _verify_purchase_execution_race(engine: Engine) -> None:
+    with Session(engine, expire_on_commit=False) as session:
+        organization = Organization(slug="mysql-purchase-race", name="MySQL Purchase Race")
+        user = User(email="mysql-purchase-race@example.com", display_name="Purchase Operator")
+        session.add_all([organization, user])
+        session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OPERATOR,
+        )
+        warehouse = Warehouse(
+            organization_id=organization.id,
+            code="MYSQL-PURCHASE-RACE",
+            name="Purchase Race Warehouse",
+            country_code="CN",
+            timezone="Asia/Shanghai",
+        )
+        product = MasterProduct(
+            organization_id=organization.id,
+            code="MYSQL-PURCHASE-RACE",
+            name="Purchase Race Product",
+        )
+        session.add_all([membership, warehouse, product])
+        session.flush()
+        sku = MasterSKU(
+            organization_id=organization.id,
+            master_product_id=product.id,
+            sku_code="MYSQL-PURCHASE-RACE-SKU",
+            name="Purchase Race SKU",
+        )
+        supplier = Supplier(
+            organization_id=organization.id,
+            code="MYSQL-PURCHASE-RACE-SUPPLIER",
+            name="Purchase Race Supplier",
+        )
+        session.add_all([sku, supplier])
+        session.flush()
+        supplier_product = SupplierProduct(
+            organization_id=organization.id,
+            supplier_id=supplier.id,
+            master_sku_id=sku.id,
+            supplier_product_code="MYSQL-PURCHASE-RACE-SUPPLIER-SKU",
+            currency="CNY",
+            purchase_cost=10,
+            moq=1,
+            package_size=1,
+            lead_time_days=1,
+        )
+        session.add(supplier_product)
+        session.flush()
+        order = CommercePurchaseOrder(
+            organization_id=organization.id,
+            supplier_id=supplier.id,
+            warehouse_id=warehouse.id,
+            po_number="PO-MYSQL-PURCHASE-RACE",
+            idempotency_key_hash=hashlib.sha256(b"mysql-purchase-race").hexdigest(),
+            request_hash=hashlib.sha256(b"mysql-purchase-race-request").hexdigest(),
+            status=PurchaseOrderStatus.APPROVED,
+            currency="CNY",
+            total_amount=10,
+            created_by_user_id=user.id,
+            approved_by_user_id=user.id,
+            approved_at=utcnow(),
+        )
+        session.add(order)
+        session.flush()
+        session.add(
+            CommercePurchaseOrderItem(
+                organization_id=organization.id,
+                purchase_order_id=order.id,
+                supplier_product_id=supplier_product.id,
+                master_sku_id=sku.id,
+                quantity=1,
+                unit_cost=10,
+                total_amount=10,
+            )
+        )
+        session.commit()
+        principal = Principal(user.id, organization.id, membership.id, MembershipRole.OPERATOR)
+        order_id = order.id
+
+    with Session(engine) as session:
+        audit_count_before = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "purchasing.order.ordered")
+            )
+            or 0
+        )
+
+    rendezvous = Barrier(2, timeout=15)
+
+    def worker() -> str:
+        with Session(engine, expire_on_commit=False) as session:
+            session.execute(sa.text("SET SESSION innodb_lock_wait_timeout = 10"))
+            rendezvous.wait()
+            return PurchasingService(session, principal).mark_ordered(order_id).status.value
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: worker(), range(2)))
+    if results != ["ORDERED", "ORDERED"]:
+        raise RuntimeError(f"MySQL purchase execution race returned {results}")
+
+    with Session(engine) as session:
+        persisted_order = session.get(CommercePurchaseOrder, order_id)
+        if (
+            persisted_order is None
+            or persisted_order.status is not PurchaseOrderStatus.ORDERED
+            or persisted_order.ordered_at is None
+        ):
+            raise RuntimeError("MySQL purchase execution race did not persist ORDERED once")
+        audit_count_after = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "purchasing.order.ordered")
+            )
+            or 0
+        )
+        if audit_count_after != audit_count_before + 1:
+            raise RuntimeError("MySQL purchase execution race duplicated the execution audit")
+
+
 def main() -> None:
     raw_url = os.environ.get("TEST_MYSQL_URL", "")
     if not raw_url:
@@ -1557,10 +1691,11 @@ def main() -> None:
         _assert_commerce_order_preserved(connection, order_id)
     _verify_sync_mutation_races(engine)
     _verify_inventory_snapshot_race(engine)
+    _verify_purchase_execution_race(engine)
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
         "legacy-reauth-catalog-raw-order-inventory-data-preservation-and-sync-and-inventory-"
-        "races: PASS"
+        "and-purchase-execution-races: PASS"
     )
 
 

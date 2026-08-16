@@ -34,6 +34,7 @@ from commerce.schemas import (
     InboundShipmentCreate,
     PurchaseOrderCreate,
     PurchaseOrderItemCreate,
+    ReplenishmentDraftCreate,
     SupplierCreate,
     SupplierProductCreate,
 )
@@ -158,7 +159,12 @@ class PurchasingService:
             statement = statement.where(SupplierProduct.master_sku_id == master_sku_id)
         return list(self.session.scalars(statement.order_by(SupplierProduct.id).limit(limit)))
 
-    def create_purchase_order(self, payload: PurchaseOrderCreate) -> CommercePurchaseOrder:
+    def create_purchase_order(
+        self,
+        payload: PurchaseOrderCreate,
+        *,
+        request_identity: object | None = None,
+    ) -> CommercePurchaseOrder:
         require_permission(self.principal, Permission.WRITE_COMMERCE)
         supplier = self._supplier(payload.supplier_id)
         warehouse = self._warehouse(payload.warehouse_id)
@@ -180,19 +186,9 @@ class PurchasingService:
                 key=lambda item: item["supplier_product_id"],
             ),
         }
-        idem_hash = self._hash(payload.idempotency_key)
-        request_hash = self._hash(request)
-        existing = self.session.scalar(
-            select(CommercePurchaseOrder)
-            .where(
-                CommercePurchaseOrder.organization_id == self.principal.organization_id,
-                CommercePurchaseOrder.idempotency_key_hash == idem_hash,
-            )
-            .options(selectinload(CommercePurchaseOrder.items))
-        )
+        request_hash = self._hash(request if request_identity is None else request_identity)
+        existing = self._idempotent_purchase_order(payload.idempotency_key, request_hash)
         if existing is not None:
-            if existing.request_hash != request_hash:
-                raise PurchasingConflictError("采购幂等键对应了不同内容")
             return existing
         products = [self._supplier_product(item.supplier_product_id) for item in payload.items]
         if any(item.supplier_id != supplier.id for item in products):
@@ -212,7 +208,7 @@ class PurchasingService:
             supplier_id=supplier.id,
             warehouse_id=warehouse.id,
             po_number=f"PO-{uuid4().hex[:24].upper()}",
-            idempotency_key_hash=idem_hash,
+            idempotency_key_hash=self._hash(payload.idempotency_key),
             request_hash=request_hash,
             status=PurchaseOrderStatus.DRAFT,
             currency=currency,
@@ -581,6 +577,67 @@ class PurchasingService:
             "currency": product.currency,
             "unit_cost": str(product.purchase_cost),
         }
+
+    def create_replenishment_draft(
+        self,
+        payload: ReplenishmentDraftCreate,
+        *,
+        as_of: datetime | None = None,
+    ) -> tuple[CommercePurchaseOrder, dict[str, object], bool]:
+        """Create a draft using server-owned replenishment policy and quantity."""
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        request_identity = {
+            "operation": "deterministic_replenishment_draft_v1",
+            "warehouse_id": payload.warehouse_id,
+            "supplier_product_id": payload.supplier_product_id,
+        }
+        request_hash = self._hash(request_identity)
+        existing = self._idempotent_purchase_order(payload.idempotency_key, request_hash)
+        recommendation = self.replenishment_recommendation(
+            warehouse_id=payload.warehouse_id,
+            supplier_product_id=payload.supplier_product_id,
+            as_of=as_of,
+        )
+        if existing is not None:
+            return existing, recommendation, True
+        quantity_value = recommendation["recommended_quantity"]
+        if not isinstance(quantity_value, int) or isinstance(quantity_value, bool):
+            raise RuntimeError("补货服务返回了无效数量")
+        quantity = quantity_value
+        if quantity <= 0:
+            raise PurchasingValidationError("当前无需补货，不能创建零数量采购草稿")
+        product = self._supplier_product(payload.supplier_product_id)
+        order = self.create_purchase_order(
+            PurchaseOrderCreate(
+                supplier_id=product.supplier_id,
+                warehouse_id=payload.warehouse_id,
+                currency=product.currency,
+                idempotency_key=payload.idempotency_key,
+                items=[
+                    PurchaseOrderItemCreate(
+                        supplier_product_id=product.id,
+                        quantity=quantity,
+                    )
+                ],
+            ),
+            request_identity=request_identity,
+        )
+        return order, recommendation, False
+
+    def _idempotent_purchase_order(
+        self, idempotency_key: str, request_hash: str
+    ) -> CommercePurchaseOrder | None:
+        existing = self.session.scalar(
+            select(CommercePurchaseOrder)
+            .where(
+                CommercePurchaseOrder.organization_id == self.principal.organization_id,
+                CommercePurchaseOrder.idempotency_key_hash == self._hash(idempotency_key),
+            )
+            .options(selectinload(CommercePurchaseOrder.items))
+        )
+        if existing is not None and existing.request_hash != request_hash:
+            raise PurchasingConflictError("采购幂等键对应了不同内容")
+        return existing
 
     def _supplier(self, supplier_id: int) -> Supplier:
         supplier = self.session.scalar(

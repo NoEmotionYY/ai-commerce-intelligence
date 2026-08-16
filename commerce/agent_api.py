@@ -89,6 +89,7 @@ from commerce.schemas import (
     RawEventClaimInput,
     RawEventCreate,
     RawEventReplay,
+    ReplenishmentDraftCreate,
     ShopCapabilityUpdate,
     ShopProfileUpdate,
     ShopStatusUpdate,
@@ -1887,6 +1888,30 @@ def get_v2_replenishment_recommendation(
         )
     except (AuthorizationError, PurchasingNotFoundError, PurchasingValidationError) as exc:
         raise purchasing_http_error(exc) from exc
+
+
+@app.post("/api/v2/replenishment-drafts")
+def create_v2_replenishment_draft(
+    payload: ReplenishmentDraftCreate,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        order, recommendation, replayed = PurchasingService(
+            session, principal
+        ).create_replenishment_draft(payload)
+    except (
+        AuthorizationError,
+        PurchasingConflictError,
+        PurchasingNotFoundError,
+        PurchasingValidationError,
+    ) as exc:
+        raise purchasing_http_error(exc) from exc
+    return {
+        "purchase_order": purchase_order_dict(order),
+        "recommendation": recommendation,
+        "idempotent_replay": replayed,
+    }
 
 
 @app.patch("/api/v2/shops/{shop_id}/status")

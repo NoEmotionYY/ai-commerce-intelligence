@@ -426,3 +426,33 @@ disposable MySQL 8.4.11, and full regression gates. This does not place an order
 or platform, and it does not add an Agent purchase tool. `COM-P1-005` must complete the validated
 recommendation-to-draft, execution retry/concurrency, and Agent approval boundary. No
 `BLOCKED_EXTERNAL` is recorded.
+
+## ADR-021 — Server-Owned Replenishment Drafts and Non-Agent Approval
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: A language model may explain replenishment but must not choose an authoritative purchase
+quantity, approve its own proposal, or execute a financially consequential order. A retry can also
+arrive after inventory, sales velocity, or time changes; recalculating before resolving the same
+idempotency key would incorrectly conflict with or silently replace the original draft.
+
+Decision: Expose a replenishment-draft schema containing only warehouse, supplier product, and
+idempotency key. Calculate quantity in `PurchasingService` from the deterministic default policy,
+then snapshot it into a DRAFT purchase order. Bind the idempotency key to a stable logical request
+identity rather than mutable calculated quantity; on replay, preserve the original draft and report
+that the response is a replay while returning the current recommendation separately. Enforce
+`WRITE_COMMERCE` at the service entry before replay. Provide isolated LangChain tools for
+recommendation read and DRAFT creation only. Keep approval and `APPROVED -> ORDERED` outside the
+tool surface, under permissioned service/API operations and row locking.
+
+Reasoning: This preserves deterministic authority, human approval, tenant and permission checks,
+and useful retry semantics even when business inputs move. The explicit replay marker prevents a
+current recommendation from being confused with the already approved/persisted quantity.
+
+Consequences: `COM-P1-005` is `DONE` at `L2 VERIFIED_LOCAL` after focused API/service/tool tests,
+full regression, and a disposable MySQL 8.4.11 two-thread execution race that persisted one
+`ORDERED` transition and one audit. This is not evidence of a real supplier/platform order.
+Production chat registration remains COM-P1-010. With Phase 4 complete, COM-P1-006 is the next
+highest-priority dependency-satisfied task; Alerts and Business Tasks are Phase 5, ahead of the
+independent CSV/XLSX import slice.

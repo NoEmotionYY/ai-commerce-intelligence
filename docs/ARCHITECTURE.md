@@ -43,8 +43,11 @@ COM-P1-002 provides the locally verified warehouse and physical/channel inventor
 described below. COM-P1-003 adds tenant-scoped SKU cost history, refunds, settlements, finance
 transactions, immutable estimated/settled profit snapshots, and bounded finance/refund APIs.
 COM-P1-004 adds the locally verified supplier, purchasing, inbound shipment, and deterministic
-replenishment foundation described below. Alerts, BusinessTask, production platform purchasing
-execution, Agent purchasing tools, and AuditLog remain TARGET.
+replenishment foundation described below. COM-P1-005 adds a locally verified
+recommendation-to-DRAFT API and isolated LangChain tool surface plus approved internal execution
+retry/concurrency evidence. That tool surface is not registered in production chat and contains no
+approval or execution operation. Alerts, BusinessTask, production supplier/platform execution,
+production Agent integration, and AuditLog remain TARGET.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -264,9 +267,17 @@ transition without exposing idempotency hashes through the API.
 Replenishment is deterministic Python/SQL logic using unified order velocity, current warehouse
 available stock, ETA-bounded open inbound quantities, lead time, safety-stock days, MOQ, and package
 size. It returns the authoritative quantity as data; no LLM participates in the calculation.
+The COM-P1-005 draft endpoint and `PurchasingAgentTools` accept only warehouse, supplier-product,
+and idempotency identity. Extra quantity or policy fields fail schema validation. A stable logical
+request hash preserves the original draft when current replenishment inputs later change, while the
+response explicitly distinguishes current recommendation from the persisted draft quantity.
+The tool list exposes recommendation read and DRAFT creation only; approval and execution remain
+human/API service operations. Service-level permission checks apply before idempotent replay.
+`APPROVED -> ORDERED` uses a row lock, returns idempotently on retry, and produces one OperationLog
+entry under the verified MySQL race.
 Receiving an inbound shipment does not directly mutate authoritative WarehouseInventory, whose
 physical snapshot boundary remains claimed PlatformRawEvent ingestion. This is `L2 VERIFIED_LOCAL`,
-not platform purchasing execution or a real supplier/connector claim.
+not real supplier/platform execution or a production chat integration claim.
 
 ## 4. TARGET: Production Data Flow
 

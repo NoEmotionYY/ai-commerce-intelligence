@@ -20,6 +20,9 @@ internal `MISSING` task, not an external blocker. Real credentials, developer ap
 seller authorization may become `BLOCKED_EXTERNAL` only after the corresponding connector
 implementation and contract verification exist.
 
+`COM-P1-005` has no external blocker. Its real supplier/platform execution gap is unimplemented
+future integration scope and therefore remains `MISSING`, not `BLOCKED_EXTERNAL`.
+
 ---
 
 # Resolved Blockers

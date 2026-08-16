@@ -103,13 +103,15 @@
 - [x] Purchase lifecycle implemented.
 - [x] Incoming stock affects replenishment.
 - [x] Replenishment recommendation is deterministic.
-- [ ] High-impact purchase execution requires approval.
-- [ ] Purchase execution is idempotent.
+- [x] High-impact purchase execution requires approval.
+- [x] Purchase execution is idempotent.
 
-The purchase draft/lifecycle and independent approval boundary are locally verified. The final
-two execution items remain `MISSING` until COM-P1-005 proves the Agent/tool execution boundary and
-concurrent retry behavior; an internal `ORDERED` status transition is not real supplier/platform
-execution evidence.
+The purchase lifecycle, independent approval boundary, server-owned recommendation-to-DRAFT tool,
+stable retry identity, and concurrent `APPROVED -> ORDERED` transition are locally verified.
+The Agent schema cannot supply quantity or policy and exposes no approve/execute tool. MySQL
+concurrency produces one state transition and one audit. This is internal workflow evidence only:
+it does not claim a real supplier/platform order was placed, and production chat integration remains
+`PARTIAL` until COM-P1-010.
 
 ---
 
@@ -396,7 +398,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-004 completion the current local suite is `265 passed, 18 skipped, 1 warning` under
+COM-P1-005 completion the current local suite is `267 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
@@ -404,7 +406,7 @@ denial are locally verified. Agent schemas and denial boundaries are verified, b
 Agent commerce reads remain unavailable until tenant-aware V2 commerce services exist. Encrypted
 credential storage/lifecycle/leakage boundaries are locally verified; unified commerce workflows
 and the remaining P0/P1 work are still incomplete. Additive migrations are verified on SQLite
-and official MySQL Community Server 8.4.6 for fresh install, legacy upgrade, rollback/re-upgrade,
+and official MySQL Community Server 8.4.11 for fresh install, legacy upgrade, rollback/re-upgrade,
 key constraints, and legacy/tenant data preservation. Organization-scoped MasterProduct,
 MasterSKU, PlatformSKU, manual correction, exact external identity, and cross-tenant denial are
 locally verified. Tenant-scoped RawEvent/SyncJob persistence, cross-job observation,
@@ -419,8 +421,10 @@ lineage, stale/idempotent reconciliation, and deterministic current/incoming-awa
 locally verified on SQLite and MySQL. Tenant-scoped suppliers, commercial terms, purchase orders,
 independent approval, inbound shipments, monotonic cumulative receipts, and ETA-bounded incoming
 stock are locally verified. Replenishment uses actual order velocity, available stock, open
-inbound quantities, lead time, safety days, MOQ, and package size. Platform purchasing execution,
-Agent purchase-draft tooling, and real supplier integrations remain later work.
+inbound quantities, lead time, safety days, MOQ, and package size. The validated standalone Agent
+tool can read this recommendation and create an idempotent DRAFT without accepting quantity or
+policy overrides; it is not yet registered into production chat. Real supplier/platform execution
+and integrations remain `MISSING`, not `BLOCKED_EXTERNAL`.
 
 ## V2 Complete Gate
 

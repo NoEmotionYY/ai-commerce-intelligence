@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`
-Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`)
-Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`)
-Last completed top-level task: `COM-P1-004` — Suppliers and Purchasing
-Current verification slice: `COM-P1-005A` — Approved Draft and Execution Boundary (`IN_PROGRESS`)
-Last verified commit: `2f31702`
+Phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`
+Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`)
+Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`)
+Last completed top-level task: `COM-P1-005` — Replenishment and Approval Execution
+Current verification slice: `COM-P1-006A` — Alert and BusinessTask Foundation (`IN_PROGRESS`)
+Last verified commit: `9373416`
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -997,3 +997,64 @@ Status:
 - P0 remaining: 0; P1 remaining: 6; active `BLOCKED_EXTERNAL`: 0.
 - The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS. They do not
   represent purchasing implementation failures and will be rerun in their relevant later phases.
+
+## 2026-08-16 — COM-P1-005 Replenishment and Approval Execution Exit
+
+Scope completed:
+
+- Added a V2 replenishment-draft schema and API that accept only warehouse, supplier-product, and
+  idempotency identity. Quantity, calculation window, safety policy, and approval/execution fields
+  are forbidden client input.
+- Added `PurchasingAgentTools` with exactly two operations: deterministic recommendation read and
+  DRAFT creation. No approval or execution operation is exposed to an LLM. The tool is locally
+  verified but is not registered into the production chat runtime; that remains COM-P1-010.
+- Draft quantity is calculated by the existing deterministic Python/SQL service and snapshotted
+  with Decimal commercial terms. Unapproved orders cannot enter `ORDERED`.
+- Added a stable logical request identity for replenishment retries. The Exit Review found and
+  fixed a defect where changed inventory/time inputs could turn the same client retry into a
+  conflict. Replays now preserve the original draft and explicitly distinguish the current
+  recommendation from the persisted draft quantity.
+- The security review found and fixed a service-layer replay path that could resolve an existing
+  draft before enforcing `WRITE_COMMERCE`. Permission is now checked at the service entry, including
+  direct Agent-tool invocation.
+- Extended the disposable MySQL verification with a real two-thread `APPROVED -> ORDERED` race.
+  Both callers receive `ORDERED`, while persistence records one transition timestamp and exactly
+  one `purchasing.order.ordered` audit.
+- No model or schema migration was added. Alembic remains at the already verified single
+  `0011_purchasing` head; COM-P1-005 operates on the COM-P1-004 purchase model.
+
+Formal Exit Review:
+
+- Product: authoritative quantity remains deterministic and server-owned; a recommendation can
+  become a reviewable DRAFT without claiming real supplier placement.
+- Architecture: Agent -> validated tool -> PurchasingService -> tenant-scoped persistence is
+  preserved. Approval/execution are absent from the tool list, and no connector abstraction or
+  external execution claim was introduced.
+- Security: API authentication, organization scope, centralized write/approve permissions,
+  creator/approver separation, replay permission, internal-hash redaction, and cross-tenant denial
+  pass. No Critical/High security finding remains.
+- Testing/data integrity: quantity/policy injection denial, zero-recommendation denial, changed-input
+  replay, write-permission replay denial, unapproved execution denial, deterministic calculation,
+  API success/error/scope, sequential retry, MySQL concurrent execution, and exactly-once audit pass.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_purchasing_service.py tests/integration/test_purchasing_api.py
+  -q`: `7 passed, 1 warning`.
+- `python -m pytest -q`: `267 passed, 18 skipped, 1 warning` after the final permission fix.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`112 files already formatted`).
+- `mypy .`: PASS (`86 source files`).
+- `alembic heads`: one head, `0011_purchasing`; `git diff --check`: PASS.
+- With `TEST_MYSQL_URL` targeting a guarded disposable official `mysql:8.4.11` database,
+  `python scripts/verify_mysql_migrations.py`: migration/integrity checks and
+  `sync-and-inventory-and-purchase-execution-races: PASS`. Temporary container
+  `ai-commerce-execution-mysql-test` was removed.
+
+Status:
+
+- `COM-P1-005`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 4 exit is satisfied.
+- Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`; current task: `COM-P1-006` (`IN_PROGRESS`).
+- P0 remaining: 0; P1 remaining: 5; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS and do not verify this
+  task. They are environment-gated later-phase checks, not COM-P1-005 implementation gaps or
+  external blockers.

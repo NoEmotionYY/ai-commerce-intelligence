@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from commerce.authorization import AuthorizationError, Principal
@@ -18,6 +20,7 @@ from commerce.models import (
     User,
     Warehouse,
 )
+from commerce.purchasing_tools import PurchasingAgentTools
 from commerce.schemas import (
     InboundReceipt,
     InboundReceiptItem,
@@ -199,6 +202,8 @@ def test_purchase_requires_independent_approval_and_lifecycle_is_idempotent(
         quantity=20,
         key="purchase-flow-key",
     )
+    with pytest.raises(PurchasingConflictError):
+        operator_service.mark_ordered(order.id)
     assert (
         operator_service.submit_purchase_order(order.id).status
         is PurchaseOrderStatus.PENDING_APPROVAL
@@ -335,6 +340,7 @@ def test_purchase_requires_independent_approval_and_lifecycle_is_idempotent(
 
 def test_replenishment_uses_velocity_lead_time_moq_package_and_open_incoming(
     db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     owner, operator, approver, warehouse, shop, sku_id = _context(
         db_session, "purchase-replenishment"
@@ -388,6 +394,65 @@ def test_replenishment_uses_velocity_lead_time_moq_package_and_open_incoming(
     )
     assert before["daily_units"] == "1.0000"
     assert before["recommended_quantity"] == 15
+
+    monkeypatch.setattr(
+        "commerce.services.purchasing.utcnow", lambda: datetime(2026, 2, 1, tzinfo=UTC)
+    )
+    tools = {
+        item.name: item for item in PurchasingAgentTools(db_session, operator).langchain_tools()
+    }
+    assert set(tools) == {"get_replenishment_recommendation", "create_purchase_draft"}
+    with pytest.raises(ValidationError):
+        tools["create_purchase_draft"].invoke(
+            {
+                "warehouse_id": warehouse.id,
+                "supplier_product_id": supplier_product_id,
+                "idempotency_key": "agent-replenishment-draft",
+                "quantity": 999,
+            }
+        )
+    tool_result = cast(
+        dict[str, object],
+        tools["create_purchase_draft"].invoke(
+            {
+                "warehouse_id": warehouse.id,
+                "supplier_product_id": supplier_product_id,
+                "idempotency_key": "agent-replenishment-draft",
+            }
+        ),
+    )
+    assert tool_result["status"] == "DRAFT"
+    assert tool_result["recommended_quantity"] == 20
+    assert tool_result["quantity"] == 20
+    assert tool_result["idempotent_replay"] is False
+    approver_tools = {
+        item.name: item for item in PurchasingAgentTools(db_session, approver).langchain_tools()
+    }
+    with pytest.raises(AuthorizationError):
+        approver_tools["create_purchase_draft"].invoke(
+            {
+                "warehouse_id": warehouse.id,
+                "supplier_product_id": supplier_product_id,
+                "idempotency_key": "agent-replenishment-draft",
+            }
+        )
+    monkeypatch.setattr(
+        "commerce.services.purchasing.utcnow", lambda: datetime(2026, 4, 1, tzinfo=UTC)
+    )
+    replay_result = cast(
+        dict[str, object],
+        tools["create_purchase_draft"].invoke(
+            {
+                "warehouse_id": warehouse.id,
+                "supplier_product_id": supplier_product_id,
+                "idempotency_key": "agent-replenishment-draft",
+            }
+        ),
+    )
+    assert replay_result["purchase_order_id"] == tool_result["purchase_order_id"]
+    assert replay_result["recommended_quantity"] == 0
+    assert replay_result["quantity"] == 20
+    assert replay_result["idempotent_replay"] is True
 
     order = _draft(
         service,

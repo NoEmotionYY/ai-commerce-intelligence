@@ -2,16 +2,15 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
-Current task: `COM-P1-005` — Replenishment and Approval Execution (`IN_PROGRESS`).
-Next task: `COM-P1-006` — Alerts and Business Tasks (`TODO`).
-Last completed task: `COM-P1-004` — Suppliers and Purchasing (`DONE`).
-The `0011_purchasing` models, service, API, SQLite/MySQL migrations, tenant/permission boundaries,
-approval separation, idempotent/monotonic inbound handling, and deterministic replenishment pass
-the formal Product, Architecture, Security, Testing, migration, and documentation Exit Review.
-The purchasing service/API slice is green (`5 passed, 1 warning`), migration suite is green
-(`13 passed`), and the latest current-checkout full suite is green
-(`265 passed, 18 skipped, 1 warning`).
+Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`.
+Current task: `COM-P1-006` — Alerts and Business Tasks (`IN_PROGRESS`).
+Next task: `COM-P1-007` — CSV/XLSX Import (`TODO`).
+Last completed task: `COM-P1-005` — Replenishment and Approval Execution (`DONE`).
+Phase 4 Exit Review passed. The locally verified boundary uses server-calculated replenishment
+quantities, schema-forbidden quantity/policy overrides, DRAFT-only Agent tools, independent human
+approval, idempotent replay, and a real MySQL concurrent internal execution race with one audit.
+It does not claim real supplier or platform order placement. The latest focused slice is
+`7 passed, 1 warning`; the full suite is `267 passed, 18 skipped, 1 warning`.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -91,37 +90,39 @@ Dependencies: Phase 3.
 Implement suppliers, purchase lifecycle, inbound shipments, deterministic replenishment,
 approval enforcement, idempotent execution, and audit history.
 
-Current evidence: `COM-P1-004` is `DONE` at `L2 VERIFIED_LOCAL`. Tenant-scoped supplier and
+Current evidence: `COM-P1-004` and `COM-P1-005` are `DONE` at `L2 VERIFIED_LOCAL`. Tenant-scoped supplier and
 commercial-term models, Decimal purchase snapshots, independent approval, complete purchase and
 inbound lifecycle, idempotent shipment creation, monotonic cumulative receipts, bounded APIs,
 operation audit, and ETA-aware deterministic replenishment pass SQLite/MySQL and full regression
 gates. Authoritative physical WarehouseInventory remains RawEvent-bound; receiving a planned
-shipment does not fabricate a platform inventory snapshot. No platform order placement, Agent
-purchase tool, or real supplier integration is claimed. `COM-P1-005` now completes the approved
-execution/Agent boundary and concurrent retry evidence before Phase 4 exit.
+shipment does not fabricate a platform inventory snapshot. COM-P1-005 adds a validated
+recommendation-to-DRAFT API and isolated Agent tool surface, stable logical idempotency, strict
+approval gating, and MySQL concurrent internal execution/audit evidence. The tool surface contains
+no approval or execution tool and is not yet registered in the production chat runtime. No real
+supplier integration or platform order placement is claimed.
 
-Exit: `COM-P1-005` must verify that validated recommendations can become drafts, approval cannot
-be bypassed, execution retries/concurrency are idempotent, and the LLM cannot replace the
-authoritative quantity.
+Exit: satisfied. Validated recommendations become drafts, approval cannot be bypassed, execution
+retries/concurrency are idempotent, and the LLM cannot replace the authoritative quantity.
 
-## Phase 5 — Production Sync Operations and Imports
+## Phase 5 — Alerts and Business Tasks
 
-Dependencies: Phase 2; business consumers depend on Phases 3–4 as needed.
+Dependencies: Phases 3–4.
+
+Implement deterministic anomaly rules, Alert lifecycle, BusinessTask lifecycle, links to
+business context, permissioned transitions, and measurable effect tracking. These rules operate on
+the already verified commerce domains and do not depend on CSV/XLSX import completion.
+
+## Phase 6 — Production Sync Operations and Imports
+
+Dependencies: Phase 2; business consumers depend on Phases 3–5 as needed.
 
 Extend the Phase 2 raw-event/sync foundation with scheduled pulls, retries,
 pagination/checkpoints, reconciliation, CSV/XLSX preview and validation, and visible failure
 states.
 
-## Phase 6 — Alerts and Business Tasks
-
-Dependencies: Phases 3–5.
-
-Implement deterministic anomaly rules, Alert lifecycle, BusinessTask lifecycle, links to
-business context, approval transitions, and measurable effect tracking.
-
 ## Phase 7 — Douyin Connector
 
-Dependencies: Phases 1–5.
+Dependencies: Phases 1–6.
 
 Implement the platform-specific adapter, contract tests, and all technically possible
 authentication, product/SKU/order/inventory/refund/event/reconciliation behavior. Real

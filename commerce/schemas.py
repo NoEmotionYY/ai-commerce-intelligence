@@ -403,3 +403,9 @@ class ReplenishmentQuery(PurchasingInput):
     as_of: datetime | None = None
     sales_window_days: int = Field(default=30, ge=7, le=365)
     safety_stock_days: int = Field(default=7, ge=0, le=365)
+
+
+class ReplenishmentDraftCreate(PurchasingInput):
+    warehouse_id: int = Field(gt=0)
+    supplier_product_id: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=128)
