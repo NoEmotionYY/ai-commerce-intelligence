@@ -127,6 +127,7 @@ from commerce.services.alerts import (
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
 from commerce.services.catalog import CatalogConflictError, CatalogNotFoundError, CatalogService
 from commerce.services.combined import compose_a102
+from commerce.services.dashboard import DashboardService, DashboardValidationError
 from commerce.services.data_import import (
     MAX_IMPORT_BYTES,
     DataImportConflictError,
@@ -2584,6 +2585,28 @@ def list_v2_shop_credentials(
     except AuthorizationError as exc:
         raise HTTPException(403, "无权管理该店铺凭据") from exc
     return [CredentialService.metadata(item) for item in credentials]
+
+
+@app.get("/api/v2/dashboard")
+def get_v2_dashboard(
+    shop_id: int | None = Query(default=None, gt=0),
+    as_of: datetime | None = None,
+    window_days: int = Query(default=30, ge=1, le=90),
+    detail_limit: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return DashboardService(session, principal).dashboard(
+            shop_id=shop_id,
+            as_of=as_of or utcnow(),
+            window_days=window_days,
+            detail_limit=detail_limit,
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except DashboardValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.post("/api/v2/credentials/{credential_id}/rotate")
