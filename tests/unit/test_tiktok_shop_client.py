@@ -13,6 +13,7 @@ from commerce.platforms.tiktok_shop import (
     TikTokShopResponseError,
     TikTokShopTransportError,
     sign_request,
+    sign_webhook,
 )
 
 APP_KEY = "29a39d"
@@ -89,6 +90,22 @@ def test_official_signature_vector_and_exact_body_vector() -> None:
         )
         == "592e83f7f8b34a52268b7cc1b3783c683c1cf38288adb88744b29fe15248d46a"
     )
+
+
+def test_official_webhook_signature_vector_uses_exact_raw_body() -> None:
+    raw_body = (
+        b'{"type":1,"tts_notification_id":"7380066284010030890",'
+        b'"shop_id":"7495540735365777507","timestamp":1718305585,'
+        b'"data":{"is_on_hold_order":true,"order_id":"576653688135258178",'
+        b'"order_status":"UNPAID","update_time":1718305585}}'
+    )
+    assert (
+        sign_webhook(app_key="abcdef", app_secret="123", raw_body=raw_body)
+        == "5dec0f11ec2f6783b8deee53c9ffbf8d024302f7c7e7fa55a35d17629031ac05"
+    )
+    assert sign_webhook(
+        app_key="abcdef", app_secret="123", raw_body=raw_body + b"\n"
+    ) != sign_webhook(app_key="abcdef", app_secret="123", raw_body=raw_body)
 
 
 def test_product_search_sends_exact_signed_body_and_token_header() -> None:
@@ -212,6 +229,26 @@ def test_refresh_uses_official_token_host_and_absolute_expiry() -> None:
     assert tokens.refresh_token_expires_at == 1_900_000_000
     assert "new-access-token" not in repr(tokens)
     assert "new-refresh-token" not in repr(tokens)
+
+
+def test_refresh_rejects_blank_tokens_before_returning_credentials() -> None:
+    client = TikTokShopAPIClient(
+        _credentials(),
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: _response(
+                    {
+                        "access_token": " ",
+                        "refresh_token": "",
+                        "access_token_expire_in": 1_800_000_000,
+                    }
+                )
+            )
+        ),
+    )
+    with pytest.raises(TikTokShopResponseError) as error:
+        client.refresh_access_token()
+    assert error.value.error_code == "TIKTOK_TOKEN_RESPONSE_INVALID"
 
 
 @pytest.mark.parametrize(

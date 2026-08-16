@@ -4,16 +4,15 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
-Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`).
+Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
-Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
-`COM-P1-008` passed Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. The current full suite is `338 passed, 18 skipped, 1 warning`; the focused connector/API
-boundary slice is `52 passed, 1 warning`; the broader connector-adjacent SQLite slice is
-`180 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite,
-and MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus webhook/token concurrency
-gates pass. Implementation and contract/mock verification pass; real-platform verification is
+Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
+`COM-P1-009` passed Product, Architecture, Security, Testing, migration, and documentation Exit
+Review. The current full suite is `416 passed, 18 skipped, 1 warning`; the final TikTok/tenant
+slice is `107 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite, and disposable
+MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus Douyin/TikTok webhook and token
+concurrency gates pass. Implementation and contract/mock verification pass; real-platform verification is
 `IMPLEMENTED_UNVERIFIED`, not `VERIFIED_REAL`.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
@@ -712,11 +711,21 @@ RawEvents; it does not claim an implemented worker.
 
 ### COM-P1-009 — TikTok Shop Connector
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-008.
 Scope: adapter, token refresh, product/order/inventory/refund/finance/webhook/retry.
 Acceptance: contract behavior passes; real verification is separately labelled.
-Verification: contract/mock/sandbox/real status with evidence.
+Verification: official request/signature and normalization contracts, tenant/permission/shop
+binding, encrypted row-locked token refresh, request identity, bounded deadline/admission and
+2048-page continuation, compact cross-continuation cursor-cycle detection, total-count and finance
+statement reconciliation, RawEvent-first domain ingestion, stale/idempotent inventory/product/
+refund/finance handling, webhook signature/registry/deduplication, API checkpoint redaction,
+credential leakage, SQLite, and disposable MySQL concurrency gates pass. Final TikTok/tenant slice:
+`107 passed, 1 warning`; full pytest: `416 passed, 18 skipped, 1 warning`; Ruff, format, MyPy,
+single Alembic head, and `git diff --check`: PASS. Product/Architecture and Security Exit Reviews
+found no unresolved Critical/High/Medium issue. `Implementation: PASS`; `Contract/Mock: PASS` at
+`L2 VERIFIED_LOCAL`; `Real Platform: IMPLEMENTED_UNVERIFIED`. No sandbox or live seller/platform
+call was executed. Webhook consumption, scheduler, and Worker remain TARGET.
 
 ### COM-P1-010 — Real Dashboard and Agent Tools
 Priority: P1
@@ -735,5 +744,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 2 (`COM-P1-009` and `COM-P1-010`); `COM-P1-001` through `COM-P1-008` are `DONE`.
+- P1 remaining: 1 (`COM-P1-010`); `COM-P1-001` through `COM-P1-009` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

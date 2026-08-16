@@ -29,6 +29,18 @@ class DouyinWebhookApplication:
         )
 
 
+@dataclass(frozen=True, repr=False)
+class TikTokShopWebhookApplication:
+    app_secret: str = field(repr=False)
+    shop_organizations: dict[str, str]
+
+    def __repr__(self) -> str:
+        return (
+            "TikTokShopWebhookApplication(app_secret=<redacted>, "
+            f"shop_count={len(self.shop_organizations)})"
+        )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -47,6 +59,7 @@ class Settings(BaseSettings):
     tiktok_shop_token_base_url: str = "https://auth.tiktok-shops.com"
     tiktok_shop_max_attempts: int = Field(default=2, ge=1, le=2)
     tiktok_shop_sync_deadline_seconds: float = Field(default=20.0, ge=5.0, le=60.0)
+    tiktok_shop_webhook_applications: str = Field(default="", repr=False)
     allowed_crawler_hosts: str = "localhost,127.0.0.1,mock-competitor-site"
     agent_api_url: str = "http://localhost:8000"
     llm_provider: Literal["offline", "deepseek", "openai"] = "offline"
@@ -122,6 +135,53 @@ class Settings(BaseSettings):
             if total_shops > 10_000:
                 raise RuntimeConfigurationError("Douyin Webhook 应用配置无效")
             registry[app_id.strip()] = DouyinWebhookApplication(
+                app_secret=secret,
+                shop_organizations=normalized_shops,
+            )
+        return registry
+
+    @property
+    def tiktok_shop_webhook_registry(self) -> dict[str, TikTokShopWebhookApplication]:
+        try:
+            raw: Any = json.loads(self.tiktok_shop_webhook_applications)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效") from exc
+        if not isinstance(raw, dict) or not 1 <= len(raw) <= 100:
+            raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+        registry: dict[str, TikTokShopWebhookApplication] = {}
+        configured_shop_ids: set[str] = set()
+        total_shops = 0
+        for app_key, item in raw.items():
+            if not isinstance(app_key, str) or not 1 <= len(app_key.strip()) <= 128:
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            if not isinstance(item, dict):
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            normalized_app_key = app_key.strip()
+            if normalized_app_key in registry:
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            secret = item.get("app_secret")
+            shops = item.get("shop_organizations")
+            if not isinstance(secret, str) or not 1 <= len(secret) <= 8192:
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            if not isinstance(shops, dict) or len(shops) > 10_000:
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            normalized_shops: dict[str, str] = {}
+            for external_shop_id, organization_slug in shops.items():
+                if (
+                    not isinstance(external_shop_id, str)
+                    or not 1 <= len(external_shop_id) <= 128
+                    or not isinstance(organization_slug, str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", organization_slug) is None
+                ):
+                    raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+                if external_shop_id in configured_shop_ids:
+                    raise RuntimeConfigurationError("TikTok Shop Webhook 店铺路由不唯一")
+                configured_shop_ids.add(external_shop_id)
+                normalized_shops[external_shop_id] = organization_slug
+            total_shops += len(normalized_shops)
+            if total_shops > 10_000:
+                raise RuntimeConfigurationError("TikTok Shop Webhook 应用配置无效")
+            registry[normalized_app_key] = TikTokShopWebhookApplication(
                 app_secret=secret,
                 shop_organizations=normalized_shops,
             )

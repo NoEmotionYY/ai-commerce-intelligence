@@ -191,6 +191,12 @@ from commerce.services.tiktok_shop_sync import (
     TikTokShopSyncService,
     TikTokShopSyncValidationError,
 )
+from commerce.services.tiktok_shop_webhook import (
+    TikTokShopWebhookAuthenticationError,
+    TikTokShopWebhookConflictError,
+    TikTokShopWebhookService,
+    TikTokShopWebhookValidationError,
+)
 from commerce.tools import CommerceTools
 from commerce.workflow import create_purchase_draft, decide_approval, execute_approved_purchase
 
@@ -208,9 +214,11 @@ MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 256_000
 DOUYIN_SYNC_MAX_CONCURRENCY = 2
 DOUYIN_WEBHOOK_MAX_CONCURRENCY = 8
 TIKTOK_SHOP_SYNC_MAX_CONCURRENCY = 2
+TIKTOK_SHOP_WEBHOOK_MAX_CONCURRENCY = 8
 _douyin_sync_admission = threading.BoundedSemaphore(DOUYIN_SYNC_MAX_CONCURRENCY)
 _douyin_webhook_admission = threading.BoundedSemaphore(DOUYIN_WEBHOOK_MAX_CONCURRENCY)
 _tiktok_shop_sync_admission = threading.BoundedSemaphore(TIKTOK_SHOP_SYNC_MAX_CONCURRENCY)
+_tiktok_shop_webhook_admission = threading.BoundedSemaphore(TIKTOK_SHOP_WEBHOOK_MAX_CONCURRENCY)
 
 
 @app.exception_handler(RequestValidationError)
@@ -905,7 +913,7 @@ def douyin_sync_result_dict(item: DouyinSyncResult) -> dict[str, object]:
         "received": item.received,
         "processed": item.processed,
         "failed": item.failed,
-        "checkpoint": item.checkpoint,
+        "has_checkpoint": bool(item.checkpoint),
     }
 
 
@@ -962,7 +970,7 @@ def tiktok_shop_sync_result_dict(item: TikTokShopSyncResult) -> dict[str, object
         "received": item.received,
         "processed": item.processed,
         "failed": item.failed,
-        "checkpoint": item.checkpoint,
+        "has_checkpoint": bool(item.checkpoint),
     }
 
 
@@ -972,6 +980,15 @@ def _tiktok_shop_sync_service(session: Session, principal: Principal) -> TikTokS
     except CredentialConfigurationError as exc:
         raise HTTPException(503, "店铺凭据加密服务未配置") from exc
     return TikTokShopSyncService(session, principal, cipher)
+
+
+def _tiktok_shop_webhook_service(session: Session) -> TikTokShopWebhookService:
+    settings = get_settings()
+    try:
+        applications = settings.tiktok_shop_webhook_registry
+    except RuntimeConfigurationError as exc:
+        raise HTTPException(503, "TikTok Shop 回调认证服务未配置") from exc
+    return TikTokShopWebhookService(session, applications)
 
 
 def order_import_http_error(exc: Exception) -> HTTPException:
@@ -1484,6 +1501,32 @@ def run_v2_tiktok_shop_sync(
     finally:
         _tiktok_shop_sync_admission.release()
     return tiktok_shop_sync_result_dict(result)
+
+
+@app.post("/api/v2/platforms/tiktok-shop/webhook")
+async def receive_v2_tiktok_shop_webhook(
+    request: Request,
+    authorization: str = Header(default="", alias="Authorization"),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    if not _tiktok_shop_webhook_admission.acquire(blocking=False):
+        raise HTTPException(429, "TikTok Shop 回调服务繁忙", headers={"Retry-After": "1"})
+    try:
+        try:
+            await run_in_threadpool(
+                _tiktok_shop_webhook_service(session).ingest,
+                raw_body=await request.body(),
+                authorization=authorization,
+            )
+        except TikTokShopWebhookAuthenticationError as exc:
+            raise HTTPException(401, "TikTok Shop 回调认证失败") from exc
+        except TikTokShopWebhookValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except TikTokShopWebhookConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    finally:
+        _tiktok_shop_webhook_admission.release()
+    return {"code": 0, "message": "success"}
 
 
 @app.post("/api/v2/sync-jobs/{job_id}/start")

@@ -2,14 +2,14 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`.
-Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`).
+Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`).
-Last completed task: `COM-P1-008` — Douyin Connector (`DONE`).
-Phase 7 Exit Review passed. The platform-specific Douyin adapter, bounded pull continuation,
+Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
+Phase 8 Exit Review passed. The platform-specific TikTok Shop adapter, bounded pull continuation,
 credential refresh rotation, webhook RawEvent ingress, normalization, reconciliation, and
 SQLite/MySQL migration/concurrency evidence are verified locally. The current full suite is
-`338 passed, 18 skipped, 1 warning`;
+`416 passed, 18 skipped, 1 warning`;
 the 18 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
@@ -53,7 +53,8 @@ observations, SyncJob lifecycle, exclusive claims, lease recovery, retry/replay,
 and SQLite/MySQL migration evidence. COM-P0-007 provides additive unified commerce orders/items,
 validated idempotent snapshot normalization, exact SKU/source lineage, and tenant-scoped reads.
 At Phase 2 exit, real platform parsing remained connector work. Douyin local/mock connector
-evidence is now recorded in Phase 7; TikTok Shop and all real-platform verification remain later.
+evidence is now recorded in Phase 7 and TikTok Shop local/mock evidence in Phase 8; sandbox and
+real-platform verification remain outstanding and are not counted as Phase 2 evidence.
 
 Exit: canonical catalog, raw ingestion, synchronization foundation, and unified order import are
 locally verified on SQLite/MySQL with no production dependency on legacy Demo orders.
@@ -161,6 +162,13 @@ Dependencies: Phase 7 and shared unified model.
 
 Implement TikTok-specific authentication refresh, synchronization, finance/refund support,
 webhooks, retries, and contract tests without merging unrelated adapter APIs.
+
+Exit: satisfied at `L2 VERIFIED_LOCAL` / `VERIFIED_MOCK` for contract behavior. Product, SKU,
+order, inventory, refund, finance, authorized-shop binding, exact-body webhook, row-locked refresh,
+bounded continuation, cursor-cycle/total-count reconciliation, tenant/permission, leakage, API,
+SQLite, and disposable MySQL webhook/token-race gates pass. Webhook-to-domain Worker, scheduler,
+sandbox, and real seller execution remain unimplemented or unverified and are not counted as PASS.
+Real platform status is `IMPLEMENTED_UNVERIFIED`, not `BLOCKED_EXTERNAL`.
 
 ## Phase 9 — Dashboard and Agent Productization
 

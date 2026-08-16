@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`
-Current task: `COM-P1-009` — TikTok Shop Connector (`IN_PROGRESS`)
+Phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`
+Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
 Next task: `COM-P1-010` — Real Dashboard and Agent Tools (`TODO`)
-Last completed top-level task: `COM-P1-008` — Douyin Connector
-Current verification slice: `COM-P1-009C` — TikTok Shop Sync and RawEvent Integration (`IN_PROGRESS`)
-Last verified checkpoint: `COM-P1-008` final Exit Review (local checkpoint recorded with this evidence)
+Last completed top-level task: `COM-P1-009` — TikTok Shop Connector
+Current verification slice: `COM-P1-009` final Exit Review (`DONE`)
+Last verified checkpoint: `COM-P1-009` final Exit Review (local checkpoint recorded with this evidence)
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1325,3 +1325,68 @@ Status:
 
 - `COM-P1-009` remains `IN_PROGRESS`; the next verification slice is SyncJob/RawEvent/domain/API
   integration. P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.
+
+## 2026-08-17 — COM-P1-009 Final Exit Review and Verified Checkpoint
+
+Implemented and hardened:
+
+- Added tenant/permission-scoped TikTok Shop product/SKU, order, inventory, aftersales/refund, and
+  finance pulls through `SyncJob -> PlatformRawEvent -> normalization -> existing domain service`.
+  Finance persists the source statement transaction before deriving linked normalized components.
+- Added encrypted, row-locked token refresh with refresh-token expiry checks, complete response
+  validation, atomic connection recovery, and unique authorized-shop ID plus shop-cipher binding
+  before any RawEvent or domain write.
+- Added request fingerprinting, bounded deadline/retry/admission, compact persisted cursor history,
+  cross-continuation cycle detection, a 2048-page total job limit, stable `total_count` reconciliation,
+  and finance statement currency/time/count reconciliation. Stalled, incomplete, or conflicting
+  platform pagination fails closed before domain writes.
+- Added an exact-body TikTok webhook using the deployment-owned application/route registry,
+  one HMAC per request, active organization/shop/credential/connection checks, sensitive-payload
+  rejection, notification idempotency/conflict handling, immutable RawEvent ingress, and audit
+  metadata. Webhook domain consumption, scheduler, and Worker remain TARGET.
+- Removed connector checkpoint/cursor/request-fingerprint payloads from public API responses and
+  extended structured/text logging redaction to shop cipher material. The tenant route inventory
+  explicitly treats only the signed Douyin and TikTok webhooks as anonymous platform routes.
+
+Exit Review:
+
+- Product/Architecture: platform-specific behavior remains separate; normalized business meaning
+  is shared through existing services. RawEvent precedes normalized writes. Reviewer findings for
+  cross-request cursor loops, checkpoint-size conflict, finance page cardinality/time consistency,
+  and terminal total-count completeness were fixed. No unresolved Critical/High/Medium finding.
+- Security: deployment-owned O(1) webhook routing, exact-body HMAC, tenant/shop/credential state,
+  encrypted refresh, checkpoint redaction, sensitive logging, anonymous route inventory, and
+  MySQL webhook/token races pass. No unresolved Critical/High/Medium finding.
+- Testing/Reliability: duplicate/conflicting webhook delivery, stale/equal-time records, arbitrary
+  SKU/shop identities, retry/idempotency, invalid refresh, binding mismatch, continuation, cursor
+  cycles, total-count mismatch, finance raw lineage, tenant denial, and credential leakage are
+  covered. A full-suite route-inventory failure exposed the missing signed-webhook exception and
+  was fixed before the final clean rerun.
+
+Commands and final evidence:
+
+- TikTok sync-service regression after final hardening: `33 passed`.
+- TikTok/tenant/runtime/logging/client/normalization/API slice:
+  `python -m pytest -q ...`: `107 passed, 1 warning`.
+- `python -m pytest -q`: `416 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`140 files already formatted`).
+- `mypy .`: PASS (`111 source files`); `alembic heads`: one head,
+  `0014_douyin_webhook_lookup`; `git diff --check`: PASS.
+- Final guarded disposable official `mysql:8.4` verifier, run serially on the final tree: PASS for
+  fresh install, legacy `0002 -> head`, rollback/re-upgrade, schema/integrity/data preservation,
+  existing sync/inventory/purchase/alert races, and Douyin/TikTok webhook idempotency plus
+  cross-job token-refresh races. The explicitly named temporary container was removed; the
+  existing Compose MySQL was not touched. Additional isolated serial reruns also passed. One prior
+  verifier run overlapping a full pytest load failed internally without credential corruption;
+  repeated isolated runs did not reproduce it, so it is retained as non-blocking reliability
+  history rather than hidden or labelled `BLOCKED_EXTERNAL`.
+- The 18 Compose/browser/DeepSeek environment-gated skips were not counted as PASS. They do not
+  automatically block this connector-local Exit and remain for their productization/release phases.
+
+Status:
+
+- `COM-P1-009`: `DONE`; Implementation `PASS`; Contract/Mock `PASS` / `VERIFIED_MOCK` at
+  `L2 VERIFIED_LOCAL`; Real Platform `IMPLEMENTED_UNVERIFIED`.
+- Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`; current/next task:
+  `COM-P1-010` (`TODO`).
+- P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.

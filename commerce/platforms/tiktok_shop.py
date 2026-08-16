@@ -190,6 +190,15 @@ def sign_request(
     return hmac.new(app_secret.encode(), wrapped, hashlib.sha256).hexdigest()
 
 
+def sign_webhook(*, app_key: str, app_secret: str, raw_body: bytes) -> str:
+    """Implement the official exact-body TikTok Shop webhook signature."""
+    return hmac.new(
+        app_secret.encode("utf-8"),
+        app_key.encode("utf-8") + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+
 class TikTokShopAPIClient:
     """Bounded client for the explicitly supported official TikTok Shop endpoints."""
 
@@ -470,7 +479,14 @@ class TikTokShopAPIClient:
         data = self._parse_envelope(response, token_endpoint=True)
         access_token = data.get("access_token")
         new_refresh_token = data.get("refresh_token")
-        if not isinstance(access_token, str) or not isinstance(new_refresh_token, str):
+        if (
+            not isinstance(access_token, str)
+            or not access_token.strip()
+            or len(access_token) > 8192
+            or not isinstance(new_refresh_token, str)
+            or not new_refresh_token.strip()
+            or len(new_refresh_token) > 8192
+        ):
             raise TikTokShopResponseError(
                 "TikTok Shop 令牌响应无效", error_code="TIKTOK_TOKEN_RESPONSE_INVALID"
             )
@@ -484,8 +500,8 @@ class TikTokShopAPIClient:
             else None
         )
         return TikTokShopTokenSet(
-            access_token=access_token,
-            refresh_token=new_refresh_token,
+            access_token=access_token.strip(),
+            refresh_token=new_refresh_token.strip(),
             access_token_expires_at=access_expiry,
             refresh_token_expires_at=refresh_expiry,
         )

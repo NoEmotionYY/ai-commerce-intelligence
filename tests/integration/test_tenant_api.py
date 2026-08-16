@@ -217,7 +217,10 @@ def test_every_v2_business_route_rejects_missing_identity(tenant_client: TenantC
         for method in sorted(getattr(route, "methods", set())):
             if method in {"HEAD", "OPTIONS"}:
                 continue
-            if (method, path) == ("POST", "/api/v2/platforms/douyin/webhook"):
+            if (method, path) in {
+                ("POST", "/api/v2/platforms/douyin/webhook"),
+                ("POST", "/api/v2/platforms/tiktok-shop/webhook"),
+            }:
                 continue
             if method in {"POST", "PUT", "PATCH"}:
                 payload: object

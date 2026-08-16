@@ -23,6 +23,7 @@ from commerce.models import (
     CredentialStatus,
     OperationLog,
     Organization,
+    OrganizationStatus,
     PlatformRawEvent,
     Shop,
     ShopAuthorizationStatus,
@@ -200,6 +201,7 @@ class DouyinWebhookService:
             .join(ShopConnection, ShopConnection.shop_id == Shop.id)
             .where(
                 func.upper(Shop.platform) == "DOUYIN",
+                Organization.status == OrganizationStatus.ACTIVE,
                 Shop.status == ShopStatus.ACTIVE,
                 or_(
                     ShopConnection.authorization_status == ShopAuthorizationStatus.AUTHORIZED,

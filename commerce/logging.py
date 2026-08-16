@@ -7,11 +7,11 @@ from typing import Any
 
 REDACTED = "***REDACTED***"
 SENSITIVE_FIELD_PATTERN = re.compile(
-    r"(^|_)(authorization|credential|credentials|password|secret|token|api_key|sign|signature|signing_key|encryption_key|private_key)($|_)",
+    r"(^|_)(authorization|cipher|credential|credentials|password|secret|token|api_key|sign|signature|signing_key|encryption_key|private_key)($|_)",
     re.IGNORECASE,
 )
 SENSITIVE_TEXT_PATTERN = re.compile(
-    r"(?i)((?:access|refresh|service|api|event)?_?(?:token|secret|password|authorization|credential|sign|signature)\s*[=:]\s*)([^&\s,;]+)"
+    r"(?i)((?:access|refresh|service|api|event|shop)?_?(?:token|secret|password|authorization|cipher|credential|sign|signature)\s*[=:]\s*)([^&\s,;]+)"
 )
 
 

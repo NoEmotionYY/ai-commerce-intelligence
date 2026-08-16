@@ -189,8 +189,8 @@ platform adapters and CSV/XLSX importers call the service after their own contra
 
 Authenticated V2 order list/detail APIs are read-only, tenant-scoped, cursor-bounded, and support
 shop/platform/status/date filters without returning raw payloads or claim tokens. This is
-`L2 VERIFIED_LOCAL`. Douyin payload/status normalization now exists under the separately labelled
-connector in section 3.14; TikTok Shop and real-platform verification remain TARGET.
+`L2 VERIFIED_LOCAL`. Douyin and TikTok Shop payload/status normalization now exist under the
+separately labelled connectors in sections 3.14 and 3.15; real-platform verification remains TARGET.
 
 ## 3.8 CURRENT: Shop Connections and Capabilities
 
@@ -208,11 +208,12 @@ Internal SyncJob checkpoints may contain connector pagination state. Public Sync
 not serialize that payload and expose only `has_checkpoint`. Persisted error codes must come from
 the server-owned registry; unsafe historical values are returned as `UNSAFE_ERROR_REDACTED`.
 
-This is current implementation under `COM-P1-001`, not a completed production connector. It has
+This is current implementation under `COM-P1-001`, not by itself a completed production connector.
+The later Douyin and TikTok Shop adapters are documented separately in sections 3.14 and 3.15. It has
 green local automated coverage and passing SQLite/MySQL migration and concurrency gates.
 `COM-P1-001A` through `COM-P1-001D` and the parent task are complete after an independent exit
-review found no blocking Product, Architecture, Security, or Testing issue. No Douyin or TikTok
-Shop API has been implemented or verified by this work.
+review found no blocking Product, Architecture, Security, or Testing issue. This phase did not
+implement or verify either platform API; those later connector results have separate evidence.
 
 ## 3.9 CURRENT: Warehouse and Channel Inventory
 
@@ -241,7 +242,8 @@ only when their expected time falls within the lead-time plus safety window.
 
 This is `L2 VERIFIED_LOCAL`, including SQLite and disposable official MySQL 8.4 evidence. The
 Douyin inventory adapter in section 3.14 is also local/mock verified, but neither section claims
-real-platform inventory verification; TikTok Shop synchronization remains TARGET.
+real-platform inventory verification. The TikTok Shop inventory adapter in section 3.15 is also
+local/mock verified; no section claims sandbox or real-platform inventory verification.
 
 ## 3.10 CURRENT: Costs, Refunds, Settlements, and Profit
 
@@ -263,10 +265,10 @@ Authoritative refund/settlement/transaction writes remain internal ingestion-ser
 raw payloads, claim tokens, and credentials are not returned.
 
 This is `L2 VERIFIED_LOCAL`: focused service/API/migration tests, full regression, SQLite, and
-disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass. Douyin refund
-normalization now calls this service as described in section 3.14, but remains local/mock rather
-than real finance verification. TikTok Shop and real-platform production synchronization remain
-TARGET.
+disposable MySQL 8.4.11 migration/integrity/data-preservation verification pass. Douyin refund and
+TikTok Shop refund/finance normalization call this service as described in sections 3.14 and 3.15,
+but remain local/mock rather than real finance verification. Real-platform production
+synchronization remains unverified.
 
 ## 3.11 CURRENT: Suppliers, Purchasing, and Inbound Planning
 
@@ -402,6 +404,43 @@ an external-shop-bounded compatibility lookup.
 Verification state: `Implementation: PASS`; `Contract/Mock: PASS` at `L2 VERIFIED_LOCAL`;
 `Real Platform: IMPLEMENTED_UNVERIFIED`. No sandbox, real seller credential, developer approval,
 or live-platform execution was used, so this is not `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
+
+## 3.15 CURRENT: TikTok Shop Connector (Local/Mock Verified)
+
+The TikTok Shop-specific adapter implements the currently documented official request contracts
+for authorized shops, products/SKUs, orders, inventory, aftersales, finance statements and
+transactions, token refresh, and webhooks. It pins separate official API and token HTTPS origins,
+uses the documented request signing and `x-tts-access-token` header, and bounds retries,
+Retry-After, response size, per-request timeout, total deadline, and process admission. Before any
+RawEvent or domain write, the adapter requires exactly one authorized platform shop matching the
+local external shop ID and constant-time compares its shop cipher.
+
+Authenticated pulls follow `SyncJob -> PlatformRawEvent -> platform normalization -> trusted
+domain service`. Product, order, inventory, refund, and finance pulls are tenant/permission scoped
+and idempotency keys are bound to their full request identity. Continuation checkpoints are hidden
+from public APIs, use compact cursor digests to detect cycles across requests, reconcile stable
+platform `total_count`, and cap a job at 2048 pages below the shared checkpoint-size limit. Product
+and inventory observations preserve source time and stale/equal-time semantics. Finance first
+stores the statement transaction source RawEvent, then emits individually linked normalized
+components; statement ID, currency, creation time, pagination count, and transaction count must
+reconcile before authoritative finance writes.
+
+Expired-token recovery starts a visible SyncJob, holds the credential row lock, reuses a token
+already rotated by another job or validates and rotates once, and atomically restores connection
+authorization. Refresh-token expiry and malformed refresh responses fail before platform or
+credential mutation. Disposable MySQL races verify single rotation across concurrent job types.
+
+The anonymous webhook uses the deployment-owned `TIKTOK_SHOP_WEBHOOK_APPLICATIONS` registry with a
+globally unique external-shop-to-organization route. It selects one application in constant time,
+verifies `HMAC-SHA256(app_key + exact raw body, app_secret)`, rejects sensitive payloads and
+inactive/revoked routes, deduplicates `tts_notification_id`, and stores only immutable `RECEIVED`
+RawEvent plus bounded audit metadata. Webhook-to-domain consumption, a scheduler, and a background
+Worker remain TARGET.
+
+Verification state: `Implementation: PASS`; `Contract/Mock: PASS` at `L2 VERIFIED_LOCAL`;
+`Real Platform: IMPLEMENTED_UNVERIFIED`. SQLite, full regression, and disposable MySQL 8.4
+migration/data-preservation/webhook/token-race gates pass. No sandbox, seller credential, or live
+platform execution was used, so this is not `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
 
 ## 4. TARGET: Production Data Flow
 

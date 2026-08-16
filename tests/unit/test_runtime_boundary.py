@@ -125,6 +125,54 @@ def test_douyin_webhook_application_registry_is_explicit_and_secret_safe() -> No
     assert "never-render-this-secret" not in repr(application)
 
 
+def test_tiktok_webhook_application_registry_is_explicit_and_secret_safe() -> None:
+    with pytest.raises(RuntimeConfigurationError, match="Webhook 应用配置"):
+        _ = Settings(tiktok_shop_webhook_applications="").tiktok_shop_webhook_registry
+    settings = Settings(
+        tiktok_shop_webhook_applications=json.dumps(
+            {
+                "public-app-key": {
+                    "app_secret": "never-render-tiktok-secret",
+                    "shop_organizations": {"external-shop-1": "merchant-one"},
+                }
+            }
+        )
+    )
+    application = settings.tiktok_shop_webhook_registry["public-app-key"]
+    assert application.shop_organizations == {"external-shop-1": "merchant-one"}
+    assert "never-render-tiktok-secret" not in repr(application)
+    with pytest.raises(RuntimeConfigurationError, match="应用配置"):
+        _ = Settings(
+            tiktok_shop_webhook_applications=json.dumps(
+                {
+                    " duplicate ": {
+                        "app_secret": "one",
+                        "shop_organizations": {"shop-1": "merchant-one"},
+                    },
+                    "duplicate": {
+                        "app_secret": "two",
+                        "shop_organizations": {"shop-2": "merchant-two"},
+                    },
+                }
+            )
+        ).tiktok_shop_webhook_registry
+    with pytest.raises(RuntimeConfigurationError, match="路由不唯一"):
+        _ = Settings(
+            tiktok_shop_webhook_applications=json.dumps(
+                {
+                    "app-one": {
+                        "app_secret": "one",
+                        "shop_organizations": {"same-shop": "merchant-one"},
+                    },
+                    "app-two": {
+                        "app_secret": "two",
+                        "shop_organizations": {"same-shop": "merchant-two"},
+                    },
+                }
+            )
+        ).tiktok_shop_webhook_registry
+
+
 def test_production_agent_tools_do_not_fall_back_to_legacy_services(
     db_session: Session,
 ) -> None:

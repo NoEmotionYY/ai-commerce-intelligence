@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -47,6 +48,7 @@ from commerce.platforms.tiktok_shop import (
 from commerce.services.ingestion import IngestionConflictError, IngestionTransitionError
 from commerce.services.shop_connection import ShopConnectionService
 from commerce.services.tiktok_shop_sync import (
+    MAX_PAGES_PER_JOB,
     TikTokShopSyncExecutionError,
     TikTokShopSyncResult,
     TikTokShopSyncService,
@@ -66,6 +68,7 @@ class StubTikTokShopClient(TikTokShopAPIClient):
         inventories: list[TikTokShopInventoryResult] | None = None,
         statements: list[TikTokShopPage] | None = None,
         statement_transactions: list[TikTokShopStatementTransactionPage] | None = None,
+        authorized_shops: tuple[dict[str, object], ...] | None = None,
     ) -> None:
         self.products = iter(products or [])
         self.orders = iter(orders or [])
@@ -73,6 +76,12 @@ class StubTikTokShopClient(TikTokShopAPIClient):
         self.inventories = iter(inventories or [])
         self.statements = iter(statements or [])
         self.statement_transactions = iter(statement_transactions or [])
+        default_authorized_shops: tuple[dict[str, object], ...] = (
+            {"id": "tiktok-shop", "cipher": "tiktok-shop-cipher"},
+        )
+        self.authorized_shops = (
+            default_authorized_shops if authorized_shops is None else authorized_shops
+        )
 
     def __enter__(self) -> StubTikTokShopClient:
         return self
@@ -84,6 +93,9 @@ class StubTikTokShopClient(TikTokShopAPIClient):
         self, deadline_at: float, *, clock: Callable[[], float] | None = None
     ) -> None:
         return None
+
+    def list_authorized_shops(self) -> tuple[dict[str, object], ...]:
+        return self.authorized_shops
 
     def search_products(self, **_kwargs: object) -> TikTokShopPage:
         return next(self.products)
@@ -418,6 +430,7 @@ def test_bounded_page_token_continuation_resumes(db_session: Session) -> None:
 
     class ChunkedClient(StubTikTokShopClient):
         def __init__(self) -> None:
+            super().__init__()
             self.pages = iter(
                 [
                     TikTokShopPage((_product_payload(),), "next-token", 1),
@@ -450,6 +463,119 @@ def test_bounded_page_token_continuation_resumes(db_session: Session) -> None:
     )
     assert completed.status is SyncJobStatus.SUCCESS
     assert tokens == [None, "next-token"]
+
+
+def test_page_token_cycle_across_continuations_fails_closed(db_session: Session) -> None:
+    cipher = CredentialCipher({"v1": b"d" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+
+    class CyclingClient(StubTikTokShopClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pages = iter(
+                [
+                    TikTokShopPage((), "cursor-a", 0),
+                    TikTokShopPage((), "cursor-b", 0),
+                    TikTokShopPage((), "cursor-a", 0),
+                ]
+            )
+
+        def search_products(self, **_kwargs: object) -> TikTokShopPage:
+            return next(self.pages)
+
+    service = TikTokShopSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=_factory(CyclingClient()),
+    )
+
+    def run_chunk() -> TikTokShopSyncResult:
+        return service.run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="tiktok-product-cursor-cycle",
+            max_pages=1,
+        )
+
+    assert run_chunk().status is SyncJobStatus.PENDING
+    assert run_chunk().status is SyncJobStatus.PENDING
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        run_chunk()
+    assert error.value.error_code == "TIKTOK_CURSOR_STALLED"
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
+
+
+def test_cursor_history_fits_checkpoint_and_total_page_limit_is_controlled(
+    db_session: Session,
+) -> None:
+    hashes: list[str] = []
+    current: str | None = None
+    for index in range(MAX_PAGES_PER_JOB):
+        next_token = f"cursor-{index}"
+        hashes = TikTokShopSyncService._advance_cursor(
+            current_token=current,
+            next_token=next_token,
+            token_history=hashes,
+        )
+        current = next_token
+    assert len(json.dumps({"page_cursor_hashes": hashes}, separators=(",", ":")).encode()) < 65_536
+    with pytest.raises(TikTokShopSyncExecutionError) as history_error:
+        TikTokShopSyncService._advance_cursor(
+            current_token=current,
+            next_token="cursor-over-limit",
+            token_history=hashes,
+        )
+    assert history_error.value.error_code == "TIKTOK_CURSOR_LIMIT_EXCEEDED"
+
+    cipher = CredentialCipher({"v1": b"g" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    client = StubTikTokShopClient(
+        products=[
+            TikTokShopPage((), "cursor-next", 0),
+            TikTokShopPage((), None, 0),
+        ]
+    )
+    service = TikTokShopSyncService(db_session, principal, cipher, client_factory=_factory(client))
+    first = service.run(
+        shop_id=shop.id,
+        job_type="PRODUCTS.PULL",
+        idempotency_key="tiktok-total-page-limit",
+        max_pages=1,
+    )
+    assert first.status is SyncJobStatus.PENDING
+    job = db_session.query(SyncJob).one()
+    job.checkpoint = {**dict(job.checkpoint or {}), "pages": MAX_PAGES_PER_JOB}
+    db_session.commit()
+    with pytest.raises(TikTokShopSyncExecutionError) as page_error:
+        service.run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="tiktok-total-page-limit",
+            max_pages=1,
+        )
+    assert page_error.value.error_code == "TIKTOK_PAGE_LIMIT_EXCEEDED"
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
+
+
+def test_terminal_product_page_must_reconcile_total_count(db_session: Session) -> None:
+    cipher = CredentialCipher({"v1": b"h" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(
+                StubTikTokShopClient(products=[TikTokShopPage((_product_payload(),), None, 2)])
+            ),
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="tiktok-product-total-count-mismatch",
+        )
+    assert error.value.error_code == "TIKTOK_PAGE_RESPONSE_INVALID"
+    assert db_session.query(PlatformRawEvent).count() == 0
 
 
 def test_invalid_payload_is_visible_partial_and_does_not_write_domain(db_session: Session) -> None:
@@ -556,6 +682,49 @@ def test_refresh_failure_leaves_failed_job_and_unrotated_credential(db_session: 
         credential.id
     )
     assert payload == old_payload
+
+
+def test_invalid_refresh_response_never_rotates_credential_or_authorization(
+    db_session: Session,
+) -> None:
+    cipher = CredentialCipher({"v1": b"b" * 32}, "v1")
+    principal, shop, _, old_payload = _tenant(db_session, cipher)
+    credential = db_session.query(ShopCredential).one()
+    credential.status = CredentialStatus.EXPIRED
+    credential.expires_at = utcnow() - timedelta(minutes=1)
+    connection = db_session.query(ShopConnection).one()
+    connection.authorization_status = ShopAuthorizationStatus.REAUTH_REQUIRED
+    connection.authorization_error_code = "CREDENTIAL_EXPIRED"
+    db_session.commit()
+
+    class InvalidRefreshClient(StubTikTokShopClient):
+        def refresh_access_token(self) -> TikTokShopTokenSet:
+            return TikTokShopTokenSet(
+                access_token=" ",
+                refresh_token="",
+                access_token_expires_at=int((utcnow() + timedelta(hours=1)).timestamp()),
+                refresh_token_expires_at=int((utcnow() + timedelta(days=30)).timestamp()),
+            )
+
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(InvalidRefreshClient()),
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key="tiktok-invalid-refresh-response",
+        )
+    assert error.value.error_code == "TIKTOK_CREDENTIAL_INVALID"
+    payload = CredentialService(db_session, principal, cipher).decrypt_for_platform_refresh(
+        credential.id
+    )
+    assert payload == old_payload
+    db_session.refresh(connection)
+    assert connection.authorization_status is ShopAuthorizationStatus.REAUTH_REQUIRED
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
 
 
 def test_expired_refresh_token_fails_before_platform_call(db_session: Session) -> None:
@@ -699,6 +868,166 @@ def test_finance_nested_continuation_resumes_statement_and_transaction_tokens(
     assert db_session.query(FinanceTransaction).count() == 8
 
 
+def test_finance_transaction_cursor_cycle_across_continuations_fails_closed(
+    db_session: Session,
+) -> None:
+    cipher = CredentialCipher({"v1": b"e" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    client = StubTikTokShopClient(
+        statements=[
+            TikTokShopPage(
+                ({"id": "ST-CYCLE", "currency": "USD", "statement_time": 1_700_000_500},),
+                None,
+                1,
+            )
+        ],
+        statement_transactions=[
+            TikTokShopStatementTransactionPage(
+                statement_id="ST-CYCLE",
+                currency="USD",
+                statement_created_at=1_700_000_500,
+                transactions=(),
+                next_page_token="cursor-a",
+                total_count=0,
+            ),
+            TikTokShopStatementTransactionPage(
+                statement_id="ST-CYCLE",
+                currency="USD",
+                statement_created_at=1_700_000_500,
+                transactions=(),
+                next_page_token="cursor-b",
+                total_count=0,
+            ),
+            TikTokShopStatementTransactionPage(
+                statement_id="ST-CYCLE",
+                currency="USD",
+                statement_created_at=1_700_000_500,
+                transactions=(),
+                next_page_token="cursor-a",
+                total_count=0,
+            ),
+        ],
+    )
+    service = TikTokShopSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=_factory(client),
+    )
+
+    def run_chunk() -> TikTokShopSyncResult:
+        return service.run(
+            shop_id=shop.id,
+            job_type="FINANCE.PULL",
+            idempotency_key="tiktok-finance-cursor-cycle",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            max_pages=1,
+        )
+
+    assert run_chunk().status is SyncJobStatus.PENDING
+    assert run_chunk().status is SyncJobStatus.PENDING
+    assert run_chunk().status is SyncJobStatus.PENDING
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        run_chunk()
+    assert error.value.error_code == "TIKTOK_CURSOR_STALLED"
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
+
+
+def test_finance_statement_page_rejects_multiple_items(db_session: Session) -> None:
+    cipher = CredentialCipher({"v1": b"f" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    statements = (
+        {"id": "ST-1", "currency": "USD", "statement_time": 1_700_000_500},
+        {"id": "ST-2", "currency": "USD", "statement_time": 1_700_000_600},
+    )
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(
+                StubTikTokShopClient(statements=[TikTokShopPage(statements, None, 2)])
+            ),
+        ).run(
+            shop_id=shop.id,
+            job_type="FINANCE.PULL",
+            idempotency_key="tiktok-finance-statement-cardinality",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+        )
+    assert error.value.error_code == "TIKTOK_FINANCE_RESPONSE_INVALID"
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("statement_total", "transaction_total", "transaction_created_at"),
+    [
+        (2, 1, 1_700_000_500),
+        (1, 2, 1_700_000_500),
+        (1, 1, 1_700_000_501),
+    ],
+)
+def test_finance_statement_and_transaction_metadata_must_reconcile(
+    db_session: Session,
+    statement_total: int,
+    transaction_total: int,
+    transaction_created_at: int,
+) -> None:
+    cipher = CredentialCipher({"v1": b"i" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(
+                StubTikTokShopClient(
+                    statements=[
+                        TikTokShopPage(
+                            (
+                                {
+                                    "id": "ST-RECONCILE",
+                                    "currency": "USD",
+                                    "statement_time": 1_700_000_500,
+                                },
+                            ),
+                            None,
+                            statement_total,
+                        )
+                    ],
+                    statement_transactions=[
+                        TikTokShopStatementTransactionPage(
+                            statement_id="ST-RECONCILE",
+                            currency="USD",
+                            statement_created_at=transaction_created_at,
+                            transactions=(
+                                {
+                                    "id": "TX-RECONCILE",
+                                    "revenue_amount": "1",
+                                },
+                            ),
+                            next_page_token=None,
+                            total_count=transaction_total,
+                        )
+                    ],
+                )
+            ),
+        ).run(
+            shop_id=shop.id,
+            job_type="FINANCE.PULL",
+            idempotency_key=(
+                f"tiktok-finance-metadata-{statement_total}-"
+                f"{transaction_total}-{transaction_created_at}"
+            ),
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+        )
+    assert error.value.error_code == "TIKTOK_FINANCE_RESPONSE_INVALID"
+    assert db_session.query(PlatformRawEvent).count() == 0
+
+
 def test_product_snapshot_ignores_stale_and_rejects_equal_time_conflict(
     db_session: Session,
 ) -> None:
@@ -819,6 +1148,35 @@ def test_mixed_order_aftersales_fails_closed_as_one_raw_event(db_session: Sessio
     assert db_session.query(Refund).count() == 0
 
 
+def test_mixed_type_aftersales_does_not_drop_invalid_request(db_session: Session) -> None:
+    cipher = CredentialCipher({"v1": b"8" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    aftersales = _refund_payload()
+    requests = aftersales["sku_return_requests"]
+    assert isinstance(requests, list)
+    requests.append("invalid-request")
+    result = TikTokShopSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=_factory(
+            StubTikTokShopClient(aftersales=[TikTokShopPage((aftersales,), None, 1)])
+        ),
+    ).run(
+        shop_id=shop.id,
+        job_type="REFUNDS.PULL",
+        idempotency_key="tiktok-refunds-mixed-type",
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+    )
+    assert result.status is SyncJobStatus.PARTIAL
+    assert (result.received, result.processed, result.failed) == (1, 0, 1)
+    event = db_session.query(PlatformRawEvent).one()
+    assert event.status is RawEventStatus.FAILED
+    assert len(event.payload["sku_return_requests"]) == 2
+    assert db_session.query(Refund).count() == 0
+
+
 @pytest.mark.parametrize("returned_sku", [None, "SKU-EXTRA"])
 def test_inventory_response_must_match_requested_skus(
     db_session: Session, returned_sku: str | None
@@ -870,6 +1228,124 @@ def test_inventory_response_must_match_requested_skus(
     failed_job = db_session.query(SyncJob).filter_by(job_type="INVENTORY.PULL").one()
     assert failed_job.status is SyncJobStatus.FAILED
     assert db_session.query(ChannelInventory).count() == 0
+
+
+def test_unchanged_inventory_in_a_new_job_records_fresh_observation(db_session: Session) -> None:
+    cipher = CredentialCipher({"v1": b"9" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    TikTokShopSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=_factory(
+            StubTikTokShopClient(products=[TikTokShopPage((_product_payload(),), None, 1)])
+        ),
+    ).run(
+        shop_id=shop.id,
+        job_type="PRODUCTS.PULL",
+        idempotency_key="tiktok-inventory-freshness-product",
+    )
+    inventory_response = TikTokShopInventoryResult(
+        (
+            {
+                "product_id": "PRODUCT-1",
+                "skus": [
+                    {
+                        "id": "SKU-RED",
+                        "total_available_quantity": 8,
+                        "total_committed_quantity": 2,
+                    }
+                ],
+            },
+        )
+    )
+
+    def synchronize(key: str) -> None:
+        result = TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(StubTikTokShopClient(inventories=[inventory_response])),
+        ).run(shop_id=shop.id, job_type="INVENTORY.PULL", idempotency_key=key)
+        assert result.status is SyncJobStatus.SUCCESS
+
+    synchronize("tiktok-inventory-freshness-1")
+    first = db_session.query(ChannelInventory).one()
+    first_event_id = first.last_source_event_id
+    first_observed_at = first.observed_at
+    synchronize("tiktok-inventory-freshness-2")
+    db_session.refresh(first)
+    assert first.last_source_event_id != first_event_id
+    assert first.observed_at > first_observed_at
+    inventory_events = db_session.query(PlatformRawEvent).filter_by(
+        event_type="INVENTORY.CHANNEL_SNAPSHOT"
+    )
+    assert inventory_events.count() == 2
+
+
+@pytest.mark.parametrize(
+    "transaction",
+    [
+        {"id": "TX-BAD", "revenue_amount": "not-a-number"},
+        {
+            "id": "TX-ZERO",
+            "revenue_amount": "0",
+            "shipping_cost_amount": "0",
+            "fee_tax_amount": "0",
+            "adjustment_amount": "0",
+        },
+    ],
+)
+def test_finance_source_raw_event_precedes_normalization(
+    db_session: Session, transaction: dict[str, object]
+) -> None:
+    cipher = CredentialCipher({"v1": b"a" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    result = TikTokShopSyncService(
+        db_session,
+        principal,
+        cipher,
+        client_factory=_factory(
+            StubTikTokShopClient(
+                statements=[
+                    TikTokShopPage(
+                        ({"id": "ST-RAW", "currency": "USD", "statement_time": 1_700_000_500},),
+                        None,
+                        1,
+                    )
+                ],
+                statement_transactions=[
+                    TikTokShopStatementTransactionPage(
+                        statement_id="ST-RAW",
+                        currency="USD",
+                        statement_created_at=1_700_000_500,
+                        transactions=(transaction,),
+                        next_page_token=None,
+                        total_count=1,
+                    )
+                ],
+            )
+        ),
+    ).run(
+        shop_id=shop.id,
+        job_type="FINANCE.PULL",
+        idempotency_key=f"tiktok-finance-raw-{transaction['id']}",
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+    )
+    source = (
+        db_session.query(PlatformRawEvent)
+        .filter_by(event_type="FINANCE.STATEMENT_TRANSACTION_RAW")
+        .one()
+    )
+    assert source.payload["transaction"] == transaction
+    if transaction["id"] == "TX-BAD":
+        assert result.status is SyncJobStatus.PARTIAL
+        assert source.status is RawEventStatus.FAILED
+    else:
+        assert result.status is SyncJobStatus.SUCCESS
+        assert source.status is RawEventStatus.PROCESSED
+    assert db_session.query(FinanceTransaction).count() == 0
 
 
 def test_platform_authentication_error_refreshes_once_then_retries(db_session: Session) -> None:
@@ -942,3 +1418,42 @@ def test_revoked_or_invalid_credential_never_enters_client(
         )
     assert calls == 0
     assert db_session.query(SyncJob).count() == 0
+
+
+@pytest.mark.parametrize(
+    "authorized_shops",
+    [
+        (),
+        ({"id": "other-shop", "cipher": "tiktok-shop-cipher"},),
+        ({"id": "tiktok-shop", "cipher": "wrong-cipher"},),
+        (
+            {"id": "tiktok-shop", "cipher": "tiktok-shop-cipher"},
+            {"id": "tiktok-shop", "cipher": "tiktok-shop-cipher"},
+        ),
+    ],
+)
+def test_authorized_shop_binding_fails_before_raw_or_domain_write(
+    db_session: Session, authorized_shops: tuple[dict[str, object], ...]
+) -> None:
+    cipher = CredentialCipher({"v1": b"c" * 32}, "v1")
+    principal, shop, _, _ = _tenant(db_session, cipher)
+    with pytest.raises(TikTokShopSyncExecutionError) as error:
+        TikTokShopSyncService(
+            db_session,
+            principal,
+            cipher,
+            client_factory=_factory(
+                StubTikTokShopClient(
+                    products=[TikTokShopPage((_product_payload(),), None, 1)],
+                    authorized_shops=authorized_shops,
+                )
+            ),
+        ).run(
+            shop_id=shop.id,
+            job_type="PRODUCTS.PULL",
+            idempotency_key=f"tiktok-binding-{len(authorized_shops)}-{hash(str(authorized_shops))}",
+        )
+    assert error.value.error_code == "TIKTOK_SHOP_BINDING_INVALID"
+    assert db_session.query(PlatformRawEvent).count() == 0
+    assert db_session.query(MasterProduct).count() == 0
+    assert db_session.query(SyncJob).one().status is SyncJobStatus.FAILED

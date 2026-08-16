@@ -64,7 +64,11 @@ def test_httpx_url_arguments_are_redacted_after_formatting() -> None:
         ) as client:
             client.get(
                 "https://openapi-fxg.jinritemai.com/order/searchList",
-                params={"access_token": "LEAK-ME", "sign": "SIGNED"},
+                params={
+                    "access_token": "LEAK-ME",
+                    "sign": "SIGNED",
+                    "shop_cipher": "CIPHER-LEAK",
+                },
             )
     finally:
         logger.removeHandler(handler)
@@ -73,7 +77,8 @@ def test_httpx_url_arguments_are_redacted_after_formatting() -> None:
     rendered = stream.getvalue()
     assert "LEAK-ME" not in rendered
     assert "SIGNED" not in rendered
-    assert rendered.count(REDACTED) == 2
+    assert "CIPHER-LEAK" not in rendered
+    assert rendered.count(REDACTED) == 3
 
 
 def test_agent_api_lifespan_installs_redaction_filter() -> None:

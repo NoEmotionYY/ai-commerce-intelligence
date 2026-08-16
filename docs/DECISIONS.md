@@ -590,3 +590,43 @@ limitations while protecting shared worker time.
 Consequences: Webhook contract/mock verification remains `PASS` / `VERIFIED_MOCK`; real Douyin
 verification remains `IMPLEMENTED_UNVERIFIED`; no external blocker is recorded. A future persisted
 application/route registry and asynchronous webhook consumer are separate internal work.
+
+## ADR-026 — TikTok Shop Uses Explicit Shop Binding and Reconciled Bounded Pulls
+
+Date: 2026-08-17
+Status: ACCEPTED
+
+Context: TikTok Shop uses page tokens, shop cipher authorization, separate finance statement and
+transaction contracts, and an application-level webhook secret. A connector that trusts only a
+local external shop ID, exposes opaque checkpoints, silently accepts incomplete terminal pages, or
+selects a webhook secret by scanning tenant credentials could misroute data or run forever across
+request-time continuations. Finance normalization failures must not erase the platform source
+evidence, and concurrent expired-token jobs must not rotate credentials twice.
+
+Decision: Keep a TikTok-specific client and normalization layer. Before pull data access, require
+the authorized-shop response to contain exactly one local external shop ID and constant-time match
+its shop cipher. Route pulls through a visible SyncJob and immutable PlatformRawEvent before trusted
+catalog/order/inventory/finance services. Bind idempotency to the complete request; cap a job at
+2048 pages; store compact 96-bit cursor digests below the shared checkpoint limit; detect cycles
+across continuations; and reconcile stable platform total counts at terminal product/order/refund,
+statement, and transaction pages. Require finance transaction statement time and currency to match
+the current statement. Persist the statement transaction source RawEvent before deriving linked
+finance component events.
+
+For refresh, lock and reread the credential, reuse a concurrent rotation or validate and rotate
+once, and atomically restore authorization. For webhooks, use the deployment-owned
+`TIKTOK_SHOP_WEBHOOK_APPLICATIONS` registry with a globally unique external-shop-to-organization
+route. Select one application before computing the exact-body HMAC; tenant credentials cannot
+choose anonymous routing. Persist only verified immutable RawEvents and bounded audit metadata.
+Public APIs expose only `has_checkpoint`, not cursor or request-fingerprint content.
+
+Reasoning: These boundaries make long-running request-time synchronization bounded and
+reconcilable without creating a universal platform abstraction. Server-owned shop/application
+routing, raw evidence, row-locked rotation, and explicit completeness checks preserve tenant,
+credential, and data-integrity guarantees.
+
+Consequences: `COM-P1-009` is `DONE` at `L2 VERIFIED_LOCAL` / `VERIFIED_MOCK` after focused/full,
+SQLite, and disposable MySQL 8.4 migration, data-preservation, webhook-idempotency, and token-race
+gates. Real TikTok Shop status is `IMPLEMENTED_UNVERIFIED`, not sandbox/real PASS. A scheduler,
+webhook domain consumer, Worker, and real seller validation remain future or external verification
+work. Phase 9 and `COM-P1-010` are next; no `BLOCKED_EXTERNAL` is recorded.

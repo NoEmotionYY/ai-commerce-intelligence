@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import secrets
@@ -71,6 +72,8 @@ PULL_JOB_TYPES = frozenset(
     {"PRODUCTS.PULL", "ORDERS.PULL", "INVENTORY.PULL", "REFUNDS.PULL", "FINANCE.PULL"}
 )
 WINDOWED_JOB_TYPES = frozenset({"ORDERS.PULL", "REFUNDS.PULL", "FINANCE.PULL"})
+MAX_PAGES_PER_JOB = 2048
+MAX_CURSOR_HISTORY = MAX_PAGES_PER_JOB
 MAX_SYNC_WINDOW = timedelta(days=31)
 EXPECTED_EVENT_ERRORS = (
     CatalogConflictError,
@@ -310,6 +313,7 @@ class TikTokShopSyncService:
         self._check_deadline(deadline_at)
         with self.client_factory(credentials) as client:
             client.set_request_deadline(deadline_at, clock=self.monotonic_clock)
+            self._verify_shop_binding(client, shop, credentials)
             if job_type == "PRODUCTS.PULL":
                 return self._pull_page_token_records(
                     client=client,
@@ -378,7 +382,9 @@ class TikTokShopSyncService:
         checkpoint = dict(job.checkpoint or {})
         token_value = checkpoint.get("page_token")
         page_token = token_value if isinstance(token_value, str) and token_value else None
-        seen_tokens: set[str] = set()
+        token_history = self._cursor_history(checkpoint, "page_cursor_hashes")
+        source_seen = self._checkpoint_count(checkpoint, "source_records_seen")
+        source_total = self._optional_checkpoint_count(checkpoint, "source_total_count")
         for _ in range(max_pages):
             self._check_deadline(deadline_at)
             start_timestamp = int(start.timestamp()) if start else None
@@ -410,7 +416,15 @@ class TikTokShopSyncService:
                 )
                 event_type = "REFUND.SNAPSHOT"
                 processor = self._process_refund
-            counters["pages"] += 1
+            self._record_page(counters)
+            source_seen, source_total = self._page_progress(
+                seen=source_seen,
+                expected_total=source_total,
+                item_count=len(page.items),
+                reported_total=page.total_count,
+                terminal=page.next_page_token is None,
+                error_code="TIKTOK_PAGE_RESPONSE_INVALID",
+            )
             for raw in page.items:
                 self._check_deadline(deadline_at)
                 payloads = self._refund_event_payloads(raw) if job_type == "REFUNDS.PULL" else [raw]
@@ -428,20 +442,26 @@ class TikTokShopSyncService:
                         counters=counters,
                     )
             next_token = page.next_page_token
+            if next_token is not None:
+                token_history = self._advance_cursor(
+                    current_token=page_token,
+                    next_token=next_token,
+                    token_history=token_history,
+                )
             self._checkpoint(
                 job.id,
                 job_claim,
                 counters,
-                {"page_token": next_token, "window_end": end.isoformat() if end else None},
+                {
+                    "page_token": next_token,
+                    "page_cursor_hashes": token_history,
+                    "source_records_seen": source_seen,
+                    "source_total_count": source_total,
+                    "window_end": end.isoformat() if end else None,
+                },
             )
             if next_token is None:
                 return counters
-            if next_token == page_token or next_token in seen_tokens:
-                raise TikTokShopSyncExecutionError(
-                    "TikTok Shop 分页游标未前进",
-                    error_code="TIKTOK_CURSOR_STALLED",
-                )
-            seen_tokens.add(next_token)
             page_token = next_token
         raise _TikTokShopSyncContinuation(counters)
 
@@ -506,10 +526,13 @@ class TikTokShopSyncService:
                     "TikTok Shop 库存响应与请求 SKU 不一致",
                     error_code="TIKTOK_INVENTORY_RESPONSE_INVALID",
                 )
-            observed_at = utcnow()
+            observed_at = job.created_at
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
             for external_id, mapping in by_external_id.items():
                 raw = {
                     "platform_sku_id": mapping.id,
+                    "observed_at": observed_at.isoformat(),
                     "snapshot": returned[external_id],
                 }
                 self._handle_event(
@@ -523,7 +546,7 @@ class TikTokShopSyncService:
                     processor=self._process_inventory,
                     counters=counters,
                 )
-            counters["pages"] += 1
+            self._record_page(counters)
             last_mapping_id = batch[-1].id
             self._checkpoint(
                 job.id,
@@ -565,15 +588,46 @@ class TikTokShopSyncService:
                     page_token=statement_token,
                 )
                 pages_used += 1
-                counters["pages"] += 1
+                self._record_page(counters)
+                if len(page.items) > 1:
+                    raise TikTokShopSyncExecutionError(
+                        "TikTok Shop 财务分页响应数量无效",
+                        error_code="TIKTOK_FINANCE_RESPONSE_INVALID",
+                    )
+                statement_seen, statement_total = self._page_progress(
+                    seen=self._checkpoint_count(checkpoint, "statement_records_seen"),
+                    expected_total=self._optional_checkpoint_count(
+                        checkpoint, "statement_total_count"
+                    ),
+                    item_count=len(page.items),
+                    reported_total=page.total_count,
+                    terminal=page.next_page_token is None,
+                    error_code="TIKTOK_FINANCE_RESPONSE_INVALID",
+                )
                 if not page.items:
                     if page.next_page_token is not None:
                         raise TikTokShopSyncExecutionError(
                             "TikTok Shop 财务分页响应无效",
                             error_code="TIKTOK_FINANCE_RESPONSE_INVALID",
                         )
+                    self._checkpoint(
+                        job.id,
+                        job_claim,
+                        counters,
+                        {
+                            "statement_records_seen": statement_seen,
+                            "statement_total_count": statement_total,
+                        },
+                    )
                     return counters
                 statement = page.items[0]
+                statement_history = self._cursor_history(checkpoint, "statement_cursor_hashes")
+                if page.next_page_token is not None:
+                    statement_history = self._advance_cursor(
+                        current_token=statement_token,
+                        next_token=page.next_page_token,
+                        token_history=statement_history,
+                    )
                 current = {
                     "id": self._identity(statement, "id"),
                     "currency": self._required_text(statement, "currency", 3),
@@ -589,7 +643,13 @@ class TikTokShopSyncService:
                             "page_token": statement_token,
                             "next_page_token": page.next_page_token,
                         },
+                        "statement_cursor_hashes": statement_history,
+                        "statement_records_seen": statement_seen,
+                        "statement_total_count": statement_total,
                         "transaction_pagination": {"page_token": None},
+                        "transaction_cursor_hashes": [],
+                        "transaction_records_seen": 0,
+                        "transaction_total_count": None,
                     },
                 )
                 if pages_used >= max_pages:
@@ -610,13 +670,27 @@ class TikTokShopSyncService:
                 page_token=transaction_token,
             )
             pages_used += 1
-            counters["pages"] += 1
+            self._record_page(counters)
             expected_currency = self._required_text(current, "currency", 3).upper()
-            if transaction_page.currency.upper() != expected_currency:
+            expected_created_at = self._required_int(current, "create_time")
+            if (
+                transaction_page.currency.upper() != expected_currency
+                or transaction_page.statement_created_at != expected_created_at
+            ):
                 raise TikTokShopSyncExecutionError(
-                    "TikTok Shop 财务币种冲突",
+                    "TikTok Shop 财务 statement 元数据冲突",
                     error_code="TIKTOK_FINANCE_RESPONSE_INVALID",
                 )
+            transaction_seen, transaction_total = self._page_progress(
+                seen=self._checkpoint_count(checkpoint, "transaction_records_seen"),
+                expected_total=self._optional_checkpoint_count(
+                    checkpoint, "transaction_total_count"
+                ),
+                item_count=len(transaction_page.transactions),
+                reported_total=transaction_page.total_count,
+                terminal=transaction_page.next_page_token is None,
+                error_code="TIKTOK_FINANCE_RESPONSE_INVALID",
+            )
             for raw in transaction_page.transactions:
                 self._handle_finance_transaction(
                     shop=shop,
@@ -630,16 +704,21 @@ class TikTokShopSyncService:
                 )
             next_transaction_token = transaction_page.next_page_token
             if next_transaction_token is not None:
-                if next_transaction_token == transaction_token:
-                    raise TikTokShopSyncExecutionError(
-                        "TikTok Shop 财务游标未前进",
-                        error_code="TIKTOK_CURSOR_STALLED",
-                    )
+                transaction_history = self._advance_cursor(
+                    current_token=transaction_token,
+                    next_token=next_transaction_token,
+                    token_history=self._cursor_history(checkpoint, "transaction_cursor_hashes"),
+                )
                 self._checkpoint(
                     job.id,
                     job_claim,
                     counters,
-                    {"transaction_pagination": {"page_token": next_transaction_token}},
+                    {
+                        "transaction_pagination": {"page_token": next_transaction_token},
+                        "transaction_cursor_hashes": transaction_history,
+                        "transaction_records_seen": transaction_seen,
+                        "transaction_total_count": transaction_total,
+                    },
                 )
                 if pages_used >= max_pages:
                     raise _TikTokShopSyncContinuation(counters)
@@ -654,6 +733,9 @@ class TikTokShopSyncService:
                 {
                     "current_statement": None,
                     "transaction_pagination": {"page_token": None},
+                    "transaction_cursor_hashes": [],
+                    "transaction_records_seen": 0,
+                    "transaction_total_count": None,
                     "statement_pagination": {
                         "page_token": next_statement_token,
                         "next_page_token": None,
@@ -676,34 +758,23 @@ class TikTokShopSyncService:
         raw: dict[str, Any],
         counters: dict[str, int],
     ) -> None:
-        normalized = normalize_statement_transactions(
-            statement_id=statement_id,
-            currency=currency,
-            statement_created_at=statement_created_at,
-            transactions=(raw,),
-        )
         transaction_id = self._identity(raw, "id")
-        for component in normalized:
-            external_id = component.snapshot.external_transaction_id
-            component_name = external_id.rsplit(":", 1)[-1]
-            payload = {
+        self._handle_event(
+            shop=shop,
+            job=job,
+            job_claim=job_claim,
+            event_type="FINANCE.STATEMENT_TRANSACTION_RAW",
+            identity=f"{statement_id}:{transaction_id}",
+            payload={
                 "statement_id": statement_id,
                 "currency": currency,
                 "statement_created_at": statement_created_at,
-                "component": component_name,
                 "transaction": raw,
-            }
-            self._handle_event(
-                shop=shop,
-                job=job,
-                job_claim=job_claim,
-                event_type="FINANCE.TRANSACTION_SNAPSHOT",
-                identity=f"{transaction_id}:{component_name}",
-                payload=payload,
-                occurred_at=component.updated_at,
-                processor=self._process_finance_transaction,
-                counters=counters,
-            )
+            },
+            occurred_at=datetime.fromtimestamp(statement_created_at, UTC),
+            processor=self._process_finance_source,
+            counters=counters,
+        )
 
     def _handle_event(
         self,
@@ -942,6 +1013,56 @@ class TikTokShopSyncService:
             snapshot=normalized[0].snapshot,
         )
 
+    def _process_finance_source(
+        self, event_id: int, event_claim: str, job_id: int, job_claim: str
+    ) -> None:
+        ingestion = IngestionService(self.session, self.principal)
+        event = ingestion.lock_claimed_event(
+            event_id,
+            claim_token=event_claim,
+            sync_job_id=job_id,
+            sync_job_claim_token=job_claim,
+        )
+        payload = event.payload
+        transaction = payload.get("transaction")
+        if not isinstance(transaction, dict):
+            raise TikTokShopNormalizationError("TikTok Shop 财务源事件无效")
+        statement_id = self._required_text(payload, "statement_id", 128)
+        currency = self._required_text(payload, "currency", 3)
+        created_at = self._required_int(payload, "statement_created_at")
+        normalized = normalize_statement_transactions(
+            statement_id=statement_id,
+            currency=currency,
+            statement_created_at=created_at,
+            transactions=(transaction,),
+        )
+        shop = resolve_shop(self.session, self.principal, event.shop_id)
+        job = self._job(job_id)
+        for component in normalized:
+            external_id = component.snapshot.external_transaction_id
+            component_name = external_id.rsplit(":", 1)[-1]
+            component_counters = {"pages": 0, "received": 0, "processed": 0, "failed": 0}
+            self._handle_event(
+                shop=shop,
+                job=job,
+                job_claim=job_claim,
+                event_type="FINANCE.TRANSACTION_SNAPSHOT",
+                identity=external_id,
+                payload={
+                    "source_raw_event_id": event.id,
+                    "statement_id": statement_id,
+                    "currency": currency,
+                    "statement_created_at": created_at,
+                    "component": component_name,
+                    "transaction": transaction,
+                },
+                occurred_at=component.updated_at,
+                processor=self._process_finance_transaction,
+                counters=component_counters,
+            )
+            if component_counters["failed"]:
+                raise FinanceValidationError("TikTok Shop 财务分量规范化失败")
+
     def _process_finance_transaction(
         self, event_id: int, event_claim: str, job_id: int, job_claim: str
     ) -> None:
@@ -1071,6 +1192,7 @@ class TikTokShopSyncService:
         }
         if token_set.refresh_token_expires_at is not None:
             payload["refresh_token_expires_at"] = str(token_set.refresh_token_expires_at)
+        refreshed = TikTokShopCredentials.from_mapping(payload)
         credential_service.rotate_for_platform(
             credential_id,
             payload=payload,
@@ -1078,7 +1200,7 @@ class TikTokShopSyncService:
             commit=False,
         )
         ShopConnectionService(self.session, self.principal).record_authorized(shop.id)
-        return TikTokShopCredentials.from_mapping(payload)
+        return refreshed
 
     def _default_client(self, credentials: TikTokShopCredentials) -> TikTokShopAPIClient:
         settings = get_settings()
@@ -1089,6 +1211,32 @@ class TikTokShopSyncService:
             timeout_seconds=settings.request_timeout_seconds,
             max_attempts=settings.tiktok_shop_max_attempts,
         )
+
+    @staticmethod
+    def _verify_shop_binding(
+        client: TikTokShopAPIClient,
+        shop: Shop,
+        credentials: TikTokShopCredentials,
+    ) -> None:
+        external_shop_id = (shop.external_shop_id or "").strip()
+        matches = [
+            item
+            for item in client.list_authorized_shops()
+            if str(item.get("id", "")).strip() == external_shop_id
+        ]
+        if len(matches) != 1:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop 授权店铺绑定不一致",
+                error_code="TIKTOK_SHOP_BINDING_INVALID",
+            )
+        platform_cipher = matches[0].get("cipher")
+        if not isinstance(platform_cipher, str) or not secrets.compare_digest(
+            platform_cipher, credentials.shop_cipher
+        ):
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop 授权店铺绑定不一致",
+                error_code="TIKTOK_SHOP_BINDING_INVALID",
+            )
 
     def _fail_event(
         self,
@@ -1162,6 +1310,15 @@ class TikTokShopSyncService:
                 "TikTok Shop 同步超过总耗时限制",
                 error_code="TIKTOK_SYNC_DEADLINE_EXCEEDED",
             )
+
+    @staticmethod
+    def _record_page(counters: dict[str, int]) -> None:
+        if counters["pages"] >= MAX_PAGES_PER_JOB:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop 分页超过单任务安全上限",
+                error_code="TIKTOK_PAGE_LIMIT_EXCEEDED",
+            )
+        counters["pages"] += 1
 
     def _job(self, job_id: int) -> SyncJob:
         job = self.session.get(SyncJob, job_id)
@@ -1240,18 +1397,15 @@ class TikTokShopSyncService:
         requests = payload.get("sku_return_requests")
         if not isinstance(requests, list) or not requests:
             return [payload]
-        order_ids = {
-            str(request.get("order_id", "")).strip()
-            for request in requests
-            if isinstance(request, dict)
-        }
+        valid_requests = [request for request in requests if isinstance(request, dict)]
+        if len(valid_requests) != len(requests):
+            return [payload]
+        order_ids = {str(request.get("order_id", "")).strip() for request in valid_requests}
         if len(order_ids) != 1 or "" in order_ids:
             return [payload]
-        return [
-            {**payload, "sku_return_requests": [request]}
-            for request in requests
-            if isinstance(request, dict)
-        ] or [payload]
+        return [{**payload, "sku_return_requests": [request]} for request in valid_requests] or [
+            payload
+        ]
 
     @staticmethod
     def _identity(payload: dict[str, Any], *keys: str) -> str:
@@ -1319,6 +1473,45 @@ class TikTokShopSyncService:
         )
 
     @staticmethod
+    def _checkpoint_count(checkpoint: dict[str, object], key: str) -> int:
+        value = checkpoint.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop checkpoint 无效", error_code="TIKTOK_CHECKPOINT_INVALID"
+            )
+        return value
+
+    @staticmethod
+    def _optional_checkpoint_count(checkpoint: dict[str, object], key: str) -> int | None:
+        value = checkpoint.get(key)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop checkpoint 无效", error_code="TIKTOK_CHECKPOINT_INVALID"
+            )
+        return value
+
+    @staticmethod
+    def _page_progress(
+        *,
+        seen: int,
+        expected_total: int | None,
+        item_count: int,
+        reported_total: int,
+        terminal: bool,
+        error_code: str,
+    ) -> tuple[int, int]:
+        if isinstance(reported_total, bool) or not isinstance(reported_total, int):
+            raise TikTokShopSyncExecutionError("TikTok Shop 分页总数无效", error_code=error_code)
+        if reported_total < 0 or (expected_total is not None and reported_total != expected_total):
+            raise TikTokShopSyncExecutionError("TikTok Shop 分页总数不一致", error_code=error_code)
+        updated = seen + item_count
+        if updated > reported_total or (terminal and updated != reported_total):
+            raise TikTokShopSyncExecutionError("TikTok Shop 分页结果不完整", error_code=error_code)
+        return updated, reported_total
+
+    @staticmethod
     def _nested_page_token(checkpoint: dict[str, object], section: str, key: str) -> str | None:
         container = checkpoint.get(section)
         if container is None:
@@ -1335,6 +1528,49 @@ class TikTokShopSyncService:
                 "TikTok Shop checkpoint 无效", error_code="TIKTOK_CHECKPOINT_INVALID"
             )
         return value
+
+    @staticmethod
+    def _cursor_history(checkpoint: dict[str, object], key: str) -> list[str]:
+        value = checkpoint.get(key)
+        if value is None:
+            return []
+        if (
+            not isinstance(value, list)
+            or len(value) > MAX_CURSOR_HISTORY
+            or any(
+                not isinstance(item, str)
+                or len(item) != 16
+                or not item.isascii()
+                or any(not (character.isalnum() or character in "-_") for character in item)
+                for item in value
+            )
+        ):
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop checkpoint 无效", error_code="TIKTOK_CHECKPOINT_INVALID"
+            )
+        return list(value)
+
+    @staticmethod
+    def _advance_cursor(
+        *,
+        current_token: str | None,
+        next_token: str,
+        token_history: list[str],
+    ) -> list[str]:
+        digest = base64.urlsafe_b64encode(hashlib.sha256(next_token.encode()).digest()[:12]).decode(
+            "ascii"
+        )
+        if next_token == current_token or digest in token_history:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop 分页游标未前进",
+                error_code="TIKTOK_CURSOR_STALLED",
+            )
+        if len(token_history) >= MAX_CURSOR_HISTORY:
+            raise TikTokShopSyncExecutionError(
+                "TikTok Shop 分页超过单任务安全上限",
+                error_code="TIKTOK_CURSOR_LIMIT_EXCEEDED",
+            )
+        return [*token_history, digest]
 
     @staticmethod
     def _required_text(payload: dict[str, Any], key: str, max_length: int) -> str:

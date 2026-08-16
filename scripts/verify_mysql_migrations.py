@@ -30,7 +30,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from commerce.authorization import Principal  # noqa: E402
-from commerce.config import DouyinWebhookApplication  # noqa: E402
+from commerce.config import (  # noqa: E402
+    DouyinWebhookApplication,
+    TikTokShopWebhookApplication,
+)
 from commerce.credentials import CredentialCipher, CredentialService  # noqa: E402
 from commerce.database import Base  # noqa: E402
 from commerce.models import (  # noqa: E402
@@ -78,7 +81,18 @@ from commerce.platforms.douyin import (  # noqa: E402
     DouyinOrderPage,
     DouyinProductPage,
     DouyinTokenSet,
-    sign_webhook,  # noqa: E402
+)
+from commerce.platforms.douyin import (  # noqa: E402
+    sign_webhook as sign_douyin_webhook,
+)
+from commerce.platforms.tiktok_shop import (  # noqa: E402
+    TikTokShopAPIClient,
+    TikTokShopCredentials,
+    TikTokShopPage,
+    TikTokShopTokenSet,
+)
+from commerce.platforms.tiktok_shop import (  # noqa: E402
+    sign_webhook as sign_tiktok_webhook,
 )
 from commerce.schemas import BusinessTaskCreate, WarehouseInventorySnapshotInput  # noqa: E402
 from commerce.services.alerts import AlertTaskService  # noqa: E402
@@ -92,6 +106,8 @@ from commerce.services.inventory import InventoryService  # noqa: E402
 from commerce.services.purchasing import PurchasingService  # noqa: E402
 from commerce.services.shop import ShopService  # noqa: E402
 from commerce.services.shop_connection import ShopConnectionService  # noqa: E402
+from commerce.services.tiktok_shop_sync import TikTokShopSyncService  # noqa: E402
+from commerce.services.tiktok_shop_webhook import TikTokShopWebhookService  # noqa: E402
 
 V2_TABLES = {
     "organizations",
@@ -1919,7 +1935,7 @@ def _verify_douyin_webhook_idempotency_race(engine: Engine) -> None:
         ],
         separators=(",", ":"),
     ).encode()
-    signature = sign_webhook(app_id=app_id, app_secret=app_secret, raw_body=raw_body)
+    signature = sign_douyin_webhook(app_id=app_id, app_secret=app_secret, raw_body=raw_body)
     applications = {
         app_id: DouyinWebhookApplication(
             app_secret=app_secret,
@@ -2119,6 +2135,287 @@ def _verify_douyin_token_refresh_race(engine: Engine) -> None:
         raise RuntimeError("MySQL Douyin rotated access token was not persisted")
     if connection_status != ShopAuthorizationStatus.AUTHORIZED:
         raise RuntimeError("MySQL Douyin rotation changed connection authorization state")
+
+
+def _verify_tiktok_webhook_idempotency_race(engine: Engine) -> None:
+    cipher = CredentialCipher({"v1": b"k" * 32}, "v1")
+    app_key = "mysql-tiktok-webhook-app"
+    app_secret = "mysql-tiktok-webhook-secret"
+    external_shop_id = "mysql-tiktok-webhook-shop"
+    organization_slug = "mysql-tiktok-webhook-race"
+    with Session(engine) as session:
+        organization = Organization(
+            slug=organization_slug,
+            name="MySQL TikTok Webhook Race",
+        )
+        shop = Shop(
+            organization=organization,
+            name="MySQL TikTok Webhook Shop",
+            platform="TIKTOK_SHOP",
+            external_shop_id=external_shop_id,
+            country_code="US",
+            currency="USD",
+            timezone="UTC",
+        )
+        session.add_all([organization, shop])
+        session.flush()
+        session.add(
+            ShopConnection(
+                organization_id=organization.id,
+                shop_id=shop.id,
+                authorization_status=ShopAuthorizationStatus.AUTHORIZED,
+                authorization_verified_at=utcnow(),
+            )
+        )
+        encrypted = cipher.encrypt(
+            {
+                "app_key": app_key,
+                "app_secret": "tenant-copy-is-not-webhook-authority",
+                "access_token": "mysql-tiktok-webhook-access",
+                "refresh_token": "mysql-tiktok-webhook-refresh",
+                "shop_cipher": "mysql-tiktok-webhook-cipher",
+            },
+            shop_id=shop.id,
+            credential_type="OAUTH",
+        )
+        session.add(
+            ShopCredential(
+                shop_id=shop.id,
+                credential_type="OAUTH",
+                public_identifier_hash=hashlib.sha256(app_key.encode()).hexdigest(),
+                key_id=encrypted.key_id,
+                nonce=encrypted.nonce,
+                encrypted_payload=encrypted.ciphertext,
+                status=CredentialStatus.ACTIVE,
+            )
+        )
+        session.commit()
+        shop_id = shop.id
+
+    raw_body = json.dumps(
+        {
+            "type": 1,
+            "tts_notification_id": "mysql-tiktok-webhook-race-message",
+            "shop_id": external_shop_id,
+            "timestamp": int(utcnow().timestamp()),
+            "data": {"order_id": "MYSQL-TIKTOK-WEBHOOK-ORDER"},
+        },
+        separators=(",", ":"),
+    ).encode()
+    signature = sign_tiktok_webhook(
+        app_key=app_key,
+        app_secret=app_secret,
+        raw_body=raw_body,
+    )
+    applications = {
+        app_key: TikTokShopWebhookApplication(
+            app_secret=app_secret,
+            shop_organizations={external_shop_id: organization_slug},
+        )
+    }
+    barrier = Barrier(2)
+
+    def ingest() -> tuple[bool, bool]:
+        with Session(engine) as session:
+            barrier.wait(timeout=10)
+            result = TikTokShopWebhookService(session, applications).ingest(
+                raw_body=raw_body,
+                authorization=signature,
+            )
+            return result.inserted, result.duplicate
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [
+            future.result(timeout=30) for future in [executor.submit(ingest) for _ in range(2)]
+        ]
+    if sorted(results) != [(False, True), (True, False)]:
+        raise RuntimeError(f"MySQL TikTok webhook race returned invalid outcomes: {results}")
+    with Session(engine) as session:
+        event_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(PlatformRawEvent)
+                .where(
+                    PlatformRawEvent.shop_id == shop_id,
+                    PlatformRawEvent.external_event_id == "mysql-tiktok-webhook-race-message",
+                )
+            )
+            or 0
+        )
+        audit_count = int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(OperationLog)
+                .where(OperationLog.tool_name == "tiktok_shop.webhook.ingest")
+            )
+            or 0
+        )
+    if (event_count, audit_count) != (1, 1):
+        raise RuntimeError(
+            f"MySQL TikTok webhook race duplicated event or audit: {(event_count, audit_count)}"
+        )
+
+
+def _verify_tiktok_token_refresh_race(engine: Engine) -> None:
+    cipher = CredentialCipher({"v1": b"j" * 32}, "v1")
+    old_payload = {
+        "app_key": "mysql-tiktok-refresh-app",
+        "app_secret": "mysql-tiktok-refresh-secret",
+        "access_token": "mysql-tiktok-expired-access",
+        "refresh_token": "mysql-tiktok-one-time-refresh",
+        "shop_cipher": "mysql-tiktok-shop-cipher",
+    }
+    with Session(engine) as session:
+        organization = Organization(
+            slug="mysql-tiktok-refresh-race",
+            name="MySQL TikTok Refresh Race",
+        )
+        user = User(
+            email="mysql-tiktok-refresh@example.com",
+            display_name="MySQL TikTok Refresh",
+        )
+        session.add_all([organization, user])
+        session.flush()
+        membership = OrganizationMembership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role=MembershipRole.OWNER,
+        )
+        shop = Shop(
+            organization_id=organization.id,
+            name="MySQL TikTok Refresh Shop",
+            platform="TIKTOK_SHOP",
+            external_shop_id="mysql-tiktok-refresh-shop",
+            country_code="US",
+            currency="USD",
+            timezone="UTC",
+        )
+        session.add_all([membership, shop])
+        session.commit()
+        principal = Principal(user.id, organization.id, membership.id, MembershipRole.OWNER)
+        credential = CredentialService(session, principal, cipher).upsert(
+            shop_id=shop.id,
+            credential_type="OAUTH",
+            payload=old_payload,
+        )
+        connection_service = ShopConnectionService(session, principal)
+        for capability_code in ("PRODUCTS_READ", "ORDERS_READ"):
+            connection_service.upsert_capability(
+                shop_id=shop.id,
+                code=capability_code,
+                status=ShopCapabilityStatus.ENABLED,
+            )
+        connection_service.record_authorized(shop.id)
+        connection = session.scalar(
+            sa.select(ShopConnection).where(ShopConnection.shop_id == shop.id)
+        )
+        if connection is None:
+            raise RuntimeError("MySQL TikTok refresh connection was not created")
+        credential.status = CredentialStatus.EXPIRED
+        credential.expires_at = utcnow() - timedelta(seconds=1)
+        connection.authorization_status = ShopAuthorizationStatus.REAUTH_REQUIRED
+        connection.authorization_verified_at = None
+        connection.authorization_error_code = "CREDENTIAL_EXPIRED"
+        session.commit()
+        context = (principal, shop.id, shop.external_shop_id, credential.id)
+
+    refresh_count = {"value": 0}
+    refresh_lock = Lock()
+    barrier = Barrier(2)
+
+    class RefreshClient(TikTokShopAPIClient):
+        def __init__(
+            self,
+            credentials: TikTokShopCredentials,
+            external_shop_id: str,
+        ) -> None:
+            self.credentials = credentials
+            self.external_shop_id = external_shop_id
+
+        def __enter__(self) -> RefreshClient:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def set_request_deadline(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def list_authorized_shops(self) -> tuple[dict[str, Any], ...]:
+            return (
+                {
+                    "id": self.external_shop_id,
+                    "cipher": "mysql-tiktok-shop-cipher",
+                },
+            )
+
+        def refresh_access_token(self) -> TikTokShopTokenSet:
+            if self.credentials.refresh_token != "mysql-tiktok-one-time-refresh":
+                raise RuntimeError("MySQL TikTok refresh used an unexpected refresh token")
+            with refresh_lock:
+                refresh_count["value"] += 1
+            time.sleep(0.1)
+            return TikTokShopTokenSet(
+                access_token="mysql-tiktok-rotated-access",
+                refresh_token="mysql-tiktok-rotated-refresh",
+                access_token_expires_at=int((utcnow() + timedelta(hours=1)).timestamp()),
+                refresh_token_expires_at=int((utcnow() + timedelta(days=30)).timestamp()),
+            )
+
+        def search_products(self, **_kwargs: object) -> TikTokShopPage:
+            return TikTokShopPage((), None, 0)
+
+        def search_orders(self, **_kwargs: object) -> TikTokShopPage:
+            return TikTokShopPage((), None, 0)
+
+    principal, shop_id, external_shop_id, credential_id = context
+
+    def refresh(job_type: str) -> str:
+        with Session(engine) as session:
+            service = TikTokShopSyncService(
+                session,
+                principal,
+                cipher,
+                client_factory=lambda credentials: RefreshClient(credentials, external_shop_id),
+            )
+            barrier.wait(timeout=10)
+            run_kwargs: dict[str, Any] = {}
+            if job_type == "ORDERS.PULL":
+                run_kwargs = {
+                    "window_start": utcnow() - timedelta(days=1),
+                    "window_end": utcnow(),
+                }
+            result = service.run(
+                shop_id=shop_id,
+                job_type=job_type,
+                idempotency_key=f"mysql-tiktok-expired-{job_type.lower()}",
+                **run_kwargs,
+            )
+            return result.status.value
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = [
+            future.result(timeout=30)
+            for future in [
+                executor.submit(refresh, "PRODUCTS.PULL"),
+                executor.submit(refresh, "ORDERS.PULL"),
+            ]
+        ]
+    if statuses != ["SUCCESS", "SUCCESS"]:
+        raise RuntimeError(f"MySQL TikTok concurrent refresh jobs failed: {statuses}")
+    if refresh_count["value"] != 1:
+        raise RuntimeError(
+            f"MySQL TikTok concurrent refresh called platform {refresh_count['value']} times"
+        )
+    with Session(engine) as session:
+        stored = CredentialService(session, principal, cipher).decrypt_for_platform(credential_id)
+        connection_status = session.scalar(
+            sa.select(ShopConnection.authorization_status).where(ShopConnection.shop_id == shop_id)
+        )
+    if stored.get("access_token") != "mysql-tiktok-rotated-access":
+        raise RuntimeError("MySQL TikTok rotated access token was not persisted")
+    if connection_status != ShopAuthorizationStatus.AUTHORIZED:
+        raise RuntimeError("MySQL TikTok rotation changed connection authorization state")
 
 
 def main() -> None:
@@ -2661,10 +2958,12 @@ def main() -> None:
     _verify_alert_task_idempotency_races(engine)
     _verify_douyin_webhook_idempotency_race(engine)
     _verify_douyin_token_refresh_race(engine)
+    _verify_tiktok_webhook_idempotency_race(engine)
+    _verify_tiktok_token_refresh_race(engine)
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
         "legacy-reauth-catalog-raw-order-inventory-and-data-import-data-preservation-and-sync-and-"
-        "inventory-purchase-execution-alert-task-douyin-webhook-idempotency-and-token-refresh-"
+        "inventory-purchase-execution-alert-task-douyin-and-tiktok-webhook-idempotency-and-token-refresh-"
         "races: PASS"
     )
 

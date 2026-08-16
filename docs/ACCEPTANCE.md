@@ -246,23 +246,26 @@ Initial target:
 
 TikTok Shop
 
-- [ ] authentication architecture;
-- [ ] token refresh;
-- [ ] product synchronization;
-- [ ] SKU synchronization;
-- [ ] order synchronization;
-- [ ] inventory synchronization;
-- [ ] refund synchronization;
-- [ ] finance synchronization where available;
-- [ ] webhook path;
-- [ ] retries;
-- [ ] pagination;
-- [ ] rate-limit handling;
-- [ ] idempotency;
-- [ ] contract tests;
-- [ ] errors observable.
+- [x] authentication architecture;
+- [x] token refresh;
+- [x] product synchronization;
+- [x] SKU synchronization;
+- [x] order synchronization;
+- [x] inventory synchronization;
+- [x] refund synchronization;
+- [x] finance synchronization where available;
+- [x] webhook path;
+- [x] retries;
+- [x] pagination;
+- [x] rate-limit handling;
+- [x] idempotency;
+- [x] contract tests;
+- [x] errors observable.
 
-Verification state must be explicit.
+Verification state: `Implementation: PASS`; `Contract/Mock: PASS` / `VERIFIED_MOCK` at
+`L2 VERIFIED_LOCAL`; `Real Platform: IMPLEMENTED_UNVERIFIED`. These checks represent implemented
+code and local/contract evidence, not sandbox or real seller/platform validation. Webhook domain
+consumption, a scheduler, and a Worker remain TARGET and are not implied by the webhook-path check.
 
 ---
 
@@ -439,9 +442,9 @@ deduplication, replay, lease recovery, failure visibility, and bounded APIs are 
 `PROCESSED` at the raw layer alone is not evidence that an Order was normalized. The unified
 CommerceOrder/CommerceOrderItem service atomically records source lineage, normalizer version,
 status, Decimal amounts/currency, UTC event timestamps, and raw completion. Tenant-scoped order
-reads and filters are locally verified. Douyin payload/status normalization and official request
-contracts are locally/mock verified, while real Douyin execution is `IMPLEMENTED_UNVERIFIED` and
-TikTok Shop connector work remains `MISSING`; neither is represented as real-platform PASS.
+reads and filters are locally verified. Douyin and TikTok Shop payload/status normalization and
+official request contracts are locally/mock verified, while real execution for both platforms is
+`IMPLEMENTED_UNVERIFIED`; neither is represented as sandbox or real-platform PASS.
 Organization-owned
 warehouses, tenant/catalog-constrained physical and channel inventory, RawEvent-bound snapshot
 lineage, stale/idempotent reconciliation, and deterministic current/incoming-aware coverage are
