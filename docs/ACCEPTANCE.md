@@ -188,9 +188,9 @@ OperationLog evidence. `WAITING_APPROVAL -> DONE` requires `APPROVE_ACTION`; oth
 - [x] Failed synchronization visible.
 - [x] Retry behavior exists.
 - [x] Reconciliation path exists.
-- [ ] CSV import supported.
-- [ ] Excel import supported where feasible.
-- [ ] Import validation and preview exist.
+- [x] CSV import supported.
+- [x] Excel import supported where feasible.
+- [x] Import validation and preview exist.
 
 ---
 
@@ -409,7 +409,7 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-006 completion the current local suite is `275 passed, 18 skipped, 1 warning` under
+COM-P1-007 completion the current local suite is `290 passed, 18 skipped, 1 warning` under
 `python -m pytest -q`;
 skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
@@ -440,6 +440,11 @@ The five mandatory deterministic alert rules and the tenant-scoped Alert/Busines
 locally verified, including MySQL concurrent deduplication/idempotency. Optional price/order/finance
 detectors, production Agent alert/task tools, and measurable effect tracking remain later internal
 work and are not represented as PASS.
+CSV/XLSX catalog, order, warehouse/channel inventory, and cost imports are locally verified through
+an explicit preview then execute workflow. Every staged record has file-source RawEvent evidence;
+tenant/permission checks, bounded parsing, mapping validation, exact source identity, duplicate and
+stale handling, execution leases, failed-record retry, and crash-after-domain-commit recovery are
+covered. This is a merchant file-ingestion capability, not Douyin/TikTok connector verification.
 
 ## V2 Complete Gate
 

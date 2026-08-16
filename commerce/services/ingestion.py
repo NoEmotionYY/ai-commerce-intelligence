@@ -23,6 +23,8 @@ from commerce.config import get_settings
 from commerce.error_codes import UnsafeErrorCodeError, normalize_error_code
 from commerce.logging import SENSITIVE_FIELD_PATTERN
 from commerce.models import (
+    DataImportRecord,
+    DataImportRecordStatus,
     OperationLog,
     PlatformRawEvent,
     RawEventStatus,
@@ -597,6 +599,199 @@ class IngestionService:
             occurred_at=occurred_at,
         )
 
+    def ingest_import_event(
+        self,
+        *,
+        import_record_id: int,
+        event_type: str,
+        external_event_id: str,
+        payload: dict[str, object],
+        occurred_at: datetime | None,
+    ) -> PlatformRawEvent:
+        """Persist file-import evidence without pretending it came from a platform connector."""
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        record = self._import_record(import_record_id, for_update=True)
+        shop = resolve_shop(self.session, self.principal, record.shop_id)
+        if record.raw_event_id is not None:
+            event = self._import_event(record, record.raw_event_id)
+            normalized_payload, payload_hash = _canonical_json(
+                payload, max_bytes=MAX_RAW_PAYLOAD_BYTES, label="原始事件 payload"
+            )
+            del normalized_payload
+            if (
+                event.event_type == _token(event_type, label="事件类型", max_length=100)
+                and event.external_event_id == external_event_id.strip()
+                and event.payload_hash == payload_hash
+            ):
+                return event
+            raise IngestionConflictError("导入记录已绑定不同的原始事件")
+        event = self._ingest_event(
+            shop=shop,
+            job=None,
+            sync_job_claim_token=None,
+            event_type=event_type,
+            external_event_id=external_event_id,
+            payload=payload,
+            occurred_at=occurred_at,
+        )
+        record = self._import_record(import_record_id, for_update=True)
+        if record.raw_event_id is not None and record.raw_event_id != event.id:
+            raise IngestionConflictError("导入记录已被并发绑定到其他原始事件")
+        record.raw_event_id = event.id
+        self._audit(
+            "raw_event.import_link",
+            {"raw_event_id": event.id, "import_record_id": record.id, "shop_id": record.shop_id},
+        )
+        self.session.commit()
+        return event
+
+    def reject_import_event(self, import_record_id: int, *, error_code: str) -> PlatformRawEvent:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        record = self._import_record(import_record_id, for_update=True)
+        if record.raw_event_id is None:
+            raise IngestionTransitionError("导入记录尚未绑定原始事件")
+        event = self._import_event(record, record.raw_event_id, for_update=True)
+        if event.status is RawEventStatus.FAILED and event.last_error == error_code:
+            return event
+        if event.status is not RawEventStatus.RECEIVED:
+            raise IngestionTransitionError("仅未处理的导入原始事件可以拒绝")
+        event.status = RawEventStatus.FAILED
+        event.last_error = normalize_error_code(error_code)
+        self._audit(
+            "raw_event.import_reject",
+            {"raw_event_id": event.id, "import_record_id": record.id, "shop_id": record.shop_id},
+        )
+        self.session.commit()
+        return event
+
+    def begin_import_event(self, import_record_id: int, *, claim_token: str) -> PlatformRawEvent:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        record = self._import_record(import_record_id, for_update=True)
+        if record.status not in {
+            DataImportRecordStatus.VALID,
+            DataImportRecordStatus.PROCESSING,
+        }:
+            raise IngestionTransitionError("导入记录当前不可开始处理")
+        if record.raw_event_id is None:
+            raise IngestionTransitionError("导入记录尚未绑定原始事件")
+        event = self._import_event(record, record.raw_event_id, for_update=True)
+        if event.status is RawEventStatus.PROCESSING:
+            if self._claim_matches(event.processing_token_hash, claim_token):
+                self._require_unexpired(event.processing_lease_expires_at, label="导入原始事件")
+                return event
+            raise IngestionTransitionError("导入原始事件已被其他执行者领取")
+        if event.status is not RawEventStatus.RECEIVED:
+            raise IngestionTransitionError("导入原始事件当前不可开始处理")
+        event.status = RawEventStatus.PROCESSING
+        event.processing_attempts += 1
+        event.processing_token_hash = _claim_hash(claim_token)
+        event.processing_lease_expires_at = utcnow() + timedelta(seconds=CLAIM_LEASE_SECONDS)
+        record.status = DataImportRecordStatus.PROCESSING
+        self._audit(
+            "raw_event.import_begin",
+            {"raw_event_id": event.id, "import_record_id": record.id, "shop_id": record.shop_id},
+        )
+        self.session.commit()
+        return event
+
+    def lock_import_event(
+        self,
+        import_record_id: int,
+        event_id: int,
+        *,
+        claim_token: str,
+        allow_processed: bool = False,
+    ) -> PlatformRawEvent:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        record = self._import_record(import_record_id, for_update=True)
+        event = self._import_event(record, event_id, for_update=True)
+        self._verify_event_evidence(event)
+        self._require_event_claim(event, claim_token, allow_terminal=allow_processed)
+        return event
+
+    def complete_import_event(self, import_record_id: int, *, claim_token: str) -> PlatformRawEvent:
+        record = self._import_record(import_record_id, for_update=True)
+        if record.raw_event_id is None:
+            raise IngestionTransitionError("导入记录尚未绑定原始事件")
+        event = self.lock_import_event(
+            record.id, record.raw_event_id, claim_token=claim_token, allow_processed=True
+        )
+        self.stage_event_completion(event, claim_token=claim_token)
+        self.session.commit()
+        return event
+
+    def fail_import_event(
+        self, import_record_id: int, *, claim_token: str, error_code: str
+    ) -> PlatformRawEvent:
+        record = self._import_record(import_record_id, for_update=True)
+        if record.raw_event_id is None:
+            raise IngestionTransitionError("导入记录尚未绑定原始事件")
+        event = self.lock_import_event(
+            record.id, record.raw_event_id, claim_token=claim_token, allow_processed=True
+        )
+        normalized_error = normalize_error_code(error_code)
+        if event.status is RawEventStatus.FAILED:
+            if event.last_error == normalized_error:
+                return event
+            raise IngestionTransitionError("导入原始事件已以不同错误失败")
+        if event.status is not RawEventStatus.PROCESSING:
+            raise IngestionTransitionError("仅处理中的导入原始事件可以失败")
+        event.status = RawEventStatus.FAILED
+        event.last_error = normalized_error
+        event.processed_at = None
+        self._audit(
+            "raw_event.import_fail",
+            {"raw_event_id": event.id, "import_record_id": record.id, "shop_id": record.shop_id},
+        )
+        self.session.commit()
+        return event
+
+    def retry_import_event(self, import_record_id: int) -> PlatformRawEvent:
+        require_permission(self.principal, Permission.WRITE_COMMERCE)
+        record = self._import_record(import_record_id, for_update=True)
+        if record.raw_event_id is None:
+            raise IngestionTransitionError("导入记录尚未绑定原始事件")
+        event = self._import_event(record, record.raw_event_id, for_update=True)
+        if (
+            record.status is DataImportRecordStatus.VALID
+            and event.status is RawEventStatus.RECEIVED
+        ):
+            return event
+        retryable_failure = (
+            record.status is DataImportRecordStatus.FAILED
+            and event.status is RawEventStatus.FAILED
+            and event.last_error == "IMPORT_EXECUTION_FAILED"
+        )
+        expired_processing = (
+            record.status in {DataImportRecordStatus.FAILED, DataImportRecordStatus.PROCESSING}
+            and event.status is RawEventStatus.PROCESSING
+            and event.processing_lease_expires_at is not None
+            and event.processing_lease_expires_at <= utcnow()
+        )
+        if not retryable_failure and not expired_processing:
+            raise IngestionTransitionError("导入记录当前不可重试")
+        previous_status = event.status
+        event.status = RawEventStatus.RECEIVED
+        event.last_error = None
+        event.processed_at = None
+        event.processing_token_hash = None
+        event.processing_lease_expires_at = None
+        record.status = DataImportRecordStatus.VALID
+        record.result = None
+        record.error_code = None
+        record.errors = []
+        self._audit(
+            "raw_event.import_retry",
+            {
+                "raw_event_id": event.id,
+                "import_record_id": record.id,
+                "shop_id": record.shop_id,
+                "previous_status": previous_status.value,
+            },
+        )
+        self.session.commit()
+        return event
+
     def _ingest_event(
         self,
         *,
@@ -1020,6 +1215,35 @@ class IngestionService:
 
     def _event_for_write(self, event_id: int) -> PlatformRawEvent:
         return self._event(event_id, for_update=True)
+
+    def _import_record(self, record_id: int, *, for_update: bool = False) -> DataImportRecord:
+        statement = select(DataImportRecord).where(
+            DataImportRecord.id == record_id,
+            DataImportRecord.organization_id == self.principal.organization_id,
+        )
+        if for_update:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        record = self.session.scalar(statement)
+        if record is None:
+            raise IngestionNotFoundError("导入记录不存在")
+        return record
+
+    def _import_event(
+        self, record: DataImportRecord, event_id: int, *, for_update: bool = False
+    ) -> PlatformRawEvent:
+        if record.raw_event_id != event_id:
+            raise AuthorizationError("原始事件不属于该导入记录")
+        statement = select(PlatformRawEvent).where(
+            PlatformRawEvent.id == event_id,
+            PlatformRawEvent.organization_id == self.principal.organization_id,
+            PlatformRawEvent.shop_id == record.shop_id,
+        )
+        if for_update:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        event = self.session.scalar(statement)
+        if event is None:
+            raise IngestionNotFoundError("导入原始事件不存在")
+        return event
 
     def _event_for_processing(
         self,

@@ -2,16 +2,14 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`.
-Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`).
-Next task: `COM-P1-008` — Douyin Connector (`TODO`).
-Last completed task: `COM-P1-006` — Alerts and Business Tasks (`DONE`).
-Phase 5 Exit Review passed. Five deterministic alert rules, tenant-scoped Alert/BusinessTask
-lifecycle, permissioned approval completion, audit history, SQLite/MySQL migration evidence, and
-real MySQL concurrent deduplication/idempotency are verified locally. Optional price/order/finance
-detectors, production Agent registration, and effect measurement remain later internal work. The
-latest focused slice is `21 passed, 1 warning`; the full suite is
-`275 passed, 18 skipped, 1 warning`.
+Current phase: `PHASE_7_DOUYIN_CONNECTOR`.
+Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`).
+Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Last completed task: `COM-P1-007` — CSV/XLSX Import (`DONE`).
+Phase 6 Exit Review passed. Tenant-scoped two-stage CSV/XLSX catalog/order/inventory/cost imports,
+RawEvent lineage, execution recovery, SQLite/MySQL migration evidence, and bounded API/parser
+security are verified locally. The current full suite is `290 passed, 18 skipped, 1 warning`;
+the 18 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -126,6 +124,11 @@ Dependencies: Phase 2; business consumers depend on Phases 3–5 as needed.
 Extend the Phase 2 raw-event/sync foundation with scheduled pulls, retries,
 pagination/checkpoints, reconciliation, CSV/XLSX preview and validation, and visible failure
 states.
+
+Exit: satisfied for the connector-independent scope. CSV/XLSX preview/execute, validation,
+failure visibility, idempotency, and recovery are `L2 VERIFIED_LOCAL`. Scheduled pull pagination,
+checkpoints, and platform reconciliation remain adapter-specific Phase 7/8 work and are not
+claimed as current platform capability.
 
 ## Phase 7 — Douyin Connector
 

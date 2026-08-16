@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import secrets
 from collections.abc import AsyncIterator
@@ -8,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -49,6 +50,8 @@ from commerce.models import (
     CommerceOrderStatus,
     CommercePurchaseOrder,
     CrawlerTask,
+    DataImportJob,
+    DataImportRecord,
     FinanceTransaction,
     InboundShipment,
     MasterProduct,
@@ -120,6 +123,13 @@ from commerce.services.alerts import (
 from commerce.services.business import business_anomalies, finance_summary, inventory_alerts
 from commerce.services.catalog import CatalogConflictError, CatalogNotFoundError, CatalogService
 from commerce.services.combined import compose_a102
+from commerce.services.data_import import (
+    MAX_IMPORT_BYTES,
+    DataImportConflictError,
+    DataImportNotFoundError,
+    DataImportService,
+    DataImportValidationError,
+)
 from commerce.services.finance import (
     FinanceConflictError,
     FinanceNotFoundError,
@@ -172,6 +182,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Commerce Agent API", version="0.1.0", lifespan=lifespan)
 
 MAX_SYNC_REQUEST_BYTES = 1_100_000
+MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 256_000
 
 
 @app.exception_handler(RequestValidationError)
@@ -195,15 +206,32 @@ async def enforce_production_tenant_api_boundary(
     request: Request, call_next: RequestResponseEndpoint
 ) -> Response:
     path = request.url.path
-    if path.startswith(("/api/v2/raw-events", "/api/v2/sync-jobs")):
+    max_bytes: int | None = None
+    if path.startswith(("/api/v2/raw-events", "/api/v2/sync-jobs", "/api/v2/imports")):
+        max_bytes = (
+            MAX_IMPORT_REQUEST_BYTES
+            if path.startswith("/api/v2/imports")
+            else MAX_SYNC_REQUEST_BYTES
+        )
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
                 body_size = int(content_length)
             except ValueError:
                 return JSONResponse(status_code=400, content={"detail": "Content-Length 无效"})
-            if body_size > MAX_SYNC_REQUEST_BYTES:
+            if body_size > max_bytes:
                 return JSONResponse(status_code=413, content={"detail": "数据接入请求体超过限制"})
+        if request.method in {"POST", "PUT", "PATCH"}:
+            body = bytearray()
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body) > max_bytes:
+                    return JSONResponse(
+                        status_code=413, content={"detail": "数据接入请求体超过限制"}
+                    )
+            # BaseHTTPMiddleware replays a cached body through the original request.
+            # Replacing Request here would leave call_next waiting on the consumed one.
+            request._body = bytes(body)
     if (
         get_settings().is_production
         and path.startswith("/api/")
@@ -737,6 +765,46 @@ def business_task_dict(item: BusinessTask) -> dict[str, object]:
     }
 
 
+def data_import_record_dict(item: DataImportRecord) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "row_number": item.row_number,
+        "status": item.status.value,
+        "raw_event_id": item.raw_event_id,
+        "errors": item.errors,
+        "error_code": item.error_code,
+        "result": item.result,
+    }
+
+
+def data_import_job_dict(
+    item: DataImportJob, *, records: list[DataImportRecord] | None = None
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": item.id,
+        "shop_id": item.shop_id,
+        "import_type": item.import_type.value,
+        "file_name": item.file_name,
+        "file_format": item.file_format,
+        "content_hash": item.content_hash,
+        "mapping": item.mapping,
+        "status": item.status.value,
+        "total_records": item.total_records,
+        "valid_records": item.valid_records,
+        "invalid_records": item.invalid_records,
+        "processed_records": item.processed_records,
+        "failed_records": item.failed_records,
+        "execution_attempts": item.execution_attempts,
+        "errors": item.errors,
+        "started_at": item.started_at,
+        "finished_at": item.finished_at,
+        "created_at": item.created_at,
+    }
+    if records is not None:
+        result["records"] = [data_import_record_dict(record) for record in records]
+    return result
+
+
 def shop_dict(shop: Shop, connection_service: ShopConnectionService) -> dict[str, object]:
     connection = connection_service.connection_for_shop(shop.id)
     capabilities = connection_service.list_capabilities(shop.id)
@@ -826,6 +894,18 @@ def alert_task_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AlertTaskValidationError):
         return HTTPException(400, str(exc))
     return HTTPException(500, "告警任务服务失败")
+
+
+def data_import_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, AuthorizationError):
+        return HTTPException(403, str(exc))
+    if isinstance(exc, DataImportNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, DataImportConflictError):
+        return HTTPException(409, str(exc))
+    if isinstance(exc, DataImportValidationError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "文件导入服务失败")
 
 
 def require_operator(key: str) -> None:
@@ -1045,6 +1125,101 @@ def remap_v2_platform_sku(
     except CatalogNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     return platform_sku_dict(mapping)
+
+
+@app.post("/api/v2/imports/preview")
+async def preview_v2_data_import(
+    shop_id: int = Form(gt=0),
+    import_type: str = Form(min_length=1, max_length=16),
+    idempotency_key: str = Form(min_length=8, max_length=128),
+    mapping_json: str = Form(default="{}", max_length=16_384),
+    file: UploadFile = File(),
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        parsed_mapping = json.loads(mapping_json)
+        if not isinstance(parsed_mapping, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in parsed_mapping.items()
+        ):
+            raise DataImportValidationError("mapping_json 必须是字符串到字符串的 JSON 对象")
+        content = await file.read(MAX_IMPORT_BYTES + 1)
+        if len(content) > MAX_IMPORT_BYTES:
+            raise HTTPException(413, "导入文件超过 5 MiB 限制")
+        item = DataImportService(session, principal).preview(
+            shop_id=shop_id,
+            import_type=import_type,
+            idempotency_key=idempotency_key,
+            filename=file.filename or "",
+            content=content,
+            mapping=parsed_mapping,
+        )
+        records = DataImportService(session, principal).list_records(item.id)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, "mapping_json 不是有效 JSON") from exc
+    except (
+        AuthorizationError,
+        DataImportConflictError,
+        DataImportNotFoundError,
+        DataImportValidationError,
+    ) as exc:
+        raise data_import_http_error(exc) from exc
+    finally:
+        await file.close()
+    return data_import_job_dict(item, records=records)
+
+
+@app.get("/api/v2/imports")
+def list_v2_data_imports(
+    shop_id: int | None = Query(default=None, gt=0),
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    try:
+        items = DataImportService(session, principal).list_jobs(
+            shop_id=shop_id, after_id=after_id, limit=limit
+        )
+    except (AuthorizationError, DataImportValidationError) as exc:
+        raise data_import_http_error(exc) from exc
+    return [data_import_job_dict(item) for item in items]
+
+
+@app.get("/api/v2/imports/{import_job_id}")
+def get_v2_data_import(
+    import_job_id: int,
+    principal: Principal = Depends(require_v2_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    service = DataImportService(session, principal)
+    try:
+        item = service.get_job(import_job_id)
+        records = service.list_records(item.id)
+    except (AuthorizationError, DataImportNotFoundError) as exc:
+        raise data_import_http_error(exc) from exc
+    return data_import_job_dict(item, records=records)
+
+
+@app.post("/api/v2/imports/{import_job_id}/execute")
+def execute_v2_data_import(
+    import_job_id: int,
+    principal: Principal = Depends(require_v2_commerce_writer),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    service = DataImportService(session, principal)
+    try:
+        item = service.execute(import_job_id)
+        records = service.list_records(item.id)
+    except (
+        AuthorizationError,
+        DataImportConflictError,
+        DataImportNotFoundError,
+        DataImportValidationError,
+    ) as exc:
+        raise data_import_http_error(exc) from exc
+    return data_import_job_dict(item, records=records)
 
 
 @app.get("/api/v2/sync-jobs")

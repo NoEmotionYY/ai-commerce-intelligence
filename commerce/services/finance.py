@@ -105,6 +105,17 @@ class FinanceService:
         )
         if effective_to is not None and effective_to <= effective_from:
             raise FinanceValidationError("成本结束时间必须晚于开始时间")
+        existing_exact = self.session.scalar(
+            select(SKUCost).where(
+                SKUCost.organization_id == self.principal.organization_id,
+                SKUCost.master_sku_id == sku.id,
+                SKUCost.effective_from == effective_from,
+            )
+        )
+        if existing_exact is not None:
+            if self.cost_matches(existing_exact, payload):
+                return existing_exact
+            raise FinanceConflictError("SKU 成本生效时间已存在不同记录")
         overlap = [
             SKUCost.organization_id == self.principal.organization_id,
             SKUCost.master_sku_id == sku.id,
@@ -147,6 +158,30 @@ class FinanceService:
         )
         self.session.commit()
         return cost
+
+    @staticmethod
+    def cost_matches(cost: SKUCost, payload: SKUCostCreate) -> bool:
+        def as_utc(value: datetime | None) -> datetime | None:
+            if value is None:
+                return None
+            if value.tzinfo is None or value.utcoffset() is None:
+                return value.replace(tzinfo=UTC)
+            return value.astimezone(UTC)
+
+        return (
+            cost.master_sku_id == payload.master_sku_id
+            and cost.currency == payload.currency.strip().upper()
+            and cost.purchase_cost == Decimal(payload.purchase_cost)
+            and cost.packaging_cost == Decimal(payload.packaging_cost)
+            and cost.domestic_shipping_cost == Decimal(payload.domestic_shipping_cost)
+            and cost.cross_border_shipping_cost == Decimal(payload.cross_border_shipping_cost)
+            and cost.warehouse_cost == Decimal(payload.warehouse_cost)
+            and cost.other_cost == Decimal(payload.other_cost)
+            and as_utc(cost.effective_from) == as_utc(payload.effective_from)
+            and as_utc(cost.effective_to) == as_utc(payload.effective_to)
+            and cost.source == payload.source
+            and cost.source_reference == payload.source_reference
+        )
 
     def list_sku_costs(
         self,

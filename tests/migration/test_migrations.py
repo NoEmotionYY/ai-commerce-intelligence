@@ -22,6 +22,8 @@ from commerce.models import (
     CommerceAlert,
     CommerceOrder,
     CommerceOrderItem,
+    DataImportJob,
+    DataImportRecord,
     Inventory,
     MasterProduct,
     MasterSKU,
@@ -69,6 +71,186 @@ def test_fresh_install_reaches_single_head_with_expected_tables(tmp_path: Path) 
             assert {column.name for column in table.columns}.issubset(actual_columns)
         current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
         assert current == ScriptDirectory.from_config(config).get_current_head()
+
+
+def test_data_import_upgrade_constraints_rollback_and_reupgrade_preserve_existing_data(
+    tmp_path: Path,
+) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'data-import-upgrade.db'}")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        config = _config(connection)
+        command.upgrade(config, "0012_alert_tasks")
+        now = utcnow()
+        organization_id = connection.execute(
+            sa.insert(Organization).values(
+                slug="data-import-migration",
+                name="Data Import Migration",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        user_id = connection.execute(
+            sa.insert(User).values(
+                email="data-import-migration@example.com",
+                display_name="Data Import Migration",
+                is_active=True,
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        shop_id = connection.execute(
+            sa.insert(Shop).values(
+                organization_id=organization_id,
+                name="Data Import Migration Shop",
+                platform="douyin",
+                external_shop_id="data-import-migration-shop",
+                country_code="CN",
+                currency="CNY",
+                timezone="Asia/Shanghai",
+                status="ACTIVE",
+                created_at=now,
+            )
+        ).inserted_primary_key[0]
+        connection.commit()
+
+        command.upgrade(config, "head")
+        tables = set(sa.inspect(connection).get_table_names())
+        assert {"data_import_jobs", "data_import_records"}.issubset(tables)
+        payload = {"row": {"sku": "MIGRATION-SKU"}}
+        payload_hash = hashlib.sha256(b'{"row":{"sku":"MIGRATION-SKU"}}').hexdigest()
+        event_type = "IMPORT.CATALOG"
+        external_event_id = "FILE:MIGRATION:1"
+        raw_event_id = connection.execute(
+            sa.insert(PlatformRawEvent).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                platform="douyin",
+                event_type=event_type,
+                external_event_id=external_event_id,
+                source_event_key=hashlib.sha256(
+                    f"{event_type}\0{external_event_id}".encode()
+                ).hexdigest(),
+                payload=payload,
+                payload_hash=payload_hash,
+                status="PROCESSED",
+                processing_attempts=1,
+                replay_count=0,
+                received_at=now,
+                processed_at=now,
+            )
+        ).inserted_primary_key[0]
+        job_values = {
+            "organization_id": organization_id,
+            "shop_id": shop_id,
+            "import_type": "CATALOG",
+            "file_name": "migration.csv",
+            "file_format": "csv",
+            "content_hash": "1" * 64,
+            "mapping": {"sku_code": "sku"},
+            "mapping_hash": "2" * 64,
+            "source_identity_hash": "3" * 64,
+            "idempotency_key_hash": "4" * 64,
+            "request_hash": "5" * 64,
+            "status": "SUCCESS",
+            "total_records": 1,
+            "valid_records": 1,
+            "invalid_records": 0,
+            "processed_records": 1,
+            "failed_records": 0,
+            "execution_attempts": 1,
+            "errors": [],
+            "created_by_user_id": user_id,
+            "started_at": now,
+            "finished_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        job_id = connection.execute(
+            sa.insert(DataImportJob).values(**job_values)
+        ).inserted_primary_key[0]
+        connection.execute(
+            sa.insert(DataImportRecord).values(
+                organization_id=organization_id,
+                shop_id=shop_id,
+                import_job_id=job_id,
+                row_number=2,
+                record_key="6" * 64,
+                raw_values={"sku": "MIGRATION-SKU"},
+                normalized_payload={"sku_code": "MIGRATION-SKU"},
+                errors=[],
+                status="SUCCESS",
+                raw_event_id=raw_event_id,
+                result={"master_sku_id": 1},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        connection.commit()
+
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(DataImportJob).values(
+                    **{
+                        **job_values,
+                        "source_identity_hash": "7" * 64,
+                    }
+                )
+            )
+            connection.commit()
+        connection.rollback()
+        constraint_cases: list[tuple[str, dict[str, object]]] = [
+            ("invalid-format", {"file_format": "json"}),
+            ("invalid-success", {"processed_records": 0}),
+            (
+                "invalid-partial",
+                {"status": "PARTIAL", "processed_records": 0, "failed_records": 1},
+            ),
+            ("invalid-preview", {"status": "PREVIEWED"}),
+        ]
+        for suffix, overrides in constraint_cases:
+            with pytest.raises(sa.exc.IntegrityError):
+                connection.execute(
+                    sa.insert(DataImportJob).values(
+                        **{
+                            **job_values,
+                            "source_identity_hash": hashlib.sha256(
+                                f"migration-{suffix}-source".encode()
+                            ).hexdigest(),
+                            "idempotency_key_hash": hashlib.sha256(
+                                f"migration-{suffix}-key".encode()
+                            ).hexdigest(),
+                            **overrides,
+                        }
+                    )
+                )
+                connection.commit()
+            connection.rollback()
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.insert(DataImportRecord).values(
+                    organization_id=organization_id,
+                    shop_id=shop_id,
+                    import_job_id=job_id,
+                    row_number=1,
+                    record_key="8" * 64,
+                    raw_values={},
+                    errors=[],
+                    status="VALID",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            connection.commit()
+        connection.rollback()
+
+        command.downgrade(config, "0012_alert_tasks")
+        assert "data_import_jobs" not in set(sa.inspect(connection).get_table_names())
+        assert connection.scalar(sa.select(sa.func.count()).select_from(Shop)) == 1
+        command.upgrade(config, "head")
+        assert {"data_import_jobs", "data_import_records"}.issubset(
+            set(sa.inspect(connection).get_table_names())
+        )
+        assert connection.scalar(sa.select(sa.func.count()).select_from(Shop)) == 1
 
 
 def test_legacy_upgrade_rollback_reupgrade_preserves_data(tmp_path: Path) -> None:

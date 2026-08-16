@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`
-Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`)
-Next task: `COM-P1-008` — Douyin Connector (`TODO`)
-Last completed top-level task: `COM-P1-006` — Alerts and Business Tasks
-Current verification slice: `COM-P1-007A` — Import Contract and Preview (`IN_PROGRESS`)
-Last verified checkpoint: `COM-P1-006` (local commit follows this evidence record)
+Phase: `PHASE_7_DOUYIN_CONNECTOR`
+Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`)
+Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`)
+Last completed top-level task: `COM-P1-007` — CSV/XLSX Import
+Current verification slice: `COM-P1-008A` — Douyin Contract and Adapter Boundary (`IN_PROGRESS`)
+Last verified checkpoint: `COM-P1-007` (local commit follows this evidence record)
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1119,3 +1119,62 @@ Status:
   `BLOCKED_EXTERNAL` and are not represented as COM-P1-006 PASS.
 - The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not block this
   backend task and will be reevaluated in the corresponding integration/productization phases.
+
+## 2026-08-16 — COM-P1-007 CSV/XLSX Import Exit
+
+Scope completed:
+
+- Added additive `0013_data_imports` with tenant-scoped DataImportJob/DataImportRecord staging,
+  count/status/file-format constraints, exact request/source/idempotency identity, and RawEvent FK.
+- Added bounded CSV/XLSX parsing, explicit/default mapping, row-level preview errors, active-content
+  rejection, and a separate explicit execute operation for catalog, order, warehouse/channel
+  inventory, and cost imports.
+- File imports create `PlatformRawEvent` evidence but cannot masquerade as SyncJob/platform data.
+  They reuse the existing Catalog, OrderImport, Inventory, and Finance services and can operate for
+  an active Shop without platform credentials.
+- Added tenant-scoped `WRITE_COMMERCE` APIs for preview/execute and bounded read APIs. Responses
+  omit raw rows/payloads, claim tokens, request/idempotency hashes, and credentials.
+- Added live execution conflict, lease expiry recovery, failed-event retry, crash-after-domain-
+  commit result reconstruction, preview-stage fail-closed behavior, exact channel SKU identity,
+  and stale inventory lineage.
+
+Formal Exit Review:
+
+- Product: arbitrary merchant catalog/order/inventory/cost files work without fixed Demo IDs or a
+  platform credential; preview remains separate from authoritative execution.
+- Architecture: External file -> RawEvent -> validate/normalize/deduplicate -> existing unified
+  service/model is preserved; a file import is not a SyncJob and no universal connector was added.
+- Security: authenticated tenant scope, `WRITE_COMMERCE`, cross-tenant denial, bounded multipart/
+  parser/ZIP inputs, active-content rejection, exact IDs, response redaction, and audit metadata pass.
+- Testing/data integrity: CSV/XLSX limits, mapping, malformed/duplicate/partial data, permissions,
+  RawEvent lineage, retry/recovery, stale inventory, API boundaries, SQLite migration, and MySQL
+  constraints/rollback/data preservation pass. No unresolved Critical/High finding remains.
+- Independent parser/security, tenant/idempotency, and migration reviews found bounded-upload,
+  parser-amplification, preview-staging, retry/recovery, and terminal-count integrity gaps. The
+  primary agent reconciled and fixed those findings, then reran the formal Product/Architecture/
+  Security/Testing checklist; no unresolved Critical/High finding remains.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_data_import_service.py -q`: `12 passed`.
+- `python -m pytest tests/unit/test_order_import_service.py -q`: `5 passed`.
+- `python -m pytest tests/integration/test_data_import_api.py -q`: `2 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `15 passed`.
+- `python -m pytest -q`: `290 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`120 files already formatted`).
+- `mypy .`: PASS (`92 source files`); `alembic heads`: one head, `0013_data_imports`;
+  `git diff --check`: PASS.
+- Existing official `mysql:8.4` service with guarded disposable empty database
+  `codex_import_test_0013`: fresh install,
+  `0012 -> 0013 -> 0012 -> 0013`, schema/unique/FK/CHECK constraints, prior Shop/RawEvent data
+  preservation, and existing sync/inventory/purchase/alert concurrency gates PASS. The temporary
+  database was dropped after verification; the existing application database was not touched.
+
+Status:
+
+- `COM-P1-007`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 6 connector-independent exit is satisfied.
+- Current phase: `PHASE_7_DOUYIN_CONNECTOR`; current task: `COM-P1-008` (`IN_PROGRESS`); next task:
+  `COM-P1-009`.
+- P0 remaining: 0; P1 remaining: 3; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not prove or block
+  file-import behavior and will be executed at the corresponding productization/release phases.

@@ -161,18 +161,30 @@ class OrderImportService:
         claim_token: str,
         sync_job_id: int | None = None,
         sync_job_claim_token: str | None = None,
+        import_record_id: int | None = None,
         snapshot: OrderSnapshotInput,
         _retry_on_race: bool = True,
     ) -> CommerceOrder:
-        require_permission(self.principal, Permission.OPERATE_SYNC)
         ingestion = IngestionService(self.session, self.principal)
-        event = ingestion.lock_claimed_event(
-            raw_event_id,
-            claim_token=claim_token,
-            sync_job_id=sync_job_id,
-            sync_job_claim_token=sync_job_claim_token,
-            allow_processed=True,
-        )
+        if import_record_id is None:
+            require_permission(self.principal, Permission.OPERATE_SYNC)
+            event = ingestion.lock_claimed_event(
+                raw_event_id,
+                claim_token=claim_token,
+                sync_job_id=sync_job_id,
+                sync_job_claim_token=sync_job_claim_token,
+                allow_processed=True,
+            )
+        else:
+            if sync_job_id is not None or sync_job_claim_token is not None:
+                raise OrderImportValidationError("文件导入不得绑定平台同步任务")
+            require_permission(self.principal, Permission.WRITE_COMMERCE)
+            event = ingestion.lock_import_event(
+                import_record_id,
+                raw_event_id,
+                claim_token=claim_token,
+                allow_processed=True,
+            )
         if event.event_type not in ORDER_EVENT_TYPES:
             raise OrderImportValidationError("原始事件类型不是受支持的订单事件")
         normalized = self._normalize(snapshot)
@@ -239,6 +251,7 @@ class OrderImportService:
                     claim_token=claim_token,
                     sync_job_id=sync_job_id,
                     sync_job_claim_token=sync_job_claim_token,
+                    import_record_id=import_record_id,
                     snapshot=snapshot,
                     retry_allowed=_retry_on_race,
                     error=exc,
@@ -295,6 +308,7 @@ class OrderImportService:
                 claim_token=claim_token,
                 sync_job_id=sync_job_id,
                 sync_job_claim_token=sync_job_claim_token,
+                import_record_id=import_record_id,
                 snapshot=snapshot,
                 retry_allowed=_retry_on_race,
                 error=exc,
@@ -308,17 +322,26 @@ class OrderImportService:
         claim_token: str,
         sync_job_id: int | None,
         sync_job_claim_token: str | None,
+        import_record_id: int | None = None,
         snapshot: OrderSnapshotInput,
         retry_allowed: bool,
         error: IntegrityError,
     ) -> CommerceOrder:
         self.session.rollback()
         if retry_allowed:
+            if import_record_id is None:
+                return self.import_snapshot(
+                    raw_event_id=raw_event_id,
+                    claim_token=claim_token,
+                    sync_job_id=sync_job_id,
+                    sync_job_claim_token=sync_job_claim_token,
+                    snapshot=snapshot,
+                    _retry_on_race=False,
+                )
             return self.import_snapshot(
                 raw_event_id=raw_event_id,
                 claim_token=claim_token,
-                sync_job_id=sync_job_id,
-                sync_job_claim_token=sync_job_claim_token,
+                import_record_id=import_record_id,
                 snapshot=snapshot,
                 _retry_on_race=False,
             )

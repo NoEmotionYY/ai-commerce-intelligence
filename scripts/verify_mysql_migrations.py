@@ -41,6 +41,8 @@ from commerce.models import (  # noqa: E402
     CommercePurchaseOrder,
     CommercePurchaseOrderItem,
     CredentialStatus,
+    DataImportJob,
+    DataImportRecord,
     MasterProduct,
     MasterSKU,
     MembershipRole,
@@ -120,6 +122,8 @@ V2_TABLES = {
     "commerce_alerts",
     "business_tasks",
     "business_task_history",
+    "data_import_jobs",
+    "data_import_records",
 }
 FINANCE_TABLES = {
     "sku_costs",
@@ -145,6 +149,7 @@ PURCHASING_TABLES = {
     "inbound_shipment_items",
 }
 ALERT_TASK_TABLES = {"commerce_alerts", "business_tasks", "business_task_history"}
+DATA_IMPORT_TABLES = {"data_import_jobs", "data_import_records"}
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "organization_memberships": "uq_membership_org_user",
     "shops": "uq_shop_org_platform_external",
@@ -184,10 +189,14 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "inbound_shipment_items": "uq_inbound_shipment_items_order_item",
     "commerce_alerts": "uq_commerce_alerts_org_dedup",
     "business_tasks": "uq_business_tasks_org_idempotency",
+    "data_import_jobs": "uq_data_import_jobs_org_idempotency",
+    "data_import_records": "uq_data_import_records_job_key",
 }
 EXPECTED_ADDITIONAL_UNIQUE_CONSTRAINTS = {
     "supplier_products": {"uq_supplier_products_supplier_code"},
     "commerce_purchase_orders": {"uq_commerce_purchase_orders_org_idempotency"},
+    "data_import_jobs": {"uq_data_import_jobs_org_shop_source"},
+    "data_import_records": {"uq_data_import_records_raw_event"},
 }
 EXPECTED_UNIQUE_INDEXES = {
     "shops": "ix_shops_org_id_unique",
@@ -213,6 +222,8 @@ EXPECTED_UNIQUE_INDEXES = {
     "inbound_shipment_items": "ix_inbound_shipment_items_org_id_unique",
     "commerce_alerts": "ix_commerce_alerts_org_id_unique",
     "business_tasks": "ix_business_tasks_org_id_unique",
+    "data_import_jobs": "ix_data_import_jobs_org_shop_id_unique",
+    "data_import_records": "ix_data_import_records_org_job_id_unique",
 }
 EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
     "organization_memberships": {
@@ -380,6 +391,14 @@ EXPECTED_FOREIGN_KEYS: dict[str, set[tuple[tuple[str, ...], str]]] = {
         (("organization_id", "business_task_id"), "business_tasks"),
         (("actor_user_id",), "users"),
     },
+    "data_import_jobs": {
+        (("organization_id", "shop_id"), "shops"),
+        (("created_by_user_id",), "users"),
+    },
+    "data_import_records": {
+        (("organization_id", "shop_id", "import_job_id"), "data_import_jobs"),
+        (("organization_id", "shop_id", "raw_event_id"), "platform_raw_events"),
+    },
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "shop_connections": {"ck_shop_connections_authorization_status"},
@@ -454,6 +473,21 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "business_task_history": {
         "ck_business_task_history_from_status",
         "ck_business_task_history_to_status",
+    },
+    "data_import_jobs": {
+        "ck_data_import_jobs_type",
+        "ck_data_import_jobs_status",
+        "ck_data_import_jobs_counts_nonnegative",
+        "ck_data_import_jobs_preview_counts",
+        "ck_data_import_jobs_execution_counts",
+        "ck_data_import_jobs_file_format",
+        "ck_data_import_jobs_success_counts",
+        "ck_data_import_jobs_partial_counts",
+        "ck_data_import_jobs_preview_execution_counts",
+    },
+    "data_import_records": {
+        "ck_data_import_records_row_number",
+        "ck_data_import_records_status",
     },
 }
 
@@ -800,6 +834,258 @@ def _verify_alert_task_integrity(connection: Connection) -> None:
         ),
         label="unknown BusinessTaskHistory status",
     )
+
+
+def _verify_data_import_integrity(connection: Connection) -> tuple[int, int]:
+    now = utcnow()
+    organization_id = connection.execute(
+        sa.insert(Organization).values(
+            slug="mysql-data-import-integrity",
+            name="MySQL Data Import Integrity",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    other_organization_id = connection.execute(
+        sa.insert(Organization).values(
+            slug="mysql-data-import-integrity-other",
+            name="MySQL Data Import Integrity Other",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    user_id = connection.execute(
+        sa.insert(User).values(
+            email="mysql-data-import-integrity@example.com",
+            display_name="MySQL Data Import Integrity",
+            is_active=True,
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    shop_id = connection.execute(
+        sa.insert(Shop).values(
+            organization_id=organization_id,
+            name="MySQL Data Import Integrity Shop",
+            platform="douyin",
+            external_shop_id="mysql-data-import-integrity-shop",
+            country_code="CN",
+            currency="CNY",
+            timezone="Asia/Shanghai",
+            status="ACTIVE",
+            created_at=now,
+        )
+    ).inserted_primary_key[0]
+    event_type = "IMPORT.CATALOG"
+    external_event_id = "FILE:MYSQL-DATA-IMPORT:1"
+    raw_event_id = connection.execute(
+        sa.insert(PlatformRawEvent).values(
+            organization_id=organization_id,
+            shop_id=shop_id,
+            platform="douyin",
+            event_type=event_type,
+            external_event_id=external_event_id,
+            source_event_key=hashlib.sha256(
+                f"{event_type}\0{external_event_id}".encode()
+            ).hexdigest(),
+            payload={"source": "FILE_IMPORT", "record": {"sku": "MYSQL-IMPORT-SKU"}},
+            payload_hash=hashlib.sha256(b"mysql-data-import-payload").hexdigest(),
+            status="PROCESSED",
+            processing_attempts=1,
+            replay_count=0,
+            received_at=now,
+            processed_at=now,
+        )
+    ).inserted_primary_key[0]
+    job_values = {
+        "organization_id": organization_id,
+        "shop_id": shop_id,
+        "import_type": "CATALOG",
+        "file_name": "mysql-integrity.csv",
+        "file_format": "csv",
+        "content_hash": hashlib.sha256(b"mysql-data-import-content").hexdigest(),
+        "mapping": {"sku_code": "sku"},
+        "mapping_hash": hashlib.sha256(b"mysql-data-import-mapping").hexdigest(),
+        "source_identity_hash": hashlib.sha256(b"mysql-data-import-source").hexdigest(),
+        "idempotency_key_hash": hashlib.sha256(b"mysql-data-import-key").hexdigest(),
+        "request_hash": hashlib.sha256(b"mysql-data-import-request").hexdigest(),
+        "status": "SUCCESS",
+        "total_records": 1,
+        "valid_records": 1,
+        "invalid_records": 0,
+        "processed_records": 1,
+        "failed_records": 0,
+        "execution_attempts": 1,
+        "errors": [],
+        "created_by_user_id": user_id,
+        "started_at": now,
+        "finished_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    job_id = connection.execute(sa.insert(DataImportJob).values(**job_values)).inserted_primary_key[
+        0
+    ]
+    record_values = {
+        "organization_id": organization_id,
+        "shop_id": shop_id,
+        "import_job_id": job_id,
+        "row_number": 2,
+        "record_key": hashlib.sha256(b"mysql-data-import-record").hexdigest(),
+        "raw_values": {"sku": "MYSQL-IMPORT-SKU"},
+        "normalized_payload": {"sku_code": "MYSQL-IMPORT-SKU"},
+        "errors": [],
+        "status": "SUCCESS",
+        "raw_event_id": raw_event_id,
+        "result": {"master_sku_id": 1},
+        "created_at": now,
+        "updated_at": now,
+    }
+    connection.execute(sa.insert(DataImportRecord).values(**record_values))
+    connection.commit()
+
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-other-source"
+                ).hexdigest(),
+            }
+        ),
+        label="duplicate DataImportJob idempotency key",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "idempotency_key_hash": hashlib.sha256(b"mysql-data-import-other-key").hexdigest(),
+            }
+        ),
+        label="duplicate DataImportJob source identity",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "organization_id": other_organization_id,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-cross-tenant-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-cross-tenant-key"
+                ).hexdigest(),
+            }
+        ),
+        label="cross-organization DataImportJob shop",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-bad-count-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-bad-count-key"
+                ).hexdigest(),
+                "valid_records": 0,
+            }
+        ),
+        label="inconsistent DataImportJob preview counts",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-format-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-format-key"
+                ).hexdigest(),
+                "file_format": "json",
+            }
+        ),
+        label="invalid DataImportJob file format",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-success-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-success-key"
+                ).hexdigest(),
+                "processed_records": 0,
+            }
+        ),
+        label="inconsistent successful DataImportJob counts",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-partial-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-partial-key"
+                ).hexdigest(),
+                "status": "PARTIAL",
+                "processed_records": 0,
+                "failed_records": 1,
+            }
+        ),
+        label="inconsistent partial DataImportJob counts",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportJob).values(
+            **{
+                **job_values,
+                "source_identity_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-preview-source"
+                ).hexdigest(),
+                "idempotency_key_hash": hashlib.sha256(
+                    b"mysql-data-import-invalid-preview-key"
+                ).hexdigest(),
+                "status": "PREVIEWED",
+            }
+        ),
+        label="inconsistent preview DataImportJob execution counts",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportRecord).values(
+            **{
+                **record_values,
+                "record_key": hashlib.sha256(b"mysql-data-import-row-one").hexdigest(),
+                "raw_event_id": None,
+                "row_number": 1,
+            }
+        ),
+        label="invalid DataImportRecord row number",
+    )
+    _expect_integrity_error(
+        connection,
+        sa.insert(DataImportRecord).values(
+            **{
+                **record_values,
+                "record_key": hashlib.sha256(b"mysql-data-import-event-reuse").hexdigest(),
+            }
+        ),
+        label="reused DataImportRecord raw event",
+    )
+    return shop_id, raw_event_id
 
 
 def _seed_sync_race(
@@ -1561,6 +1847,24 @@ def main() -> None:
         _assert_head_schema(connection, config)
         _assert_legacy_product_preserved(connection)
         _verify_alert_task_integrity(connection)
+        import_shop_id, import_raw_event_id = _verify_data_import_integrity(connection)
+
+        command.downgrade(config, "0012_alert_tasks")
+        tables_after_import_rollback = set(sa.inspect(connection).get_table_names())
+        remaining_import_tables = DATA_IMPORT_TABLES.intersection(tables_after_import_rollback)
+        if remaining_import_tables:
+            raise RuntimeError(
+                f"MySQL data-import rollback left tables behind: {sorted(remaining_import_tables)}"
+            )
+        if not ALERT_TASK_TABLES.issubset(tables_after_import_rollback):
+            raise RuntimeError("MySQL data-import rollback removed alert/task tables")
+        _assert_shop_preserved(connection, import_shop_id)
+        _assert_raw_event_preserved(connection, import_raw_event_id)
+        _assert_legacy_product_preserved(connection)
+        command.upgrade(config, "head")
+        _assert_head_schema(connection, config)
+        _assert_shop_preserved(connection, import_shop_id)
+        _assert_raw_event_preserved(connection, import_raw_event_id)
 
         command.downgrade(config, "0011_purchasing")
         tables_after_alert_rollback = set(sa.inspect(connection).get_table_names())
@@ -2046,8 +2350,8 @@ def main() -> None:
     _verify_alert_task_idempotency_races(engine)
     print(
         "MySQL migration fresh/upgrade/rollback/re-upgrade/schema-and-behavioral-constraints/"
-        "legacy-reauth-catalog-raw-order-inventory-data-preservation-and-sync-and-inventory-"
-        "purchase-execution-and-alert-task-idempotency-races: PASS"
+        "legacy-reauth-catalog-raw-order-inventory-and-data-import-data-preservation-and-sync-and-"
+        "inventory-purchase-execution-and-alert-task-idempotency-races: PASS"
     )
 
 

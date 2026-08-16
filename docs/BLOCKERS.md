@@ -23,8 +23,10 @@ implementation and contract verification exist.
 `COM-P1-006` has no external blocker. Optional detectors, Agent registration, and effect tracking
 are internal future scope and therefore remain `MISSING`, not `BLOCKED_EXTERNAL`.
 
-`COM-P1-007` has no external blocker. CSV/XLSX parsing, preview, validation, and import are local
-implementation work.
+`COM-P1-007` completed without an external blocker. `COM-P1-008` connector implementation and
+contract tests are internal work and therefore `IN_PROGRESS`, not `BLOCKED_EXTERNAL`. Real Douyin
+credentials, developer approval, seller authorization, or platform access have not yet been
+confirmed unavailable and are not recorded as active blockers.
 
 ---
 

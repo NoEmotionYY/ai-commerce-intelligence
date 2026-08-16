@@ -50,7 +50,8 @@ retry/concurrency evidence. That tool surface is not registered in production ch
 approval or execution operation. Production supplier/platform execution, production Agent
 integration, effect measurement, and AuditLog remain TARGET. COM-P1-006 adds the locally verified
 Alert and BusinessTask foundation described below; it does not add optional price/order/finance
-detectors or production Agent registration.
+detectors or production Agent registration. COM-P1-007 adds the locally verified two-stage
+CSV/XLSX import path described below; it does not implement a platform connector.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -100,8 +101,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0012_alert_tasks`. Revisions `0003`
-through `0012`
+The repository has one Alembic head at `0013_data_imports`. Revisions `0003`
+through `0013`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -125,6 +126,10 @@ Revision `0012` adds tenant-scoped commerce alerts, business tasks, and immutabl
 history. SQLite and disposable MySQL 8.4 checks cover fresh install, `0011 -> 0012 -> 0011 ->
 0012`, constraints, legacy/V2 data preservation, and concurrent Alert deduplication and
 BusinessTask idempotency with exactly one row/history/audit.
+Revision `0013` adds tenant-scoped DataImportJob and DataImportRecord staging/evidence tables.
+SQLite and disposable official MySQL 8.4 checks cover fresh install, `0012 -> 0013 -> 0012 ->
+0013`, count/status/file-format constraints, exact source/idempotency uniqueness, composite tenant
+foreign keys, and preservation of prior Shop/RawEvent data.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -308,6 +313,32 @@ and one audit for each logical operation.
 This is `L2 VERIFIED_LOCAL`. Optional PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors,
 production Agent alert/task registration, broader order/supplier/purchase-order context links, and
 measurable effect tracking remain TARGET.
+
+## 3.13 CURRENT: CSV/XLSX File Import
+
+DataImportJob and DataImportRecord implement an explicit two-stage merchant workflow:
+
+```text
+CSV/XLSX upload -> bounded parse/map/validate preview -> explicit execute
+                -> file-source PlatformRawEvent -> existing domain service -> unified model
+```
+
+Catalog, order, warehouse/channel inventory, and cost records reuse CatalogService,
+OrderImportService, InventoryService, and FinanceService. A file import is not a SyncJob and does
+not require a platform credential, but it does require an active tenant Shop and `WRITE_COMMERCE`.
+The API exposes job/record status and validation/result metadata without raw row values, source
+payloads, claim tokens, idempotency hashes, or credentials.
+
+CSV/XLSX input is bounded by file, row, column, cell, ZIP-entry, and expanded-size limits. XLSX
+macros, external links, data connections, formulas, and multi-sheet files are rejected. Source,
+mapping, request, and record identities use deterministic hashes. Preview staging failure is
+fail-closed. Execution uses a bounded lease, rejects a live concurrent executor, recovers expired
+work, retries failed RawEvents, reconstructs record results after a domain commit, and preserves
+stale inventory lineage without replacing newer stock. Exact external SKU identity remains stable
+under SQLite and MySQL collations.
+
+This is `L2 VERIFIED_LOCAL`, including SQLite and disposable MySQL 8.4 migration/integrity gates.
+It is not evidence of Douyin/TikTok API, sandbox, or real-platform support.
 
 ## 4. TARGET: Production Data Flow
 

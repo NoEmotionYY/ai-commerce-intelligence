@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    column,
     event,
     inspect,
 )
@@ -148,6 +149,31 @@ class SyncJobStatus(StrEnum):
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
     PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+
+
+class DataImportType(StrEnum):
+    CATALOG = "CATALOG"
+    ORDER = "ORDER"
+    INVENTORY = "INVENTORY"
+    COST = "COST"
+
+
+class DataImportStatus(StrEnum):
+    PREVIEWED = "PREVIEWED"
+    INVALID = "INVALID"
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+
+
+class DataImportRecordStatus(StrEnum):
+    PENDING = "PENDING"
+    VALID = "VALID"
+    INVALID = "INVALID"
+    PROCESSING = "PROCESSING"
+    SUCCESS = "SUCCESS"
     FAILED = "FAILED"
 
 
@@ -610,6 +636,160 @@ class PlatformRawEvent(Base):
     occurred_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     received_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class DataImportJob(Base):
+    __tablename__ = "data_import_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id"],
+            ["shops.organization_id", "shops.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id", "idempotency_key_hash", name="uq_data_import_jobs_org_idempotency"
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "shop_id",
+            "source_identity_hash",
+            name="uq_data_import_jobs_org_shop_source",
+        ),
+        Index(
+            "ix_data_import_jobs_org_shop_id_unique",
+            "organization_id",
+            "shop_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "import_type IN ('CATALOG','ORDER','INVENTORY','COST')",
+            name="ck_data_import_jobs_type",
+        ),
+        CheckConstraint(
+            "status IN ('PREVIEWED','INVALID','RUNNING','SUCCESS','PARTIAL','FAILED')",
+            name="ck_data_import_jobs_status",
+        ),
+        CheckConstraint(
+            "total_records >= 0 AND valid_records >= 0 AND invalid_records >= 0 "
+            "AND processed_records >= 0 AND failed_records >= 0 AND execution_attempts >= 0",
+            name="ck_data_import_jobs_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "valid_records + invalid_records = total_records",
+            name="ck_data_import_jobs_preview_counts",
+        ),
+        CheckConstraint(
+            "processed_records + failed_records <= valid_records",
+            name="ck_data_import_jobs_execution_counts",
+        ),
+        CheckConstraint(
+            "file_format IN ('csv','xlsx')",
+            name="ck_data_import_jobs_file_format",
+        ),
+        CheckConstraint(
+            "status != 'SUCCESS' OR (processed_records = valid_records "
+            "AND failed_records = 0 AND invalid_records = 0)",
+            name="ck_data_import_jobs_success_counts",
+        ),
+        CheckConstraint(
+            "status != 'PARTIAL' OR (processed_records > 0 "
+            "AND processed_records + failed_records = valid_records "
+            "AND (failed_records > 0 OR invalid_records > 0))",
+            name="ck_data_import_jobs_partial_counts",
+        ),
+        CheckConstraint(
+            "status NOT IN ('PREVIEWED','INVALID') "
+            "OR (processed_records = 0 AND failed_records = 0)",
+            name="ck_data_import_jobs_preview_execution_counts",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    import_type: Mapped[DataImportType] = mapped_column(
+        Enum(DataImportType, native_enum=False, length=16), index=True
+    )
+    file_name: Mapped[str] = mapped_column(String(255))
+    file_format: Mapped[str] = mapped_column(String(8))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    mapping: Mapped[dict[str, Any]] = mapped_column(JSON)
+    mapping_hash: Mapped[str] = mapped_column(String(64))
+    source_identity_hash: Mapped[str] = mapped_column(String(64))
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[DataImportStatus] = mapped_column(
+        Enum(DataImportStatus, native_enum=False, length=16), index=True
+    )
+    total_records: Mapped[int] = mapped_column(Integer, default=0)
+    valid_records: Mapped[int] = mapped_column(Integer, default=0)
+    invalid_records: Mapped[int] = mapped_column(Integer, default=0)
+    processed_records: Mapped[int] = mapped_column(Integer, default=0)
+    failed_records: Mapped[int] = mapped_column(Integer, default=0)
+    execution_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class DataImportRecord(Base):
+    __tablename__ = "data_import_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "import_job_id"],
+            [
+                "data_import_jobs.organization_id",
+                "data_import_jobs.shop_id",
+                "data_import_jobs.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shop_id", "raw_event_id"],
+            [
+                "platform_raw_events.organization_id",
+                "platform_raw_events.shop_id",
+                "platform_raw_events.id",
+            ],
+        ),
+        UniqueConstraint("import_job_id", "record_key", name="uq_data_import_records_job_key"),
+        UniqueConstraint("raw_event_id", name="uq_data_import_records_raw_event"),
+        Index(
+            "ix_data_import_records_org_job_id_unique",
+            "organization_id",
+            "import_job_id",
+            "id",
+            unique=True,
+        ),
+        CheckConstraint(column("row_number") >= 2, name="ck_data_import_records_row_number"),
+        CheckConstraint(
+            "status IN ('PENDING','VALID','INVALID','PROCESSING','SUCCESS','FAILED')",
+            name="ck_data_import_records_status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(index=True)
+    shop_id: Mapped[int] = mapped_column(index=True)
+    import_job_id: Mapped[int] = mapped_column(index=True)
+    row_number: Mapped[int] = mapped_column(Integer)
+    record_key: Mapped[str] = mapped_column(String(64))
+    raw_values: Mapped[dict[str, Any]] = mapped_column(JSON)
+    normalized_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[DataImportRecordStatus] = mapped_column(
+        Enum(DataImportRecordStatus, native_enum=False, length=16), index=True
+    )
+    raw_event_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
 
 
 class SyncJobRawEvent(Base):

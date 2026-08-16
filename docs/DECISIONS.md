@@ -485,3 +485,31 @@ SQLite, and disposable MySQL 8.4 migration/integrity/concurrency gates. Optional
 ORDER_ANOMALY, and FINANCE_ANOMALY detectors remain `MISSING`; production Agent registration and
 measurable effect tracking remain COM-P1-010/later product-loop work. No real-platform capability
 or `BLOCKED_EXTERNAL` is claimed. Phase 6 begins with COM-P1-007 CSV/XLSX Import.
+
+## ADR-023 — Two-Stage File Imports Use Raw Evidence and Existing Domain Services
+
+Date: 2026-08-16
+Status: ACCEPTED
+
+Context: Merchants without usable platform API authorization still need catalog, order, inventory,
+and cost ingestion. Treating a spreadsheet row as an authoritative model, or labelling a file as a
+platform SyncJob, would bypass validation and destroy source provenance. Execution can also crash
+after a domain service commits but before the staging record is updated.
+
+Decision: Persist a tenant-scoped DataImportJob/DataImportRecord preview through additive `0013`.
+Bound CSV/XLSX parsing and reject formulas, active content, external links, unexpected columns, and
+oversized input. Each staged row/group receives a file-source PlatformRawEvent. Only explicit
+execution calls the existing trusted catalog/order/inventory/finance services. Use deterministic
+source/request/mapping/record hashes, a job lease, RawEvent retry, and domain-lineage reconstruction
+to make duplicate, stale, failed, and crash-after-commit cases safe. Fail closed when preview
+staging itself is incomplete. Do not require platform credentials for this merchant-supplied path,
+and do not attach a SyncJob.
+
+Reasoning: The same unified business invariants should govern API and file ingestion while source
+trust and verification levels remain explicit. Preview gives operators a validation boundary;
+RawEvent plus staging evidence makes execution explainable and recoverable.
+
+Consequences: `COM-P1-007` is `DONE` at `L2 VERIFIED_LOCAL` after focused/API/full regression,
+SQLite, and disposable MySQL 8.4 migration/integrity gates. This is not Douyin or TikTok Shop
+connector verification. Phase 7 begins with `COM-P1-008`; real-platform verification remains
+separate and no `BLOCKED_EXTERNAL` is recorded before implementation exists.

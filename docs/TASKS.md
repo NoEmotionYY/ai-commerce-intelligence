@@ -4,15 +4,14 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`.
-Current task: `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`).
-Next task: `COM-P1-008` — Douyin Connector (`TODO`).
-Last completed task: `COM-P1-006` — Alerts and Business Tasks (`DONE`).
-`COM-P1-006` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. The focused service/API/migration slice is green (`21 passed, 1 warning`), the latest
-current-checkout full suite is green (`275 passed, 18 skipped, 1 warning`), and the disposable
-MySQL verifier proves concurrent Alert deduplication and BusinessTask idempotency with one logical
-row/history/audit. Optional detectors, Agent registration, and effect tracking are not claimed.
+Current phase: `PHASE_7_DOUYIN_CONNECTOR`.
+Current task: `COM-P1-008` — Douyin Connector (`IN_PROGRESS`).
+Next task: `COM-P1-009` — TikTok Shop Connector (`TODO`).
+Last completed task: `COM-P1-007` — CSV/XLSX Import (`DONE`).
+`COM-P1-007` passed its Product, Architecture, Security, Testing, migration, and documentation Exit
+Review. CSV/XLSX parser/service tests are green (`12 passed`), the current-checkout full suite is
+green (`290 passed, 18 skipped, 1 warning`), and SQLite/MySQL verify additive `0013`, constraints,
+rollback/re-upgrade, and data preservation. No platform connector capability is claimed.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -672,15 +671,26 @@ and two-thread Alert/BusinessTask races PASS. Exit Review found no unresolved Cr
 
 ### COM-P1-007 — CSV/XLSX Import
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P0-006, COM-P0-007.
-Scope: preview, mapping, validation, error reporting, source/idempotency metadata.
-Acceptance: products/SKUs, orders, inventory, and costs can be imported without direct raw writes.
-Verification: fixture, malformed-input, duplicate, and integration tests.
+Scope: two-stage CSV/XLSX preview and execution for catalog, order, inventory, and cost data;
+mapping, validation, bounded parsing, error reporting, RawEvent source identity, idempotency,
+execution leases, retry, and recovery.
+Acceptance: products/SKUs, orders, physical/channel inventory, and costs import through file-source
+PlatformRawEvent evidence and existing trusted domain services; tenant and permission boundaries
+hold; duplicate/stale data is safe; preview failure cannot execute partial staging; live concurrent
+execution is rejected and expired/crashed work is recoverable; APIs redact raw/sensitive evidence.
+Verification: parser/service `12 passed`; order import regression `5 passed`; import API `2 passed,
+1 warning`; SQLite migration `15 passed`; full suite `290 passed, 18 skipped, 1 warning`; Ruff,
+format, strict MyPy, single Alembic head, and diff checks PASS. Disposable official MySQL 8.4
+fresh/upgrade/rollback/re-upgrade/schema/constraint/data-preservation and existing concurrency gates
+PASS. Primary Product/Architecture/Security/Testing Exit Review found no unresolved Critical/High
+issue; independent parser/security, tenant/idempotency, and migration reviews were reconciled and
+their actionable findings were fixed before exit.
 
 ### COM-P1-008 — Douyin Connector
 Priority: P1
-Status: TODO
+Status: IN_PROGRESS
 Dependencies: COM-P0-005, COM-P0-006, COM-P0-007, COM-P1-001.
 Scope: adapter, auth, product/SKU/order/inventory/refund/event/retry/pagination/reconciliation.
 Acceptance: contract behavior passes; real verification is separately labelled.
@@ -711,5 +721,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 4 (`COM-P1-007` through `COM-P1-010`); `COM-P1-001` through `COM-P1-006` are `DONE`.
+- P1 remaining: 3 (`COM-P1-008` through `COM-P1-010`); `COM-P1-001` through `COM-P1-007` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.
