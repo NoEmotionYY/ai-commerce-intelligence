@@ -135,9 +135,10 @@ index. SQLite and disposable MySQL 8.4 checks cover `0013 -> 0014 -> 0013 -> 001
 identifier backfill behavior, credential ciphertext preservation, and existing tenant/raw-event
 data preservation. The explicit deployment backfill remains required for legacy NULL hashes.
 Revision `0015` adds immutable task-effect observations and the BusinessTask execution linkage used
-to compare deterministic before/after state. Revision `0016` adds tenant-scoped Agent sessions,
-draft requests, and idempotent draft workflow persistence. Both are additive and included in the
-current SQLite/full-suite and disposable MySQL migration/integrity verification history.
+to compare deterministic before/after state. Revision `0016` adds tenant-scoped
+`AgentDraftRequest` rows and the BusinessTask purchase-order association used for idempotent draft
+workflow persistence. Both are additive and included in the current SQLite/full-suite and
+disposable MySQL migration/integrity verification history.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -466,8 +467,10 @@ the bounded response contract fail explicitly instead of silently truncating a t
 and task lists return grounded `count=0` states.
 
 `TaskEffectMeasurement` snapshots deterministic before/after values for one BusinessTask and its
-linked execution purchase order. Agent sessions and draft requests preserve idempotent workflow
-and audit evidence. The V2 Streamlit interface calls only authenticated V2 dashboard/Agent APIs,
+linked execution purchase order. `AgentDraftRequest` preserves tenant-scoped draft idempotency.
+The V2 Agent `session_id` currently correlates a request/response with operation-audit evidence; it
+does not create or load a persisted V2 conversation session. The legacy `AgentSession` model is not
+used by the V2 runtime. The V2 Streamlit interface calls only authenticated V2 dashboard/Agent APIs,
 uses password-style token input, and is retained as an internal/admin surface. Its AppTest and
 explicit Playwright contract-fixture success path are locally verified. React/Next.js remains
 TARGET; the fixture/browser result is `VERIFIED_MOCK`, not a cloud-LLM or real-platform claim.
