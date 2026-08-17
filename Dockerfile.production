@@ -36,7 +36,11 @@ RUN rm -f \
         /usr/local/lib/python3.12/lib-dynload/_sqlite3*.so \
         /usr/local/lib/python3.12/lib-dynload/_uuid*.so \
         /usr/local/lib/python3.12/lib-dynload/readline*.so \
-    && mkdir -p /runtime/etc /runtime/home/commerce /runtime/var/lib/dpkg/status.d \
+    && mkdir -p \
+        /runtime/etc \
+        /runtime/home/commerce \
+        /runtime/usr/lib/x86_64-linux-gnu \
+        /runtime/var/lib/dpkg/status.d \
     && printf '%s\n' 'commerce:x:65532:65532:commerce:/home/commerce:/sbin/nologin' \
         > /runtime/etc/passwd \
     && printf '%s\n' 'commerce:x:65532:' > /runtime/etc/group \
@@ -45,8 +49,10 @@ RUN rm -f \
         /lib/x86_64-linux-gnu/libffi.so.8 \
         /lib/x86_64-linux-gnu/liblzma.so.5; do \
         resolved="$(readlink -f "$library")"; \
-        cp --parents --archive "$resolved" /runtime; \
-        if [ "$resolved" != "$library" ]; then cp --parents --archive "$library" /runtime; fi; \
+        cp --archive "$resolved" /runtime/usr/lib/x86_64-linux-gnu/; \
+        if [ "$resolved" != "$library" ]; then \
+            cp --archive "$library" /runtime/usr/lib/x86_64-linux-gnu/; \
+        fi; \
     done \
     && dpkg-query --show \
         --showformat='Package: ${binary:Package}\nStatus: install ok installed\nArchitecture: ${Architecture}\nVersion: ${Version}\nSource: ${source:Package} (${source:Version})\nDescription: copied Python runtime library\n\n' \
@@ -64,7 +70,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder --chown=65532:65532 /app /app
-COPY --from=builder /runtime/ /
+COPY --from=builder /runtime/etc/passwd /etc/passwd
+COPY --from=builder /runtime/etc/group /etc/group
+COPY --from=builder --chown=65532:65532 /runtime/home/commerce /home/commerce
+COPY --from=builder /runtime/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
+COPY --from=builder /runtime/var/lib/dpkg/status.d/commerce-python-runtime-libs \
+    /var/lib/dpkg/status.d/commerce-python-runtime-libs
 
 WORKDIR /app
 
