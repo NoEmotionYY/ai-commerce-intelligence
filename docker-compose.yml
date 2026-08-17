@@ -129,5 +129,25 @@ services:
       timeout: 5s
       retries: 20
 
+  frontend-v2:
+    <<: *app
+    environment:
+      APP_ENV: demo
+      AGENT_API_URL: http://agent-api:8000
+      COMMERCE_ACCESS_TOKEN: ${COMMERCE_ACCESS_TOKEN:-}
+      COMMERCE_ORGANIZATION_ID: ${COMMERCE_ORGANIZATION_ID:-}
+      COMMERCE_SHOP_ID: ${COMMERCE_SHOP_ID:-}
+      PYTHONPATH: /app
+    command: ["streamlit", "run", "frontend/v2_streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8511", "--server.headless=true"]
+    ports: ["127.0.0.1:8511:8511"]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8511/_stcore/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   mysql-data:
