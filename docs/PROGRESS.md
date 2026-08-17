@@ -46,6 +46,12 @@ containers, volumes, and networks were all absent after the failure. The runbook
 installs Chromium (and Linux OS dependencies) before the release exercise; the unchanged verifier
 must be rerun from the updated frozen commit before 011G can advance.
 
+The corrected walkthrough fast-forwarded the clean clone to frozen commit `17b8323`, installed the
+matching Chromium runtime, and reran the unchanged Production verifier. It passed database role
+isolation, bootstrap concurrency, restart persistence, backup/restore plus negative controls, and
+HTTPS/browser. Post-run production-smoke container, volume, and network counts were all zero. This
+is an 011G local operator-path checkpoint, not a registry-promotion or GitHub-hosted PASS.
+
 The Trivy blocking failure was not waived. `Dockerfile.production` now uses the current reviewed
 Python base digest and applies Debian security upgrades before creating the application user; the
 same rebuilt image then passed the fixable Critical/High gate. The full SARIF remains authoritative:

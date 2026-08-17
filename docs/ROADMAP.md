@@ -216,6 +216,9 @@ current production image contract and unchanged end-to-end verifier passed hosti
 MySQL role isolation, concurrent first-OWNER bootstrap, restart/readiness failure injection,
 backup/delete/restore, partial failure marker and retry, HTTPS/browser, and exact cleanup. Current
 execution advances to 011E; GitHub-hosted CI evidence is not yet claimed.
+An independent clean checkout at `17b8323` also passed the documented Python 3.12 setup, migration,
+production-image, recovery, readiness, and browser walkthrough after the runbook was corrected to
+install Chromium. This is preliminary 011G operator evidence; 011G remains gated by 011E/F.
 
 ## Phase 11 — Final Acceptance
 
