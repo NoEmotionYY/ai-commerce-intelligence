@@ -18,6 +18,7 @@ TYPE_TARGETS = (
     "scripts/verify_production_migrations.py",
     "scripts/verify_pytest_skips.py",
     "scripts/verify_release_metadata.py",
+    "scripts/verify_release_image_artifact.py",
     "scripts/verify_types.py",
 )
 

@@ -86,6 +86,7 @@ def test_type_gate_covers_production_and_hardening_sources() -> None:
         "scripts/verify_production_deployment.py",
         "scripts/verify_production_image_contract.py",
         "scripts/verify_production_migrations.py",
+        "scripts/verify_release_image_artifact.py",
     ):
         assert required in TYPE_TARGETS
     assert all(not target.startswith("tests") for target in TYPE_TARGETS)

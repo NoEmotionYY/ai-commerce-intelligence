@@ -10,7 +10,7 @@ def test_deployment_runbook_matches_immutable_release_path() -> None:
     for required in (
         "COMMERCE_APP_IMAGE",
         "commerce-v2-rc-image.tar.gz.sha256",
-        "docker load",
+        "verify_release_image_artifact.py",
         "production-image-id.txt",
         "docker buildx imagetools inspect",
         "REGISTRY_CONFIG_DIGEST",
@@ -45,6 +45,8 @@ def test_deployment_runbook_matches_immutable_release_path() -> None:
     assert "requirements.production.lock -c requirements.ci.lock" in deployment
     assert "python -m playwright install --with-deps chromium" in deployment
     assert "python -m playwright install chromium" in deployment
+    assert "verify_release_image_artifact.py" in deployment
+    assert "docker image inspect --format '{{.Id}}'" not in deployment
     assert "POSIX shell" in deployment
 
 

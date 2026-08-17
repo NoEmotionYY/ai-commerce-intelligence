@@ -72,10 +72,10 @@ def test_production_image_runs_as_unprivileged_user() -> None:
     assert "WORKDIR /app" in dockerfile
     assert "PYTHONPATH=/app" in dockerfile
     assert "PYTHONDONTWRITEBYTECODE=1" in dockerfile
-    assert "python:3.12-slim@sha256:" in dockerfile
-    assert "apt-get update" in dockerfile
-    assert "apt-get upgrade --yes" in dockerfile
-    assert "rm -rf /var/lib/apt/lists/*" in dockerfile
+    assert "python:3.12.13-alpine3.24@sha256:" in dockerfile
+    assert "apk upgrade --no-cache" in dockerfile
+    assert "adduser --system" in dockerfile
+    assert "apt-get" not in dockerfile
     assert "requirements.production.lock" in dockerfile
     assert "--no-deps --no-build-isolation ." in dockerfile
 

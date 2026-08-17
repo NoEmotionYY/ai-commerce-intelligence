@@ -26,7 +26,7 @@ Evidence:
 |---|---|---|
 | Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
 | CI/security contracts | `11 passed` | local contract evidence |
-| full regression + skip guard | `547 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
+| full regression + skip guard | `550 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
 | Ruff / format / strict MyPy / release head / diff | PASS; 176 files, 69 production/hardening sources, `0016_agent_workflow` | L2 local |
 | Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
 | Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
@@ -52,14 +52,13 @@ isolation, bootstrap concurrency, restart persistence, backup/restore plus negat
 HTTPS/browser. Post-run production-smoke container, volume, and network counts were all zero. This
 is an 011G local operator-path checkpoint, not a registry-promotion or GitHub-hosted PASS.
 
-The Trivy blocking failure was not waived. `Dockerfile.production` now uses the current reviewed
-Python base digest and applies Debian security upgrades before creating the application user; the
-same rebuilt image then passed the fixable Critical/High gate. The full SARIF remains authoritative:
-it records 14 Debian Trixie findings without an available fixed package (4 Critical, 10 High).
-Debian classifies the reviewed gzip, ACL, ncurses, and several Perl issues as minor/no-DSA or
-postponed, while the application runtime is non-root/read-only and does not invoke these tools on
-merchant input. This is reachability context, not an exception or PASS. No residual-risk acceptance
-has been recorded.
+The Trivy blocking failure was not waived. The upgraded Debian image passed the fixable
+Critical/High gate, but its authoritative GitHub SARIF still records 14 Debian Trixie findings
+without an available fixed package (4 Critical, 10 High). Reachability review is not being used as
+an exception. `Dockerfile.production` now moves the application runtime to the smaller official
+Python 3.12.13 Alpine 3.24 digest and upgrades its packages before creating the application user.
+This replacement still requires GitHub Trivy, image-contract, and full Production verifier evidence;
+until all three pass, 011F remains open and the prior Debian scan is not reclassified as clean.
 
 Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
 production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image

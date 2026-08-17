@@ -117,17 +117,20 @@ Legacy ERP/Crawler variables are intentionally absent from this release path.
 
 Download `production-image-<commit>` from the successful security workflow for the frozen source.
 That artifact is the exact image already scanned by Trivy; do not rebuild it on the production host.
+Keep its four files together: `commerce-v2-rc-image.tar.gz`,
+`commerce-v2-rc-image.tar.gz.sha256`, `production-image-id.txt`, and
+`production-source-revision.txt`.
 Verify and load the archive, compare its Docker image ID and source revision to the artifact record,
 then tag/push that loaded image and put its registry digest in the deployment env file as
 `COMMERCE_APP_IMAGE`. Never deploy `latest` or another mutable tag.
 
 ```bash
-sha256sum --check commerce-v2-rc-image.tar.gz.sha256
-gzip --decompress --stdout commerce-v2-rc-image.tar.gz | docker load
-RC_REVISION=$(cat production-source-revision.txt)
+RC_REVISION=<frozen-40-character-commit>
+python scripts/verify_release_image_artifact.py \
+  --artifact-dir . \
+  --expected-revision "${RC_REVISION}" \
+  --load
 EXPECTED_IMAGE_ID=$(cat production-image-id.txt)
-ACTUAL_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "commerce-v2-rc:${RC_REVISION}")
-test "${ACTUAL_IMAGE_ID}" = "${EXPECTED_IMAGE_ID}"
 ACTUAL_REVISION=$(docker image inspect \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
   "commerce-v2-rc:${RC_REVISION}")
@@ -157,6 +160,14 @@ docker compose --env-file /secure/commerce-production.env \
 docker compose --env-file /secure/commerce-production.env \
   -f docker-compose.production.yml up -d --no-build --wait
 ```
+
+The verifier authenticates the archive checksum, requires one image/config/OCI manifest, hashes
+the recorded config blob, checks the source-revision label, loads the archive, and validates the
+loaded identity through `docker image load`. This intentionally does not compare
+`docker image inspect .Id` directly across
+hosts: the classic Docker store reports the config digest there, while Docker Desktop's containerd
+store reports the OCI manifest digest. Both digests are independently bound and verified from the
+same checksummed archive before either representation is accepted.
 
 The tag lookup above is used only once: it captures a manifest digest, then every subsequent lookup
 and deployment uses `<repository>@<digest>`. The registry manifest's `config.digest` must equal the
