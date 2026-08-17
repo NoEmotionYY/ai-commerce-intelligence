@@ -456,7 +456,7 @@ class IngestionService:
             )
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount != 1:
+        if getattr(result, "rowcount", None) != 1:
             self.session.rollback()
             current = self._job(job_id)
             if current.status is SyncJobStatus.RUNNING and self._claim_matches(
@@ -1050,7 +1050,7 @@ class IngestionService:
             )
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount != 1:
+        if getattr(result, "rowcount", None) != 1:
             self.session.rollback()
             current = self._event_for_write(event_id)
             if current.status is RawEventStatus.PROCESSING and self._claim_matches(

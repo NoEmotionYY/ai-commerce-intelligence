@@ -24,7 +24,10 @@ Configure branch protection for `master` to require these job results:
 
 Python 3.11 verifies the declared supported floor with a fresh compatible dependency resolution.
 Python 3.12 is the release runtime and constrains application dependencies to
-`requirements.production.lock`. The default pytest command records JUnit and coverage XML. The
+`requirements.production.lock`. Both paths constrain test/type/lint tools with
+`requirements.ci.lock`; strict typing runs once on the Python 3.12 production packages and
+production-hardening scripts, while both Python versions run the complete pytest suite. The
+default pytest command records JUnit and coverage XML. The
 coverage report is an RC baseline only; there is no invented percentage threshold.
 
 `scripts/verify_pytest_skips.py` fails the quality job if a skipped test is outside the four

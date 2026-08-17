@@ -102,6 +102,11 @@ def validate_target(url: str, settings: Settings | None = None) -> None:
 def parse_product_html(html: str, base_url: str) -> tuple[list[ProductRecord], str | None]:
     soup = BeautifulSoup(html, "html.parser")
     records = []
+
+    def attribute(node: Any, name: str, default: str = "") -> str:
+        value = node.get(name) if node else None
+        return value if isinstance(value, str) else default
+
     for card in soup.select("article.product, article.dynamic-product"):
 
         def text(selector: str, current_card: Any = card) -> str:
@@ -111,8 +116,8 @@ def parse_product_html(html: str, base_url: str) -> tuple[list[ProductRecord], s
         link = card.select_one("a")
         records.append(
             ProductRecord(
-                platform=card.get("data-platform", "MockMarket"),
-                external_id=card.get("data-id", ""),
+                platform=attribute(card, "data-platform", "MockMarket"),
+                external_id=attribute(card, "data-id"),
                 product_name=text("h2"),
                 category="数码配件",
                 price=text(".price").replace("¥", ""),
@@ -120,11 +125,11 @@ def parse_product_html(html: str, base_url: str) -> tuple[list[ProductRecord], s
                 rating=text(".rating") or None,
                 sales=int(text(".sales") or 0),
                 review_count=int(text(".reviews") or 0),
-                url=urljoin(base_url, link.get("href", "")) if link else base_url,
+                url=urljoin(base_url, attribute(link, "href")) if link else base_url,
             )
         )
     next_node = soup.select_one("a.next")
-    return records, urljoin(base_url, next_node.get("href")) if next_node else None
+    return records, urljoin(base_url, attribute(next_node, "href")) if next_node else None
 
 
 class CrawlerManager:

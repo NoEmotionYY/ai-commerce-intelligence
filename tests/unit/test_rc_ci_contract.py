@@ -6,6 +6,7 @@ from pathlib import Path
 
 from scripts.verify_pytest_skips import validate_skips
 from scripts.verify_release_metadata import release_heads
+from scripts.verify_types import TYPE_TARGETS
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/v2-rc.yml"
@@ -30,7 +31,9 @@ def test_rc_workflow_has_minimum_blocking_jobs() -> None:
     assert 'python-version: ["3.11", "3.12"]' in workflow
     assert "python -m ruff check ." in workflow
     assert "python -m ruff format --check ." in workflow
-    assert "python -m mypy ." in workflow
+    assert "python scripts/verify_types.py" in workflow
+    assert "requirements.ci.lock" in workflow
+    assert "if: matrix.python-version == '3.12'" in workflow
     assert "python -m pytest -q" in workflow
     assert "git diff --check" in workflow
     assert "verify_release_metadata.py" in workflow
@@ -73,6 +76,33 @@ def test_coverage_is_a_baseline_without_invented_threshold() -> None:
 
 def test_release_metadata_has_one_head() -> None:
     assert release_heads() == ("0016_agent_workflow",)
+
+
+def test_type_gate_covers_production_and_hardening_sources() -> None:
+    assert TYPE_TARGETS[:2] == ("commerce", "frontend")
+    for required in (
+        "scripts/bootstrap_production_owner.py",
+        "scripts/verify_backup_restore_package.py",
+        "scripts/verify_production_deployment.py",
+        "scripts/verify_production_image_contract.py",
+        "scripts/verify_production_migrations.py",
+    ):
+        assert required in TYPE_TARGETS
+    assert all(not target.startswith("tests") for target in TYPE_TARGETS)
+    assert "scripts/verify_mysql_migrations.py" not in TYPE_TARGETS
+
+
+def test_ci_toolchain_lock_is_exact() -> None:
+    requirements = [
+        line
+        for line in (ROOT / "requirements.ci.lock").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert requirements
+    assert all("==" in requirement for requirement in requirements)
+    assert "mypy==1.13.0" in requirements
+    assert "pytest==8.3.3" in requirements
+    assert "ruff==0.16.3" in requirements
 
 
 def write_junit(path: Path, classname: str, reason: str) -> None:

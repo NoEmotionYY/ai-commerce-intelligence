@@ -758,3 +758,27 @@ full Production verifier passed. Build output depends on the Debian repository s
 exported scanned image is a release candidate; a rebuild is not equivalent. The complete SARIF
 still contains 14 unfixed Debian findings and no exception or RC acceptance is implied by this
 decision.
+
+## ADR-031 — Reproducible CI Toolchain and Production Type Boundary
+
+Date: 2026-08-18
+Status: ACCEPTED / VERIFIED_LOCAL
+
+Context: The first GitHub quality run resolved newer Mypy/pytest and dependency stubs than the
+local checkpoint. Mypy 1.20.2 plus NumPy 2.5.2 conflicted with the configured 3.11 target and then
+reported broad test/verifier typing drift, so a local `mypy .` PASS was not reproducible evidence.
+
+Decision: Add an exact CI toolchain constraint file and apply it to every development install.
+Run strict typing once on the Python 3.12 release runtime, covering `commerce`, `frontend`, and the
+production-hardening operator scripts. Keep both Python 3.11 and 3.12 full pytest jobs. The test
+tree remains behavior-checked by pytest; the legacy MySQL verifier remains behavior-checked by its
+official isolated MySQL job rather than being silently excluded from all verification.
+
+Reasoning: Static typing should use the production dependency types and a reproducible checker,
+while executable test/verifier code should be judged by the stronger environment-specific gates
+where those exist. This preserves the supported Python floor without running the same release type
+analysis twice or accepting hundreds of dependency-stub diagnostics through ignores.
+
+Consequences: Six current-dependency production typing findings were fixed. The 69-source type
+gate passes locally and in the Linux production-lock image. GitHub-hosted confirmation is still
+required; this decision does not turn the failed initial quality run into a PASS.

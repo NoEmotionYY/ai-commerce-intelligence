@@ -9,11 +9,12 @@ Current task: `COM-P1-011E` — Release Candidate CI Pipeline (`IN_PROGRESS`).
 Next task: `COM-P1-011E`.
 Last completed task: `COM-P1-011D` — Health and Readiness Verification (`DONE`).
 `COM-P1-010` passed Product, Architecture, Security, Testing, API/workflow, Compose, and browser
-Exit Review. The current hardening worktree suite is `545 passed, 19 skipped, 1 warning`; the final Agent/frontend
-slice is `54 passed`; the explicit V2 browser success path is `1 passed` against a local contract
-fixture. Ruff, format, MyPy, `git diff --check`, Docker builds, Compose health, and container
-Alembic head `0016_agent_workflow` pass. The browser fixture is `VERIFIED_MOCK`, not real-platform
-or cloud-LLM evidence.
+Exit Review. The current hardening worktree suite is `547 passed, 19 skipped, 1 warning`; the final
+Agent/frontend slice is `54 passed`; the explicit V2 browser success path is `1 passed` against a
+local contract fixture. Ruff, format, the 69-source production/hardening type gate,
+`git diff --check`, Docker builds, Compose health, and container Alembic head
+`0016_agent_workflow` pass. The browser fixture is `VERIFIED_MOCK`, not real-platform or cloud-LLM
+evidence.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0

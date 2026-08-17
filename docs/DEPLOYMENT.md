@@ -62,7 +62,7 @@ constraint; do not run the migration or full release verifiers from an unrelated
 ```bash
 python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install -c requirements.production.lock -e ".[dev]"
+python -m pip install -c requirements.production.lock -c requirements.ci.lock -e ".[dev]"
 python -m playwright install --with-deps chromium
 ```
 

@@ -1,0 +1,8 @@
+# Reproducible development and CI toolchain. Application/runtime versions are constrained
+# separately by requirements.production.lock on the Python 3.12 release path.
+defusedxml==0.7.1
+mypy==1.13.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+ruff==0.16.3

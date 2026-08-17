@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+from typing import Any
 
 import streamlit as st
 
@@ -45,7 +45,8 @@ organization_id = int(
     st.sidebar.number_input("组织编号", min_value=0, step=1, key="v2_organization_id")
 )
 shop_value = int(st.sidebar.number_input("店铺编号", min_value=0, step=1, key="v2_shop_id"))
-window_days = cast(int, st.sidebar.select_slider("统计周期", options=[7, 14, 30, 60, 90], value=30))
+selected_window = st.sidebar.select_slider("统计周期", options=[7, 14, 30, 60, 90], value=30)
+window_days = selected_window if isinstance(selected_window, int) else 30
 
 
 def _money(value: str | None, currency: str) -> str:

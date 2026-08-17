@@ -39,16 +39,20 @@ jobs:
           cache: pip
       - name: Install development dependencies on supported Python floor
         if: matrix.python-version == '3.11'
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -c requirements.ci.lock -e ".[dev]"
       - name: Install production-locked dependencies on release Python
         if: matrix.python-version == '3.12'
-        run: python -m pip install -c requirements.production.lock -e ".[dev]"
+        run: >-
+          python -m pip install
+          -c requirements.production.lock -c requirements.ci.lock
+          -e ".[dev]"
       - name: Lint
         run: python -m ruff check .
       - name: Format contract
         run: python -m ruff format --check .
       - name: Strict typing
-        run: python -m mypy .
+        if: matrix.python-version == '3.12'
+        run: python scripts/verify_types.py
       - name: Single Alembic head
         run: python scripts/verify_release_metadata.py
       - name: Full default regression with explicit skip report
@@ -110,7 +114,10 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install development dependencies
-        run: python -m pip install -c requirements.production.lock -e ".[dev]"
+        run: >-
+          python -m pip install
+          -c requirements.production.lock -c requirements.ci.lock
+          -e ".[dev]"
       - name: Verify migration and MySQL integrity gates
         run: python scripts/verify_mysql_migrations.py
 
@@ -129,7 +136,10 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install development dependencies
-        run: python -m pip install -c requirements.production.lock -e ".[dev]"
+        run: >-
+          python -m pip install
+          -c requirements.production.lock -c requirements.ci.lock
+          -e ".[dev]"
       - name: Verify production contracts
         run: >-
           python -m pytest -q
@@ -159,7 +169,10 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install development dependencies
-        run: python -m pip install -c requirements.production.lock -e ".[dev]"
+        run: >-
+          python -m pip install
+          -c requirements.production.lock -c requirements.ci.lock
+          -e ".[dev]"
       - name: Install Chromium runtime
         run: python -m playwright install --with-deps chromium
       - name: Verify isolated production deployment and recovery

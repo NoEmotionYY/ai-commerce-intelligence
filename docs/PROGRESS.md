@@ -26,8 +26,8 @@ Evidence:
 |---|---|---|
 | Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
 | CI/security contracts | `11 passed` | local contract evidence |
-| full regression + skip guard | `545 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
-| Ruff / format / strict MyPy / release head / diff | PASS; 175 files, 141 sources, `0016_agent_workflow` | L2 local |
+| full regression + skip guard | `547 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
+| Ruff / format / strict MyPy / release head / diff | PASS; 176 files, 69 production/hardening sources, `0016_agent_workflow` | L2 local |
 | Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
 | Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
 | Bandit 1.9.4 blocking/full | blocking 0; High 0, Medium 10, Low 54 | local SAST |
@@ -65,6 +65,24 @@ Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted
 production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image
 artifact, configure required checks, and explicitly resolve or accept each unfixed finding under
 the documented time-bounded exception policy.
+
+The first GitHub PR run on Draft PR `#1` provided real fail-closed evidence. Source security and
+container security both passed; MySQL 8.4 migration integrity and the production image contract
+passed. Both quality matrix jobs failed before pytest because the development toolchain was not
+locked: Python 3.12 installed NumPy 2.5.2/Mypy 1.20.2 while Mypy targeted 3.11, and Python 3.11
+exposed the same new dependency/stub diagnostics. This was not waived. A new exact
+`requirements.ci.lock` constrains Mypy/pytest/coverage/Ruff, strict typing now runs once on the
+release Python against production packages and the production-hardening scripts, and both Python
+versions still run the full pytest suite. Six real current-dependency production typing findings
+were fixed; the revised 69-source type gate passes both locally and in a Linux production-lock
+container. A new GitHub run is required before 011E can advance.
+
+After those fixes, the unchanged Production verifier passed again from the current working tree:
+database role isolation, concurrent bootstrap and lock release, restart persistence, backup/restore
+and its negative controls, HTTPS/readiness, and authenticated browser smoke all passed. The exact
+`commerce-prod-smoke-34552501` containers, volume, and network were absent after the run; its three
+image tags were inspected by exact ID and removed explicitly. Historical production-smoke image
+tags remain outside this run's cleanup scope. This is renewed L2 evidence, not RC acceptance.
 
 ## 2026-08-18 — COM-P1-011C/D Production Recovery and Readiness Checkpoints
 
