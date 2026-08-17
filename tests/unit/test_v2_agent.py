@@ -37,8 +37,15 @@ from commerce.models import (
     User,
 )
 from commerce.services.agent_metrics import AgentMetricsService, AgentMetricsValidationError
+from commerce.services.alerts import AlertTaskNotFoundError
 from commerce.services.catalog import CatalogService
-from commerce.v2_agent import V2AgentRequest, run_v2_agent_tool_loop
+from commerce.v2_agent import (
+    V2AgentEvidence,
+    V2AgentRequest,
+    V2AgentStructuredResult,
+    _grounded_result,
+    run_v2_agent_tool_loop,
+)
 from commerce.v2_agent_tools import V2AgentTools
 
 AS_OF = datetime(2026, 8, 17, 2, 0, tzinfo=UTC)
@@ -294,6 +301,17 @@ def test_v2_agent_tool_allowlist_has_no_tenant_or_high_impact_inputs(db_session:
         "get_pending_business_tasks",
         "get_replenishment_recommendation",
     }
+    tools_by_name = {item.name: item for item in read_tools}
+    active_alerts = tools_by_name["get_active_alerts"].invoke({"limit": 10})
+    pending_tasks = tools_by_name["get_pending_business_tasks"].invoke({"limit": 10})
+    assert active_alerts == {
+        "count": len(active_alerts["items"]),
+        "items": active_alerts["items"],
+    }
+    assert pending_tasks == {
+        "count": len(pending_tasks["items"]),
+        "items": pending_tasks["items"],
+    }
     write_tools = owner.langchain_tools(draft_action=AgentDraftActionType.CREATE_BUSINESS_TASK)
     names = {item.name for item in write_tools}
     assert names == {
@@ -464,6 +482,76 @@ def test_agent_draft_idempotency_key_binds_actor_and_shop(db_session: Session) -
     assert first["business_task_id"] == db_session.query(BusinessTask.id).scalar()
 
 
+def test_purchase_draft_tool_rejects_same_tenant_task_from_another_shop(
+    db_session: Session,
+) -> None:
+    principal, shop, first_sku, _, _ = _context(db_session)
+    other_shop = _shop(db_session, principal, "purchase-other-shop")
+    other_alert = CommerceAlert(
+        organization_id=principal.organization_id,
+        shop_id=other_shop.id,
+        master_sku_id=first_sku,
+        alert_type=AlertType.STOCKOUT_RISK,
+        status=AlertStatus.OPEN,
+        deduplication_key_hash=hashlib.sha256(b"purchase-other-shop-alert").hexdigest(),
+        metric_name="days_of_stock",
+        metric_value=Decimal("1.0000"),
+        threshold_value=Decimal("3.0000"),
+        summary="另一店铺存在缺货风险",
+        details={},
+        window_start=AS_OF - timedelta(days=7),
+        window_end=AS_OF,
+    )
+    db_session.add(other_alert)
+    db_session.flush()
+    task = BusinessTask(
+        organization_id=principal.organization_id,
+        alert_id=other_alert.id,
+        shop_id=other_shop.id,
+        master_sku_id=first_sku,
+        idempotency_key_hash=hashlib.sha256(b"purchase-other-shop-task-key").hexdigest(),
+        request_hash=hashlib.sha256(b"purchase-other-shop-task-request").hexdigest(),
+        title="复核另一店铺库存",
+        description=None,
+        created_by_user_id=principal.user_id,
+        assigned_to_user_id=None,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    owner = V2AgentTools(
+        db_session,
+        principal,
+        as_of=AS_OF,
+        session_id="purchase-shop-scope",
+        shop_id=shop.id,
+        request_idempotency_key="purchase-shop-scope-key",
+    )
+    purchase_tool = next(
+        item
+        for item in owner.langchain_tools(draft_action=AgentDraftActionType.CREATE_PURCHASE_DRAFT)
+        if item.name == "create_purchase_draft"
+    )
+
+    with pytest.raises(AlertTaskNotFoundError, match="当前店铺范围"):
+        purchase_tool.invoke(
+            {
+                "business_task_id": task.id,
+                "warehouse_id": 1,
+                "supplier_product_id": 1,
+            }
+        )
+
+    assert db_session.query(CommercePurchaseOrder).count() == 0
+    assert db_session.query(AgentDraftRequest).count() == 0
+    assert (
+        db_session.query(OperationLog)
+        .filter_by(tool_name="v2_agent.create_purchase_draft", status="FAILED")
+        .count()
+        == 1
+    )
+
+
 def _recording_metric_tool(calls: list[str], *, order_count: int = 2) -> Any:
     @tool
     def get_metrics() -> dict[str, object]:
@@ -506,6 +594,405 @@ def _final(
     )
 
 
+def _named_tool_call(
+    name: str, *, call_id: str, args: dict[str, object] | None = None
+) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": name,
+                "args": args or {},
+                "id": call_id,
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+def _structured_final(evidence: list[dict[str, object]]) -> AIMessage:
+    return AIMessage(
+        content=json.dumps(
+            {
+                "intent": "untrusted_llm_intent",
+                "answer": "已读取确定性证据。",
+                "evidence": evidence,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def _combined_read_tools(calls: list[str], *, sku_count: int) -> list[Any]:
+    @tool
+    def get_operations_dashboard() -> dict[str, object]:
+        """Return a complete deterministic operations dashboard."""
+
+        calls.append("get_operations_dashboard")
+        return {
+            "order_count": 8,
+            "units_sold": 13,
+            "open_alert_count": 2,
+            "open_stockout_risk_count": 1,
+            "pending_task_count": 3,
+            "sales_by_currency": [
+                {"currency": "CNY", "gmv": "1200.0000", "refund_rate": "0.0100"},
+                {"currency": "USD", "gmv": "80.0000", "refund_rate": "0.0200"},
+            ],
+            "profit_by_currency": [
+                {
+                    "currency": "CNY",
+                    "estimated_profit": "320.0000",
+                    "settled_profit": "300.0000",
+                },
+                {
+                    "currency": "USD",
+                    "estimated_profit": "20.0000",
+                    "settled_profit": "18.0000",
+                },
+            ],
+            "platform_comparison": [
+                {"platform": "douyin", "currency": "CNY", "orders": 5, "gmv": "900.0000"},
+                {
+                    "platform": "tiktok_shop",
+                    "currency": "USD",
+                    "orders": 3,
+                    "gmv": "80.0000",
+                },
+            ],
+            "shop_comparison": [
+                {"shop_id": 11, "currency": "CNY", "orders": 5, "gmv": "900.0000"},
+                {"shop_id": 12, "currency": "USD", "orders": 3, "gmv": "80.0000"},
+            ],
+        }
+
+    @tool
+    def compare_master_skus() -> dict[str, object]:
+        """Return deterministic Master SKU comparison rows."""
+
+        calls.append("compare_master_skus")
+        return {
+            "items": [
+                {
+                    "master_sku_id": 41 + index,
+                    "order_count": 6 - index,
+                    "units_sold": 10 - index,
+                    "revenue": [{"currency": "CNY", "amount": f"{600 - index * 50}.0000"}],
+                }
+                for index in range(sku_count)
+            ]
+        }
+
+    @tool
+    def explain_alert_evidence() -> dict[str, object]:
+        """Return deterministic alert threshold evidence."""
+
+        calls.append("explain_alert_evidence")
+        return {
+            "alert_id": 71,
+            "type": "STOCKOUT_RISK",
+            "metric_name": "days_of_stock",
+            "metric_value": "1.2500",
+            "threshold_value": "3.0000",
+        }
+
+    return [get_operations_dashboard, compare_master_skus, explain_alert_evidence]
+
+
+def _combined_read_call() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "get_operations_dashboard",
+                "args": {},
+                "id": "dashboard-call",
+                "type": "tool_call",
+            },
+            {
+                "name": "compare_master_skus",
+                "args": {},
+                "id": "sku-call",
+                "type": "tool_call",
+            },
+            {
+                "name": "explain_alert_evidence",
+                "args": {},
+                "id": "alert-call",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+
+def test_v2_agent_preserves_all_sources_for_common_combined_read() -> None:
+    calls: list[str] = []
+    provider = FakeProvider(
+        [
+            _combined_read_call(),
+            _structured_final(
+                [{"source": "get_operations_dashboard#1", "metric": "order_count", "value": 8}]
+            ),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop(
+        "汇总经营表现、SKU 和告警",
+        _combined_read_tools(calls, sku_count=2),
+        provider,
+    )
+
+    assert calls == [
+        "get_operations_dashboard",
+        "compare_master_skus",
+        "explain_alert_evidence",
+    ]
+    assert {item.source for item in result.evidence} == {
+        "get_operations_dashboard#1",
+        "compare_master_skus#1",
+        "explain_alert_evidence#1",
+    }
+    assert "经营窗口内订单 8 笔" in result.answer
+    assert "SKU #41" in result.answer
+    assert "告警 #71" in result.answer
+
+
+def test_v2_agent_rejects_overwide_combined_read_instead_of_truncating() -> None:
+    calls: list[str] = []
+    provider = FakeProvider(
+        [
+            _combined_read_call(),
+            _structured_final(
+                [{"source": "get_operations_dashboard#1", "metric": "order_count", "value": 8}]
+            ),
+        ]
+    )
+
+    with pytest.raises(LLMServiceError, match="权威证据超过响应限制"):
+        run_v2_agent_tool_loop(
+            "汇总全部经营表现、SKU 和告警",
+            _combined_read_tools(calls, sku_count=4),
+            provider,
+        )
+
+    assert calls == [
+        "get_operations_dashboard",
+        "compare_master_skus",
+        "explain_alert_evidence",
+    ]
+
+
+def test_v2_agent_dashboard_loop_renders_currency_platform_and_risk_analysis() -> None:
+    calls: list[str] = []
+
+    @tool
+    def get_operations_dashboard() -> dict[str, object]:
+        """Return deterministic dashboard evidence for the V2 Agent."""
+
+        calls.append("get_operations_dashboard")
+        return {
+            "order_count": 8,
+            "units_sold": 13,
+            "sales_by_currency": [
+                {"currency": "CNY", "gmv": "1200.0000"},
+                {"currency": "USD", "gmv": "80.0000"},
+            ],
+            "platform_comparison": [
+                {"platform": "douyin", "currency": "CNY", "orders": 5, "gmv": "900.0000"},
+                {"platform": "tiktok_shop", "currency": "USD", "orders": 3, "gmv": "80.0000"},
+            ],
+            "shop_comparison": [
+                {"shop_id": 11, "currency": "CNY", "orders": 5, "gmv": "900.0000"},
+                {"shop_id": 12, "currency": "USD", "orders": 3, "gmv": "80.0000"},
+            ],
+            "open_alert_count": 2,
+            "open_stockout_risk_count": 1,
+            "pending_task_count": 3,
+        }
+
+    evidence: list[dict[str, object]] = [
+        {"source": "get_operations_dashboard#1", "metric": "order_count", "value": 8}
+    ]
+    provider = FakeProvider(
+        [
+            _named_tool_call("get_operations_dashboard", call_id="dashboard-call"),
+            _structured_final(evidence),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop(
+        "比较平台经营表现并给出风险优先级",
+        [get_operations_dashboard],
+        provider,
+    )
+
+    assert calls == ["get_operations_dashboard"]
+    assert result.intent == "commerce_analysis"
+    assert "经营窗口内订单 8 笔，售出 13 件" in result.answer
+    assert "CNY GMV 为 1200.0000" in result.answer
+    assert "USD GMV 为 80.0000" in result.answer
+    assert "douyin：订单 5 笔，CNY GMV 900.0000" in result.answer
+    assert "tiktok_shop：订单 3 笔，USD GMV 80.0000" in result.answer
+    assert "店铺 #11：订单 5 笔，CNY GMV 900.0000" in result.answer
+    assert "店铺 #12：订单 3 笔，USD GMV 80.0000" in result.answer
+    assert "建议优先处理缺货风险并核对补货任务" in result.answer
+    assert "untrusted_llm_intent" not in result.answer
+    assert "open_stockout_risk_count" in {item.metric for item in result.evidence}
+    assert "platform_comparison.1.gmv" in {item.metric for item in result.evidence}
+    assert "shop_comparison.0.gmv" in {item.metric for item in result.evidence}
+    assert "shop_comparison.1.gmv" in {item.metric for item in result.evidence}
+
+
+def test_v2_agent_master_sku_loop_renders_comparison_and_leader() -> None:
+    calls: list[str] = []
+
+    @tool
+    def compare_master_skus() -> dict[str, object]:
+        """Return deterministic Master SKU comparison evidence."""
+
+        calls.append("compare_master_skus")
+        return {
+            "items": [
+                {
+                    "master_sku_id": 41,
+                    "order_count": 6,
+                    "units_sold": 10,
+                    "revenue": [{"currency": "CNY", "amount": "600.0000"}],
+                },
+                {
+                    "master_sku_id": 42,
+                    "order_count": 4,
+                    "units_sold": 7,
+                    "revenue": [{"currency": "CNY", "amount": "420.0000"}],
+                },
+            ]
+        }
+
+    evidence: list[dict[str, object]] = [
+        {
+            "source": "compare_master_skus#1",
+            "metric": "items.0.master_sku_id",
+            "value": 41,
+        }
+    ]
+    provider = FakeProvider(
+        [
+            _named_tool_call("compare_master_skus", call_id="sku-call"),
+            _structured_final(evidence),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop(
+        "比较两个 Master SKU",
+        [compare_master_skus],
+        provider,
+    )
+
+    assert calls == ["compare_master_skus"]
+    assert "SKU #41：订单 6 笔，售出 10 件，CNY 收入 600.0000" in result.answer
+    assert "SKU #42：订单 4 笔，售出 7 件，CNY 收入 420.0000" in result.answer
+    assert "按售出件数，SKU #41 高于 SKU #42" in result.answer
+    assert "items.1.units_sold" in {item.metric for item in result.evidence}
+
+
+def test_v2_agent_alert_loop_renders_metric_threshold_relationship() -> None:
+    calls: list[str] = []
+
+    @tool
+    def explain_alert_evidence() -> dict[str, object]:
+        """Return deterministic alert evidence."""
+
+        calls.append("explain_alert_evidence")
+        return {
+            "alert_id": 71,
+            "type": "STOCKOUT_RISK",
+            "metric_name": "days_of_stock",
+            "metric_value": "1.2500",
+            "threshold_value": "3.0000",
+        }
+
+    evidence: list[dict[str, object]] = [
+        {"source": "explain_alert_evidence#1", "metric": "alert_id", "value": 71}
+    ]
+    provider = FakeProvider(
+        [
+            _named_tool_call("explain_alert_evidence", call_id="alert-call"),
+            _structured_final(evidence),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop(
+        "解释当前告警",
+        [explain_alert_evidence],
+        provider,
+    )
+
+    assert calls == ["explain_alert_evidence"]
+    assert "告警 #71（STOCKOUT_RISK）" in result.answer
+    assert "days_of_stock 指标值为 1.2500" in result.answer
+    assert "阈值为 3.0000" in result.answer
+    assert "指标值低于阈值" in result.answer
+    assert "threshold_value" in {item.metric for item in result.evidence}
+
+
+def test_v2_agent_active_alerts_empty_state_is_grounded() -> None:
+    calls: list[str] = []
+
+    @tool
+    def get_active_alerts() -> dict[str, object]:
+        """Return a deterministic empty active-alert state."""
+
+        calls.append("get_active_alerts")
+        return {"count": 0, "items": []}
+
+    provider = FakeProvider(
+        [
+            _named_tool_call("get_active_alerts", call_id="empty-alerts-call"),
+            _structured_final([{"source": "get_active_alerts#1", "metric": "count", "value": 0}]),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop("当前有告警吗", [get_active_alerts], provider)
+
+    assert calls == ["get_active_alerts"]
+    assert result.answer.startswith("当前无活动告警。")
+    assert result.evidence == [
+        V2AgentEvidence(source="get_active_alerts#1", metric="count", value=0)
+    ]
+
+
+def test_v2_agent_pending_tasks_empty_state_is_grounded() -> None:
+    calls: list[str] = []
+
+    @tool
+    def get_pending_business_tasks() -> dict[str, object]:
+        """Return a deterministic empty pending-task state."""
+
+        calls.append("get_pending_business_tasks")
+        return {"count": 0, "items": []}
+
+    provider = FakeProvider(
+        [
+            _named_tool_call("get_pending_business_tasks", call_id="empty-tasks-call"),
+            _structured_final(
+                [{"source": "get_pending_business_tasks#1", "metric": "count", "value": 0}]
+            ),
+        ]
+    )
+
+    result, _, _ = run_v2_agent_tool_loop(
+        "当前有待办任务吗",
+        [get_pending_business_tasks],
+        provider,
+    )
+
+    assert calls == ["get_pending_business_tasks"]
+    assert result.answer.startswith("当前无待办任务。")
+    assert result.evidence == [
+        V2AgentEvidence(source="get_pending_business_tasks#1", metric="count", value=0)
+    ]
+
+
 def test_v2_agent_accepts_only_tool_backed_numeric_answers() -> None:
     calls: list[str] = []
     provider = FakeProvider([_tool_call(), _final("订单表现需要关注。", value=2)])
@@ -513,7 +1000,8 @@ def test_v2_agent_accepts_only_tool_backed_numeric_answers() -> None:
         "订单怎么样？", [_recording_metric_tool(calls)], provider
     )
     assert result.answer == (
-        "订单表现需要关注。\n\n权威工具证据：[get_metrics#1:summary.order_count=2]"
+        "已完成基于确定性业务服务的分析，证据覆盖销售与订单。"
+        "\n\n权威工具证据：[get_metrics#1:summary.order_count=2]"
     )
     assert calls == ["get_metrics"]
     assert (provider_name, model_name) == ("test-provider", "test-tool-model")
@@ -565,7 +1053,8 @@ def test_v2_agent_rejects_unsupported_numeric_formats_and_recovers(
         provider,
     )
     assert result.answer == (
-        f"订单表现需要关注。\n\n权威工具证据：[get_metrics#1:summary.order_count={evidence_value}]"
+        "已完成基于确定性业务服务的分析，证据覆盖销售与订单。"
+        f"\n\n权威工具证据：[get_metrics#1:summary.order_count={evidence_value}]"
     )
     assert calls == ["get_metrics"]
 
@@ -876,7 +1365,7 @@ def test_v2_agent_cannot_relabel_metrics_or_currency_in_free_text() -> None:
     assert "退款" not in result.answer
     assert "USD" not in result.answer
     assert result.answer == (
-        "订单与销售额表现需要关注，币种为 CNY。\n\n"
+        "已完成基于确定性业务服务的分析，证据覆盖销售与订单、收入与利润。\n\n"
         "权威工具证据：[get_metrics#1:order_count=2]；"
         "[get_metrics#1:revenue.0.amount=100.0000]；"
         "[get_metrics#1:revenue.0.currency=CNY]"
@@ -905,7 +1394,7 @@ def test_v2_agent_rejects_multilingual_action_metric_and_currency_claims(
 
     result, _, _ = run_v2_agent_tool_loop("订单怎么样？", [_recording_metric_tool(calls)], provider)
 
-    assert result.answer.startswith("订单表现需要关注。")
+    assert result.answer.startswith("已完成基于确定性业务服务的分析")
     assert unsupported_answer not in result.answer
     assert calls == ["get_metrics"]
 
@@ -995,7 +1484,47 @@ def test_v2_agent_treats_tool_output_as_data_not_instructions() -> None:
     result, _, _ = run_v2_agent_tool_loop("经营情况", [get_metrics], provider)
     assert calls == ["get_metrics"]
     assert "批准采购" not in result.answer
-    assert result.answer == ("订单表现需要关注。\n\n权威工具证据：[get_metrics#1:order_count=2]")
+    assert result.answer == (
+        "已完成基于确定性业务服务的分析，证据覆盖销售与订单。"
+        "\n\n权威工具证据：[get_metrics#1:order_count=2]"
+    )
+
+
+@pytest.mark.parametrize(
+    "untrusted_answer",
+    [
+        "Earnings strengthened.",
+        "The purchase was authorized.",
+        "Funds were returned to the buyer.",
+        "Currency is cny/rmb/yuan.",
+    ],
+)
+def test_read_response_never_exposes_untrusted_llm_narrative(untrusted_answer: str) -> None:
+    result = _grounded_result(
+        V2AgentStructuredResult(
+            intent="operations_review",
+            answer=untrusted_answer,
+            evidence=[V2AgentEvidence(source="get_metrics#1", metric="order_count", value=2)],
+        )
+    )
+
+    assert untrusted_answer not in result.answer
+    assert "批准" not in result.answer
+    assert "退款" not in result.answer
+    assert "cny" not in result.answer.lower()
+
+
+def test_read_response_uses_server_owned_intent() -> None:
+    result = _grounded_result(
+        V2AgentStructuredResult(
+            intent="<script>purchase_approved</script>",
+            answer="订单表现需要关注。",
+            evidence=[V2AgentEvidence(source="get_metrics#1", metric="order_count", value=2)],
+        )
+    )
+
+    assert result.intent == "commerce_analysis"
+    assert "script" not in result.intent
 
 
 def test_v2_agent_rejects_merchant_controlled_text_as_authoritative_evidence() -> None:

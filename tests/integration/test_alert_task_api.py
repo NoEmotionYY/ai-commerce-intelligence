@@ -379,6 +379,88 @@ def test_alert_task_api_enforces_scope_permissions_and_hides_hashes(
     assert approved.json()["status"] == "DONE"
 
 
+def test_business_task_purchase_link_api_enforces_permission_scope_and_conflicts(
+    alert_client: AlertClient,
+    db_session: Session,
+) -> None:
+    client, context = alert_client
+    headers = _headers(context)
+    created = client.post(
+        f"/api/v2/alerts/{context['alert_id']}/tasks",
+        headers=headers,
+        json={"title": "Link purchase", "idempotency_key": "api-task-purchase-link"},
+    )
+    assert created.status_code == 200
+    task_id = created.json()["id"]
+
+    source_order = db_session.get(CommercePurchaseOrder, context["purchase_order_id"])
+    assert source_order is not None
+    draft = CommercePurchaseOrder(
+        organization_id=source_order.organization_id,
+        supplier_id=source_order.supplier_id,
+        warehouse_id=source_order.warehouse_id,
+        po_number=f"PO-LINK-{uuid4().hex}",
+        idempotency_key_hash=uuid4().hex + uuid4().hex,
+        request_hash=uuid4().hex + uuid4().hex,
+        status=PurchaseOrderStatus.DRAFT,
+        currency=source_order.currency,
+        total_amount=source_order.total_amount,
+        created_by_user_id=source_order.created_by_user_id,
+    )
+    db_session.add(draft)
+    db_session.flush()
+    source_item = (
+        db_session.query(CommercePurchaseOrderItem)
+        .filter_by(purchase_order_id=source_order.id)
+        .one()
+    )
+    db_session.add(
+        CommercePurchaseOrderItem(
+            organization_id=draft.organization_id,
+            purchase_order_id=draft.id,
+            supplier_product_id=source_item.supplier_product_id,
+            master_sku_id=source_item.master_sku_id,
+            quantity=source_item.quantity,
+            unit_cost=source_item.unit_cost,
+            total_amount=source_item.total_amount,
+        )
+    )
+    db_session.commit()
+
+    path = f"/api/v2/business-tasks/{task_id}/purchase-order"
+    assert client.put(path, json={"purchase_order_id": draft.id}).status_code == 401
+    assert (
+        client.put(
+            path,
+            headers=_headers(context, approver=True),
+            json={"purchase_order_id": draft.id},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.put(
+            path,
+            headers=_headers(context, other=True),
+            json={"purchase_order_id": draft.id},
+        ).status_code
+        == 404
+    )
+
+    linked = client.put(path, headers=headers, json={"purchase_order_id": draft.id})
+    assert linked.status_code == 200
+    assert linked.json()["execution_purchase_order_id"] == draft.id
+    replay = client.put(path, headers=headers, json={"purchase_order_id": draft.id})
+    assert replay.status_code == 200
+    assert replay.json()["execution_purchase_order_id"] == draft.id
+
+    conflict = client.put(
+        path,
+        headers=headers,
+        json={"purchase_order_id": context["purchase_order_id"]},
+    )
+    assert conflict.status_code == 409
+
+
 def test_alert_task_api_auth_and_validation_errors(alert_client: AlertClient) -> None:
     client, context = alert_client
     assert (

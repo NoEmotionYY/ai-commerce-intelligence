@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -33,6 +34,7 @@ MAX_FINAL_OUTPUT_CHARS = 12_000
 MAX_RESPONSE_ANSWER_CHARS = 6_000
 MAX_V2_TOOL_CALLS = 12
 MAX_V2_TOOL_ROUNDS = 8
+MAX_V2_EVIDENCE_ITEMS = 48
 WRITE_TOOL_NAMES = frozenset({"create_business_task", "create_purchase_draft"})
 METRIC_PATH_PATTERN = re.compile(
     r"^(?:\$|[A-Za-z_][A-Za-z0-9_]*(?:\.\d+|\.[A-Za-z_][A-Za-z0-9_]*)*)$"
@@ -75,6 +77,7 @@ SAFE_NUMERIC_EVIDENCE_NAMES = frozenset(
         "amount",
         "available",
         "business_task_id",
+        "count",
         "current_margin",
         "current_revenue",
         "daily_sales",
@@ -122,6 +125,7 @@ SAFE_TEXT_EVIDENCE_NAMES = frozenset(
         "direction",
         "execution_status",
         "metric_name",
+        "platform",
         "profit_kind",
         "risk",
         "status",
@@ -139,15 +143,6 @@ SAFE_TIME_EVIDENCE_NAMES = frozenset(
         "window_end",
         "window_start",
     }
-)
-FORBIDDEN_ACTION_CLAIM_PATTERN = re.compile(
-    r"(?:忽略(?:规则|指令|审批)|绕过审批|直接批准|"
-    r"(?:已经|已)(?:批准|审批通过|执行|退款|改价|下单|入库|付款|完成采购)|"
-    r"(?:批准|执行|退款|改价|下单|入库)(?:成功|完成)|"
-    r"\b(?:approved|approval completed|executed|execution completed|"
-    r"refunded|refund executed|repriced|price changed|order placed|"
-    r"purchase completed|inventory received|payment completed)\b)",
-    re.IGNORECASE,
 )
 CURRENCY_CODES = frozenset(
     {
@@ -215,6 +210,7 @@ ANSWER_EVIDENCE_GROUPS = (
         frozenset(
             {
                 "alert_id",
+                "count",
                 "open_alert_count",
                 "open_stockout_risk_count",
                 "metric_value",
@@ -222,7 +218,10 @@ ANSWER_EVIDENCE_GROUPS = (
             }
         ),
     ),
-    (("任务", "task"), frozenset({"business_task_id", "pending_task_count", "status"})),
+    (
+        ("任务", "task"),
+        frozenset({"business_task_id", "count", "pending_task_count", "status"}),
+    ),
 )
 CURRENCY_ALIAS_CODES = {
     "人民币": "CNY",
@@ -272,7 +271,7 @@ class V2AgentStructuredResult(BaseModel):
 
     intent: str = Field(min_length=1, max_length=100)
     answer: str = Field(min_length=1, max_length=6000)
-    evidence: list[V2AgentEvidence] = Field(min_length=1, max_length=30)
+    evidence: list[V2AgentEvidence] = Field(min_length=1, max_length=MAX_V2_EVIDENCE_ITEMS)
 
 
 class V2AgentResponse(V2AgentStructuredResult):
@@ -429,7 +428,11 @@ def run_v2_agent_tool_loop(
             )
             force_final = True
             continue
-        return _grounded_result(result), current_provider.name, current_provider.model_name
+        return (
+            _grounded_result(result, outputs=outputs),
+            current_provider.name,
+            current_provider.model_name,
+        )
     raise LLMServiceError("生产 Agent 工具调用或证据校验超过轮次限制")
 
 
@@ -443,8 +446,6 @@ def _validate_evidence(
         or UNSUPPORTED_NUMERIC_PATTERN.search(result.answer)
     ):
         raise ValueError("Agent 定性解释不得直接包含权威数字")
-    if FORBIDDEN_ACTION_CLAIM_PATTERN.search(result.answer):
-        raise ValueError("Agent 定性解释包含未经授权的高影响动作声明")
     evidence_names: set[str] = set()
     evidence_values: set[str] = set()
     for evidence in result.evidence:
@@ -512,7 +513,12 @@ def _composed_answer(analysis: str, evidence: list[V2AgentEvidence]) -> str:
     return f"{bounded_analysis}\n\n{evidence_section}"
 
 
-def _grounded_result(result: V2AgentStructuredResult) -> V2AgentStructuredResult:
+def _grounded_result(
+    result: V2AgentStructuredResult,
+    *,
+    outputs: dict[str, object] | None = None,
+    preserve_server_analysis: bool = False,
+) -> V2AgentStructuredResult:
     evidence: list[V2AgentEvidence] = []
     seen: set[tuple[str, str]] = set()
     for item in result.evidence:
@@ -521,16 +527,563 @@ def _grounded_result(result: V2AgentStructuredResult) -> V2AgentStructuredResult
             continue
         seen.add(key)
         evidence.append(item)
+    if outputs is not None and not preserve_server_analysis:
+        evidence = _server_read_evidence(outputs, evidence)
     try:
+        analysis = result.answer if preserve_server_analysis else _server_read_analysis(evidence)
+        intent = result.intent if preserve_server_analysis else "commerce_analysis"
         return V2AgentStructuredResult.model_validate(
             {
-                "intent": result.intent,
-                "answer": _composed_answer(result.answer, evidence),
+                "intent": intent,
+                "answer": _composed_answer(analysis, evidence),
                 "evidence": [item.model_dump() for item in evidence],
             }
         )
     except ValidationError as exc:
         raise LLMServiceError("生产 Agent 最终响应超过结构限制") from exc
+
+
+def _server_read_evidence(
+    outputs: dict[str, object],
+    fallback: list[V2AgentEvidence],
+) -> list[V2AgentEvidence]:
+    evidence: list[V2AgentEvidence] = []
+    for source, output in outputs.items():
+        tool_name = source.rsplit("#", 1)[0]
+        if tool_name == "get_operations_dashboard" and isinstance(output, dict):
+            _append_paths(
+                evidence,
+                source,
+                output,
+                (
+                    "order_count",
+                    "units_sold",
+                    "open_alert_count",
+                    "open_stockout_risk_count",
+                    "pending_task_count",
+                ),
+            )
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "sales_by_currency",
+                ("currency", "gmv", "refund_rate"),
+                limit=2,
+            )
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "profit_by_currency",
+                ("currency", "estimated_profit", "settled_profit"),
+                limit=2,
+            )
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "platform_comparison",
+                ("platform", "currency", "orders", "gmv"),
+                limit=2,
+            )
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "shop_comparison",
+                ("shop_id", "currency", "orders", "gmv"),
+                limit=2,
+            )
+        elif tool_name == "compare_master_skus" and isinstance(output, dict):
+            items = output.get("items")
+            if isinstance(items, list):
+                for index, item in enumerate(items[:4]):
+                    if not isinstance(item, dict):
+                        continue
+                    prefix = f"items.{index}"
+                    _append_paths(
+                        evidence,
+                        source,
+                        output,
+                        (
+                            f"{prefix}.master_sku_id",
+                            f"{prefix}.order_count",
+                            f"{prefix}.units_sold",
+                        ),
+                    )
+                    _append_rows(
+                        evidence,
+                        source,
+                        output,
+                        f"{prefix}.revenue",
+                        ("currency", "amount"),
+                        limit=1,
+                    )
+        elif tool_name == "get_active_alerts" and isinstance(output, dict):
+            _append_paths(evidence, source, output, ("count",))
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "items",
+                ("alert_id", "type", "metric_name", "metric_value", "threshold_value"),
+                limit=5,
+            )
+        elif tool_name == "explain_alert_evidence":
+            _append_alert_evidence(evidence, source, output)
+        elif tool_name == "get_pending_business_tasks" and isinstance(output, dict):
+            _append_paths(evidence, source, output, ("count",))
+            _append_rows(
+                evidence,
+                source,
+                output,
+                "items",
+                ("business_task_id", "status"),
+                limit=10,
+            )
+        elif tool_name == "get_replenishment_recommendation" and isinstance(output, dict):
+            _append_paths(
+                evidence,
+                source,
+                output,
+                (
+                    "warehouse_id",
+                    "master_sku_id",
+                    "days_of_stock",
+                    "incoming",
+                    "recommended_quantity",
+                ),
+            )
+    if not evidence:
+        return fallback
+    if len(evidence) > MAX_V2_EVIDENCE_ITEMS:
+        raise LLMServiceError("生产 Agent 读取工具组合的权威证据超过响应限制")
+    try:
+        canonical = V2AgentStructuredResult(
+            intent="commerce_analysis",
+            answer="已读取权威经营证据。",
+            evidence=evidence,
+        )
+        _validate_evidence(canonical, outputs)
+    except (ValidationError, ValueError) as exc:  # pragma: no cover - server contract invariant
+        raise LLMServiceError("生产 Agent 服务器证据映射无效") from exc
+    return evidence
+
+
+def _append_alert_evidence(
+    evidence: list[V2AgentEvidence],
+    source: str,
+    output: object,
+) -> None:
+    fields = ("alert_id", "type", "metric_name", "metric_value", "threshold_value")
+    if isinstance(output, dict):
+        _append_paths(evidence, source, output, fields)
+    else:
+        _append_list_rows(evidence, source, output, fields, limit=5)
+
+
+def _append_list_rows(
+    evidence: list[V2AgentEvidence],
+    source: str,
+    output: object,
+    fields: tuple[str, ...],
+    *,
+    limit: int,
+) -> None:
+    if not isinstance(output, list):
+        return
+    for index, item in enumerate(output[:limit]):
+        if isinstance(item, dict):
+            _append_paths(
+                evidence,
+                source,
+                output,
+                tuple(f"{index}.{field}" for field in fields),
+            )
+
+
+def _append_rows(
+    evidence: list[V2AgentEvidence],
+    source: str,
+    output: dict[str, object],
+    prefix: str,
+    fields: tuple[str, ...],
+    *,
+    limit: int,
+) -> None:
+    try:
+        rows = _metric_value(output, prefix)
+    except ValueError:
+        return
+    if not isinstance(rows, list):
+        return
+    for index, item in enumerate(rows[:limit]):
+        if isinstance(item, dict):
+            _append_paths(
+                evidence,
+                source,
+                output,
+                tuple(f"{prefix}.{index}.{field}" for field in fields),
+            )
+
+
+def _append_paths(
+    evidence: list[V2AgentEvidence],
+    source: str,
+    output: object,
+    paths: tuple[str, ...],
+) -> None:
+    for path in paths:
+        try:
+            value = _metric_value(output, path)
+        except ValueError:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            continue
+        evidence.append(V2AgentEvidence(source=source, metric=path, value=value))
+
+
+def _server_read_analysis(evidence: list[V2AgentEvidence]) -> str:
+    analyses: list[str] = []
+    by_source: dict[str, list[V2AgentEvidence]] = {}
+    for item in evidence:
+        by_source.setdefault(item.source, []).append(item)
+    for source, items in by_source.items():
+        tool_name = source.rsplit("#", 1)[0]
+        if tool_name == "get_operations_dashboard":
+            analysis = _dashboard_read_analysis(items)
+        elif tool_name == "compare_master_skus":
+            analysis = _sku_comparison_read_analysis(items)
+        elif tool_name in {"get_active_alerts", "explain_alert_evidence"}:
+            analysis = _alert_read_analysis(items)
+        elif tool_name == "get_pending_business_tasks":
+            analysis = _task_read_analysis(items)
+        elif tool_name == "get_replenishment_recommendation":
+            analysis = _replenishment_read_analysis(items)
+        else:
+            analysis = None
+        if analysis:
+            analyses.append(analysis)
+    if analyses:
+        return "\n".join(analyses)
+
+    dimensions: list[str] = []
+    evidence_names = {item.metric.rsplit(".", 1)[-1] for item in evidence}
+    for label, names in (
+        ("销售与订单", {"order_count", "orders", "units_sold", "sales_units"}),
+        (
+            "收入与利润",
+            {
+                "amount",
+                "gmv",
+                "revenue",
+                "estimated_profit",
+                "settled_profit",
+                "current_margin",
+                "previous_margin",
+            },
+        ),
+        ("退款", {"refund_amount", "refund_rate", "previous_refund_rate"}),
+        (
+            "库存与补货",
+            {
+                "available",
+                "sellable",
+                "reserved",
+                "incoming",
+                "days_of_stock",
+                "safety_stock",
+                "reorder_point",
+                "recommended_quantity",
+            },
+        ),
+        (
+            "告警与任务",
+            {
+                "alert_id",
+                "open_alert_count",
+                "open_stockout_risk_count",
+                "business_task_id",
+                "pending_task_count",
+                "metric_value",
+                "threshold_value",
+                "status",
+            },
+        ),
+    ):
+        if evidence_names & names:
+            dimensions.append(label)
+    coverage = "、".join(dimensions) if dimensions else "经营指标"
+    return f"已完成基于确定性业务服务的分析，证据覆盖{coverage}。"
+
+
+def _dashboard_read_analysis(evidence: list[V2AgentEvidence]) -> str | None:
+    values = {item.metric: item.value for item in evidence}
+    clauses: list[str] = []
+    order_count = values.get("order_count")
+    units_sold = values.get("units_sold")
+    if order_count is not None or units_sold is not None:
+        details: list[str] = []
+        if order_count is not None:
+            details.append(f"订单 {order_count} 笔")
+        if units_sold is not None:
+            details.append(f"售出 {units_sold} 件")
+        clauses.append("经营窗口内" + "，".join(details))
+
+    sales_rows = _indexed_evidence(evidence, "sales_by_currency")
+    for row in sales_rows:
+        currency = _safe_label(row.get("currency"))
+        gmv = row.get("gmv")
+        refund_rate = row.get("refund_rate")
+        if currency and gmv is not None:
+            detail = f"{currency} GMV 为 {gmv}"
+            if refund_rate is not None:
+                detail += f"，退款率为 {refund_rate}"
+            clauses.append(detail)
+
+    profit_rows = _indexed_evidence(evidence, "profit_by_currency")
+    for row in profit_rows:
+        currency = _safe_label(row.get("currency"))
+        settled = row.get("settled_profit")
+        estimated = row.get("estimated_profit")
+        if currency and settled is not None:
+            clauses.append(f"{currency} 结算利润为 {settled}")
+        elif currency and estimated is not None:
+            clauses.append(f"{currency} 预计利润为 {estimated}，尚无结算利润证据")
+
+    platform_rows = _indexed_evidence(evidence, "platform_comparison")
+    platform_details: list[str] = []
+    for row in platform_rows:
+        platform = _safe_label(row.get("platform"))
+        currency = _safe_label(row.get("currency"))
+        orders = row.get("orders")
+        gmv = row.get("gmv")
+        if not platform:
+            continue
+        metrics: list[str] = []
+        if orders is not None:
+            metrics.append(f"订单 {orders} 笔")
+        if currency and gmv is not None:
+            metrics.append(f"{currency} GMV {gmv}")
+        if metrics:
+            platform_details.append(f"{platform}：" + "，".join(metrics))
+    if platform_details:
+        clauses.append("平台对比为" + "；".join(platform_details))
+
+    shop_rows = _indexed_evidence(evidence, "shop_comparison")
+    shop_details: list[str] = []
+    for row in shop_rows:
+        shop_id = row.get("shop_id")
+        currency = _safe_label(row.get("currency"))
+        orders = row.get("orders")
+        gmv = row.get("gmv")
+        if not isinstance(shop_id, int):
+            continue
+        metrics = []
+        if orders is not None:
+            metrics.append(f"订单 {orders} 笔")
+        if currency and gmv is not None:
+            metrics.append(f"{currency} GMV {gmv}")
+        if metrics:
+            shop_details.append(f"店铺 #{shop_id}：" + "，".join(metrics))
+    if shop_details:
+        clauses.append("店铺对比为" + "；".join(shop_details))
+
+    open_alerts = values.get("open_alert_count")
+    stockout_risks = values.get("open_stockout_risk_count")
+    pending_tasks = values.get("pending_task_count")
+    workload: list[str] = []
+    if open_alerts is not None:
+        workload.append(f"待处理告警 {open_alerts} 个")
+    if stockout_risks is not None:
+        workload.append(f"缺货风险 {stockout_risks} 个")
+    if pending_tasks is not None:
+        workload.append(f"待办任务 {pending_tasks} 个")
+    if workload:
+        clauses.append("当前" + "，".join(workload))
+    if _positive(stockout_risks):
+        clauses.append("建议优先处理缺货风险并核对补货任务")
+    elif _positive(open_alerts) or _positive(pending_tasks):
+        clauses.append("建议优先复核未关闭告警和待办任务")
+    return _sentences(clauses)
+
+
+def _sku_comparison_read_analysis(evidence: list[V2AgentEvidence]) -> str | None:
+    rows = _indexed_evidence(evidence, "items")
+    details: list[str] = []
+    ranked: list[tuple[int, int]] = []
+    for row in rows:
+        sku_id = row.get("master_sku_id")
+        if not isinstance(sku_id, int):
+            continue
+        metrics: list[str] = []
+        order_count = row.get("order_count")
+        units_sold = row.get("units_sold")
+        if order_count is not None:
+            metrics.append(f"订单 {order_count} 笔")
+        if isinstance(units_sold, int):
+            metrics.append(f"售出 {units_sold} 件")
+            ranked.append((units_sold, sku_id))
+        revenue_rows = _nested_indexed_rows(row, "revenue")
+        for revenue in revenue_rows:
+            currency = _safe_label(revenue.get("currency"))
+            amount = revenue.get("amount")
+            if currency and amount is not None:
+                metrics.append(f"{currency} 收入 {amount}")
+        if metrics:
+            details.append(f"SKU #{sku_id}：" + "，".join(metrics))
+    if not details:
+        return None
+    clauses = ["SKU 对比为" + "；".join(details)]
+    if len(ranked) >= 2:
+        ranked.sort(reverse=True)
+        if ranked[0][0] > ranked[1][0]:
+            clauses.append(f"按售出件数，SKU #{ranked[0][1]} 高于 SKU #{ranked[1][1]}")
+        else:
+            clauses.append("按售出件数，当前领先关系不明显")
+    return _sentences(clauses)
+
+
+def _alert_read_analysis(evidence: list[V2AgentEvidence]) -> str | None:
+    count = next((item.value for item in evidence if item.metric == "count"), None)
+    if count == 0:
+        return "当前无活动告警。"
+    rows = (
+        _indexed_evidence(evidence, "items")
+        if any(item.metric.startswith("items.") for item in evidence)
+        else _top_or_indexed_evidence(evidence)
+    )
+    details: list[str] = []
+    for row in rows:
+        alert_id = row.get("alert_id")
+        alert_type = _safe_label(row.get("type"))
+        metric_name = _safe_label(row.get("metric_name"))
+        metric_value = row.get("metric_value")
+        threshold_value = row.get("threshold_value")
+        label = f"告警 #{alert_id}" if isinstance(alert_id, int) else "告警"
+        if alert_type:
+            label += f"（{alert_type}）"
+        metrics: list[str] = []
+        if metric_name and metric_value is not None:
+            metrics.append(f"{metric_name} 指标值为 {metric_value}")
+        if threshold_value is not None:
+            metrics.append(f"阈值为 {threshold_value}")
+        relation = _numeric_relation(metric_value, threshold_value)
+        if relation:
+            metrics.append(f"指标值{relation}阈值")
+        if metrics:
+            details.append(label + "：" + "，".join(metrics))
+    if not details:
+        return None
+    return _sentences(
+        ["告警解释为" + "；".join(details), "建议按告警关联的店铺和 SKU 复核业务原因"]
+    )
+
+
+def _task_read_analysis(evidence: list[V2AgentEvidence]) -> str | None:
+    count = next((item.value for item in evidence if item.metric == "count"), None)
+    if count == 0:
+        return "当前无待办任务。"
+    rows = (
+        _indexed_evidence(evidence, "items")
+        if any(item.metric.startswith("items.") for item in evidence)
+        else _top_or_indexed_evidence(evidence)
+    )
+    details: list[str] = []
+    for row in rows:
+        task_id = row.get("business_task_id")
+        status = _safe_label(row.get("status"))
+        if isinstance(task_id, int) and status:
+            details.append(f"任务 #{task_id} 状态为 {status}")
+    if not details:
+        return None
+    return _sentences(["待办任务为" + "；".join(details), "建议按状态推进复核或审批"])
+
+
+def _replenishment_read_analysis(evidence: list[V2AgentEvidence]) -> str | None:
+    values = {item.metric: item.value for item in evidence}
+    clauses: list[str] = []
+    recommended = values.get("recommended_quantity")
+    if recommended is not None:
+        clauses.append(f"确定性补货建议数量为 {recommended}")
+    days_of_stock = values.get("days_of_stock")
+    if days_of_stock is not None:
+        clauses.append(f"当前库存覆盖天数为 {days_of_stock}")
+    incoming = values.get("incoming")
+    if incoming is not None:
+        clauses.append(f"已计入在途数量 {incoming}")
+    if _positive(recommended):
+        clauses.append("如需执行，应先创建采购草稿并经过既定审批流程")
+    return _sentences(clauses)
+
+
+def _indexed_evidence(evidence: list[V2AgentEvidence], prefix: str) -> list[dict[str, str | int]]:
+    rows: dict[int, dict[str, str | int]] = {}
+    pattern = re.compile(rf"^{re.escape(prefix)}\.(\d+)\.(.+)$")
+    for item in evidence:
+        match = pattern.fullmatch(item.metric)
+        if match:
+            rows.setdefault(int(match.group(1)), {})[match.group(2)] = item.value
+    return [rows[index] for index in sorted(rows)]
+
+
+def _nested_indexed_rows(row: dict[str, str | int], prefix: str) -> list[dict[str, str | int]]:
+    rows: dict[int, dict[str, str | int]] = {}
+    pattern = re.compile(rf"^{re.escape(prefix)}\.(\d+)\.(.+)$")
+    for field, value in row.items():
+        match = pattern.fullmatch(field)
+        if match:
+            rows.setdefault(int(match.group(1)), {})[match.group(2)] = value
+    return [rows[index] for index in sorted(rows)]
+
+
+def _top_or_indexed_evidence(evidence: list[V2AgentEvidence]) -> list[dict[str, str | int]]:
+    indexed: dict[int, dict[str, str | int]] = {}
+    top: dict[str, str | int] = {}
+    for item in evidence:
+        match = re.fullmatch(r"(\d+)\.(.+)", item.metric)
+        if match:
+            indexed.setdefault(int(match.group(1)), {})[match.group(2)] = item.value
+        else:
+            top[item.metric] = item.value
+    if indexed:
+        return [indexed[index] for index in sorted(indexed)]
+    return [top] if top else []
+
+
+def _safe_label(value: object) -> str | None:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", value):
+        return None
+    return value
+
+
+def _numeric_relation(left: object, right: object) -> str | None:
+    if left is None or right is None:
+        return None
+    try:
+        left_number = Decimal(str(left))
+        right_number = Decimal(str(right))
+    except InvalidOperation:
+        return None
+    if left_number < right_number:
+        return "低于"
+    if left_number > right_number:
+        return "高于"
+    return "等于"
+
+
+def _positive(value: object) -> bool:
+    try:
+        return value is not None and Decimal(str(value)) > 0
+    except InvalidOperation:
+        return False
+
+
+def _sentences(clauses: list[str]) -> str | None:
+    if not clauses:
+        return None
+    return "；".join(clauses) + "。"
 
 
 def _server_write_result(
@@ -584,7 +1137,7 @@ def _server_write_result(
         _validate_evidence(result, outputs)
     except ValueError as exc:
         raise LLMServiceError("生产 Agent 草稿工具证据无效") from exc
-    return _grounded_result(result)
+    return _grounded_result(result, preserve_server_analysis=True)
 
 
 def _metric_value(value: object, path: str) -> object:

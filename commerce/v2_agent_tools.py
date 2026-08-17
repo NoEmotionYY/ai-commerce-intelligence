@@ -136,12 +136,17 @@ class V2AgentTools:
             )
 
         @tool(args_schema=ListToolInput)
-        def get_active_alerts(limit: int = 10) -> list[dict[str, object]]:
+        def get_active_alerts(limit: int = 10) -> dict[str, object]:
             """Return bounded active deterministic alerts in the authenticated server scope."""
+
+            def invoke() -> dict[str, object]:
+                items = owner.metrics.active_alerts(limit=limit)
+                return {"count": len(items), "items": items}
+
             return owner._call(
                 "get_active_alerts",
                 {"limit": limit},
-                lambda: owner.metrics.active_alerts(limit=limit),
+                invoke,
             )
 
         @tool(args_schema=AlertToolInput)
@@ -154,12 +159,17 @@ class V2AgentTools:
             )
 
         @tool(args_schema=ListToolInput)
-        def get_pending_business_tasks(limit: int = 10) -> list[dict[str, object]]:
+        def get_pending_business_tasks(limit: int = 10) -> dict[str, object]:
             """Return bounded pending BusinessTasks in the authenticated server scope."""
+
+            def invoke() -> dict[str, object]:
+                items = owner.metrics.pending_tasks(limit=limit)
+                return {"count": len(items), "items": items}
+
             return owner._call(
                 "get_pending_business_tasks",
                 {"limit": limit},
-                lambda: owner.metrics.pending_tasks(limit=limit),
+                invoke,
             )
 
         @tool(args_schema=ReplenishmentToolInput)
