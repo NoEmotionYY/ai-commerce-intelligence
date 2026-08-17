@@ -55,10 +55,12 @@ is an 011G local operator-path checkpoint, not a registry-promotion or GitHub-ho
 The Trivy blocking failure was not waived. The upgraded Debian image passed the fixable
 Critical/High gate, but its authoritative GitHub SARIF still records 14 Debian Trixie findings
 without an available fixed package (4 Critical, 10 High). Reachability review is not being used as
-an exception. `Dockerfile.production` now moves the application runtime to the smaller official
-Python 3.12.13 Alpine 3.24 digest and upgrades its packages before creating the application user.
-This replacement still requires GitHub Trivy, image-contract, and full Production verifier evidence;
-until all three pass, 011F remains open and the prior Debian scan is not reclassified as clean.
+an exception. An official Python Alpine 3.24 candidate was rejected by two GitHub builds because
+production Playwright has no musllinux distribution. `Dockerfile.production` instead moves to the
+supported Python 3.12.13 Debian Bookworm slim digest and upgrades its packages before creating the
+application user. This replacement still requires GitHub Trivy, image-contract, and full Production
+verifier evidence; until all three pass, 011F remains open and the prior Trixie scan is not
+reclassified as clean.
 
 Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
 production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image

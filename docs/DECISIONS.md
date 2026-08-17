@@ -797,11 +797,12 @@ close 011F.
 Decision: Verify release artifacts from the checksummed archive itself: require one image, hash the
 recorded config and OCI manifest blobs, bind the source revision, then accept only the classic
 config-ID or containerd manifest-ID representation after load. Keep the config digest as the
-registry promotion identity. Replace the Debian Python runtime with a digest-pinned official Python
-3.12.13 Alpine 3.24 image and apply its available package upgrades.
+registry promotion identity. Move the runtime from Debian Trixie to the digest-pinned official
+Python 3.12.13 Bookworm slim image and apply its available package upgrades. An Alpine 3.24
+candidate was rejected because the required production Playwright package has no musllinux wheel.
 
 Consequences: Artifact validation is stronger and portable across the two observed Docker stores;
-it does not rebuild or weaken Trivy. The Alpine change is not a security checkpoint until GitHub
+it does not rebuild or weaken Trivy. The Bookworm change is not a security checkpoint until GitHub
 Trivy reports, the production image contract, and the full local Production verifier pass against
 it. The previous Debian artifact remains evidence of the workflow but is not the promotable RC
 image.

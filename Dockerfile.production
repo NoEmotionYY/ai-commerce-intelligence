@@ -1,4 +1,4 @@
-FROM python:3.12.13-alpine3.24@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df
+FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,9 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     HOME=/home/commerce
 
-RUN apk upgrade --no-cache \
-    && addgroup --system commerce \
-    && adduser --system --ingroup commerce --home /home/commerce commerce
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system commerce \
+    && useradd --system --gid commerce --create-home commerce
 
 WORKDIR /app
 COPY pyproject.toml ./
