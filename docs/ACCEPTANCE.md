@@ -361,30 +361,28 @@ gate before the two current-tree checkboxes above may be selected.
 
 Before COMPLETE:
 
-- [ ] Frozen-commit Ruff PASS.
-- [ ] Frozen-commit format PASS.
-- [ ] Frozen-commit MyPy PASS.
-- [ ] Frozen-commit full pytest PASS.
-- [ ] Frozen-commit migration validation PASS.
-- [ ] Frozen-commit API integration tests PASS.
-- [ ] Frozen-commit workflow tests PASS.
-- [ ] Frozen-commit platform contract tests PASS.
-- [ ] Exact scanned-image Docker build PASS.
-- [ ] Frozen-commit Docker Compose smoke PASS.
-- [ ] Frozen-commit critical UI/browser flows PASS.
-- [ ] Frozen-commit git diff --check PASS.
-- [ ] Final security review has no unresolved Critical issue.
-- [ ] Final security review has no unresolved High issue.
+- [x] Frozen-commit Ruff PASS.
+- [x] Frozen-commit format PASS.
+- [x] Frozen-commit MyPy PASS.
+- [x] Frozen-commit full pytest PASS.
+- [x] Frozen-commit migration validation PASS.
+- [x] Frozen-commit API integration tests PASS.
+- [x] Frozen-commit workflow tests PASS.
+- [x] Frozen-commit platform contract tests PASS.
+- [x] Exact scanned-image Docker build PASS.
+- [x] Frozen-commit Docker Compose smoke PASS.
+- [x] Frozen-commit critical UI/browser flows PASS.
+- [x] Frozen-commit git diff --check PASS.
+- [x] Final security review has no unresolved Critical issue.
+- [x] Final security review has no unresolved High issue.
 
-Interim local evidence on the unfrozen hardening worktree is `550 passed, 19 skipped, 1 warning`;
-the exact skip verifier accepted all 19 reviewed environment-gated E2E skips. This is useful local
-regression evidence, not the Final Acceptance gate. Current-tree Production verifier, local
-Gitleaks/Bandit/pip-audit/Trivy, and scanned-image export/load have executed. GitHub PR/dispatch
-workflows and required-check configuration are now evidenced on `ad36dd8`; the final pip-removal
-tree still requires frozen-commit image build/scan/artifact verification, release smoke, explicit
-disposition of remaining Medium/Low findings, clean-host walkthrough, and final independent review.
-The old Debian candidate's 14 findings are historical/superseded; the current `ad36dd8` Distroless
-SARIF is `0 Critical / 0 High / 13 Medium / 8 Low` but is not the final image identity.
+Final evidence is bound to frozen commit `fc20643`. GitHub release run `32073448704` passed both
+quality jobs, MySQL migration integrity, production Compose/image contract, and the isolated
+deployment/recovery/browser smoke. Security run `32073445904` passed source and image gates and
+exported the exact verified image artifact. Complete SARIF is `0 Critical / 0 High / 9 Medium / 7
+Low`; ADR-033 records every residual OS finding with a 2026-09-17 expiry and remediation owner.
+The COM-P1-011 checkpoint is `RC READY`; overall V2 remains `NOT_COMPLETE` and no real-platform
+execution is inferred from the RC gate.
 
 ---
 

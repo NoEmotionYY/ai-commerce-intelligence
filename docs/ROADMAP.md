@@ -3,9 +3,9 @@
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
 Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`.
-Current task: `COM-P1-011E` — Release Candidate CI Pipeline (`IN_PROGRESS`).
-Next task: `COM-P1-011E`.
-Last completed task: `COM-P1-011D` — Health and Readiness Verification (`DONE`).
+Current task: none; `COM-P1-011` is `DONE` and the RC is `READY`.
+Next task: controlled operator/real-platform rollout outside COM-P1-011.
+Last completed task: `COM-P1-011H` — Final Acceptance Review (`DONE`).
 Phase 9 Exit Review passed. Tenant-scoped dashboard metrics, task-effect measurement, bounded
 Agent read/draft tools, server-owned evidence rendering, internal V2 Streamlit UI, API/workflow,
 Compose health, and local browser contract evidence are verified. The current hardening worktree
@@ -214,12 +214,12 @@ fresh/upgrade/rollback/re-upgrade, data-preservation, constraint, concurrency, a
 `COM-P1-011C` and `COM-P1-011D` are `DONE / L2 VERIFIED_LOCAL`. After Docker storage recovery, the
 current production image contract and unchanged end-to-end verifier passed hostile import/root,
 MySQL role isolation, concurrent first-OWNER bootstrap, restart/readiness failure injection,
-backup/delete/restore, partial failure marker and retry, HTTPS/browser, and exact cleanup. Current
-execution advances to 011E. GitHub PR/dispatch evidence now exists for `ad36dd8`, but the final
-pip-removal tree is not yet frozen or rerun, so 011E/F/G/H remain open.
-An independent clean checkout at `17b8323` also passed the documented Python 3.12 setup, migration,
-production-image, recovery, readiness, and browser walkthrough after the runbook was corrected to
-install Chromium. This is preliminary 011G operator evidence; 011G remains gated by 011E/F.
+backup/delete/restore, partial failure marker and retry, HTTPS/browser, and exact cleanup.
+`COM-P1-011E` through `011H` are now `DONE`: GitHub release run `32073448704` and security/artifact
+run `32073445904` passed on `fc20643`; branch protection requires all six quality/security checks;
+the exact artifact loaded with matching archive/config/manifest/source identity; and ADR-033 records
+the 9 Medium/7 Low unfixed OS findings through 2026-09-17. The RC is `READY`, while V2 remains
+`NOT_COMPLETE` pending real-platform/operator evidence outside this hardening phase.
 
 ## Phase 11 — Final Acceptance
 

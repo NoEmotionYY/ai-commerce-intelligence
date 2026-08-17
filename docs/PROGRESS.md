@@ -3,12 +3,35 @@
 ## V2 Status
 
 Phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`
-Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`)
-Next task: `COM-P1-011E`
-Last completed top-level task: `COM-P1-010` — Real Dashboard and Agent Tools
-Current verification slice: `COM-P1-011E` Release Candidate CI Pipeline (`IN_PROGRESS`)
-Last verified checkpoint: `COM-P1-011D` Health and Readiness (`L2 VERIFIED_LOCAL`)
+Current task: none; `COM-P1-011` — Production Deployment and Reliability Hardening (`DONE`)
+Next task: post-RC real-platform/operator rollout
+Last completed top-level task: `COM-P1-011` — Production Deployment and Reliability Hardening
+Current verification slice: `COM-P1-011H` Final Acceptance (`DONE`)
+Last verified checkpoint: `COM-P1-011H` (`RC READY`)
 V2 completion: `NOT_COMPLETE`
+
+## 2026-08-18 — COM-P1-011 Final RC Checkpoint
+
+Status: `RC READY`; overall product remains `V2 NOT_COMPLETE` because no real Douyin/TikTok Shop
+execution is claimed.
+
+- Frozen commit: `fc20643332bc904310a8aee22d57f65777cab8a8`.
+- Local Production verifier: PASS for database roles, bootstrap concurrency, restart persistence,
+  backup/restore and negative controls, HTTPS/readiness, browser, and exact cleanup.
+- GitHub release run `32073448704`: Python 3.11/3.12 quality, MySQL 8.4 migration integrity,
+  production Compose/image contract, and isolated production release smoke all PASS.
+- GitHub security run `32073445904`: Gitleaks, Bandit, pip-audit, blocking Trivy, complete SARIF,
+  and exact scanned-image export all PASS. SARIF: `0 Critical / 0 High / 9 Medium / 7 Low`.
+- Artifact: GitHub digest
+  `sha256:29ee4a313fbc0f444ccb7dd40ddedca0048bcae54e5a84048495ebf6f278149d`;
+  archive SHA-256 `0693922f62583300a31c75a0dee9062f063147e7ea224cc613308be6aa22f674`;
+  config digest `sha256:4d134733b7729037df38e0c49c70aaf887171adbafe84d676f9d02a64a62fdeb`;
+  OCI manifest digest `sha256:e6f600b04bff0d7ddf03210f4d849744b5d8c8dd3da50cc6de8d27b923f2d350`.
+  The repository verifier loaded and verified the artifact without rebuilding.
+- Master protection: strict status checks and admin enforcement are enabled for both quality jobs,
+  MySQL migration integrity, production image contract, source security, and container scan.
+- Residual OS risks are explicitly accepted through 2026-09-17 in ADR-033; no unresolved
+  Critical/High finding remains.
 
 ## 2026-08-18 — COM-P1-011E/F Local CI and Security Execution
 
@@ -98,20 +121,13 @@ The final Docker load check is unavailable in the current restricted Codex proce
 verifier's classic/containerd load path was proven on the earlier `1abeea0` artifact.
 
 Formal SARIF review of `ad36dd8` found 0 Critical, 0 High, 13 Medium, and 8 Low package findings.
-Five findings (four Medium and one Low) belong to `pip 25.0.1`, which is not needed at runtime and
-has fixes available. The current worktree therefore removes pip after building the application and
-adds a real image-contract assertion that the module is absent. This changes the production image,
-so the `ad36dd8` scan/artifact cannot be promoted as the final RC; the pip-removal tree must be
-frozen and rerun through image contract, full release smoke, Trivy, and artifact identity before
-011E/F close. The remaining OS findings have no fixed version in this SARIF and await final-current-
-image confirmation plus explicit monitored-risk disposition.
+Five findings (four Medium and one Low) belonged to `pip 25.0.1`, which is not needed at runtime.
+The later `fc20643` image removed pip and superseded this historical artifact; its final scan and
+risk disposition are recorded in the current checkpoint above.
 
-Remaining 011E/F evidence: freeze/push the pip-removal source, rerun the GitHub-hosted quality,
-MySQL, production-image, Gitleaks/Bandit/pip-audit/Trivy jobs and manual artifact export, verify the
-new artifact, run the workflow-dispatch release smoke, and explicitly resolve or accept the final
-Medium/Low findings. The `master` branch protection already requires the two quality jobs, MySQL,
-production image contract, source security, and container scan with strict checks and admin
-enforcement; it must be rechecked against the final commit before checkpoint sign-off.
+The previously listed 011E/F evidence is now complete on `fc20643`: GitHub-hosted quality, MySQL,
+production-image, Gitleaks/Bandit/pip-audit/Trivy, artifact export/load, release smoke, residual-risk
+disposition, and direct branch-protection verification all passed.
 
 The first GitHub PR run on Draft PR `#1` provided real fail-closed evidence. Source security and
 container security both passed; MySQL 8.4 migration integrity and the production image contract
@@ -273,8 +289,8 @@ Dynamic verification blocker:
 - Initial normal restart/start attempts did not restore the engine. No Docker factory reset, broad prune,
   or user/system-file deletion was attempted. The older project `commerce-prod-smoke-2834197b`
   had no container/volume; its three exact unused generated image tags were removed after verifying
-  that no container referenced them. The new project `commerce-prod-smoke-9e67c041` still requires
-  exact cleanup verification after host storage is repaired.
+  that no container referenced them. After storage recovery, exact checks confirmed that
+  `commerce-prod-smoke-9e67c041` had no remaining container, volume, network, or image resource.
 - This historical failure was not counted as PASS. It is superseded by the 2026-08-18 current-tree
   Production verifier and exact-cleanup PASS recorded above.
 

@@ -701,7 +701,7 @@ cloud-LLM verification levels do not change because of local release hardening.
 ## ADR-029 — Authenticated Recovery Packages, Single-Build Promotion, and First-Owner Bootstrap
 
 Date: 2026-08-17
-Status: ACCEPTED / IMPLEMENTED_UNVERIFIED
+Status: ACCEPTED / VERIFIED_REAL
 
 Context: A colocated dump checksum detects corruption but does not authenticate provenance because
 an actor with backup-directory write access can replace all files and recompute it. Rebuilding an
@@ -791,10 +791,9 @@ Status: ACCEPTED / IMPLEMENTED_UNVERIFIED
 Context: A real GitHub security artifact had a valid archive checksum, recorded config digest, OCI
 manifest, and source revision, but Docker Desktop's containerd store reported the manifest digest
 as `.Id`; the GitHub runner's classic store had recorded the config digest as `.Id`. The original
-Debian candidate retained 14 unfixed Critical/High findings and is superseded. The later Distroless
-candidate on `ad36dd8` produced a GitHub SARIF with 0 Critical/High, 13 Medium, and 8 Low, and its
-artifact identity was independently checked. A subsequent uncommitted hardening change removes
-runtime pip and therefore requires a new frozen scan before promotion.
+Debian candidate retained 14 unfixed Critical/High findings and is superseded. Final Distroless
+commit `fc20643` removes runtime pip; GitHub run `32073445904` scanned/exported the exact image and
+the downloaded artifact passed portable identity verification and Docker load.
 
 Decision: Verify release artifacts from the checksummed archive itself: require one image, hash the
 recorded config and OCI manifest blobs, bind the source revision, then accept only the classic
@@ -807,7 +806,35 @@ because production Playwright has no musllinux wheel; a Bookworm slim candidate 
 Critical/High findings than Trixie and was also rejected.
 
 Consequences: Artifact validation is stronger and portable across the two observed Docker stores;
-it does not rebuild or weaken Trivy. The Distroless candidate has GitHub/local evidence, but the
-pip-removal tree remains `IMPLEMENTED_UNVERIFIED` until it is frozen and passes image contract,
-release smoke, Trivy, artifact load, and final risk review. The previous Debian artifact remains
-historical evidence and is not the promotable RC image.
+it does not rebuild or weaken Trivy. The final Distroless image passed image contract, release
+smoke, Trivy, artifact load, and final risk review. The previous Debian artifacts remain historical
+evidence and are not promotable RC images.
+
+## ADR-033 — Final RC scan residual-risk register
+
+Date: 2026-08-18
+Status: ACCEPTED / TIME-BOUNDED RISK
+
+Context: Security workflow `32073445904` scanned the exact `fc20643` production image after the
+runtime-pip removal and exported the same image artifact. The complete SARIF contains 0 Critical,
+0 High, 9 Medium, and 7 Low findings. Every finding is an unfixed Debian 13 OS-package result;
+the image has no Python/pip findings. The blocking Trivy gate, Gitleaks, Bandit, and pip-audit
+jobs all passed, and release smoke `32073448704` passed on the same commit.
+
+Decision: Accept these residual findings only as a time-bounded RC risk, not as a waiver of the
+Critical/High gate. The exact identifiers are:
+
+- Medium (9): `CVE-2026-42250` (`libbz2-1.0` 1.0.8-6), `CVE-2026-5435`, `CVE-2026-5450`,
+  `CVE-2026-5928`, `CVE-2026-6238`, `CVE-2026-6368`, `CVE-2026-6791` (`libc6`
+  2.41-12+deb13u3), `CVE-2026-14456` (`libssl3t64` 3.5.6-1~deb13u2), and
+  `CVE-2026-27171` (`zlib1g` 1:1.3.dfsg+really1.3.1-1+b1).
+- Low (7): `CVE-2010-4756`, `CVE-2018-20796`, `CVE-2019-1010022`, `CVE-2019-1010023`,
+  `CVE-2019-1010024`, `CVE-2019-1010025`, and `CVE-2019-9192` (`libc6` 2.41-12+deb13u3).
+
+There is no fixed version reported by Trivy for these exact package builds. Owner: Release
+Engineering. Expiry: 2026-09-17 (30 days). Remediation: rebuild the Distroless runtime when
+Debian publishes fixed packages, rerun the blocking and complete Trivy passes, and replace the
+artifact; the release must not silently carry a changed finding set. Compensating controls are
+the Distroless non-root/read-only/no-new-privileges runtime, no shell/package manager, exact
+artifact identity verification, immutable promotion requirement, and continuous health/readiness
+and backup/restore gates. This register must be revisited before expiry and at every RC rebuild.

@@ -27,14 +27,10 @@ detectors and future product-frontend/deployment work are internal scope, not `B
 credentials, developer approval, seller authorization, or platform access have not been confirmed
 unavailable and are not recorded as active blockers. `COM-P1-011` is the active internal task.
 
-The current Docker Desktop/containerd layer I/O failure and low system-drive capacity are local
-infrastructure conditions, not `BLOCKED_EXTERNAL`. They prevent current-tree C/D/image dynamic
-evidence but do not convert unfinished internal release gates into an external product blocker.
-
-The current Codex process also cannot access the Docker named pipe/configuration and its local
-`gh` token is invalid. These are tool-session permissions, not product or platform blockers; they
-simply leave the final-tree Docker/GitHub evidence pending. No credentials are being bypassed or
-injected to manufacture a release result.
+The earlier Docker Desktop/containerd I/O and local `gh` authorization failures were local tool
+conditions, not product blockers, and are resolved for the final checkpoint. They did not bypass
+any gate: the final local verifier, GitHub-hosted CI/security workflows, release smoke, and artifact
+load/identity verification all ran successfully on frozen commit `fc20643`.
 
 As of the final `COM-P1-010` Exit Review, active `BLOCKED_EXTERNAL` count is `0`. The final local
 and mock evidence does not substitute for real-platform verification; absence of a confirmed

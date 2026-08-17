@@ -61,23 +61,21 @@ provisioning and Alembic migration must complete before the API becomes ready. A
 processes run non-root/read-only with no-new-privileges, service ports remain internal, local
 container logs are bounded, and only HTTPS ingress is published.
 
-The application image uses a digest-pinned Python 3.12 base and exact production dependency lock.
+The application image uses a digest-pinned Python 3.12 builder and digest-pinned Distroless Debian
+13 runtime with the exact production dependency lock.
 Security CI is designed to build once, scan that image, label the frozen source revision, and export
 the same archive only after source-security and blocking image gates pass. Promotion must bind the
 loaded Docker image ID to the registry manifest `config.digest` and deploy by immutable registry
-digest. The `ad36dd8` GitHub workflow built/scanned/exported one archive and the repository verifier
-checked its source/config/manifest identity; registry promotion and the final pip-removal image are
-still `IMPLEMENTED_UNVERIFIED`. The earlier 011A Compose PASS predates the current lock and is
-historical L2 evidence only.
+digest. Security run `32073445904` built/scanned/exported the `fc20643` archive; the repository
+verifier checked and loaded its source/archive/config/manifest identity without rebuilding.
 
 Alembic fresh/upgrade/rollback/re-upgrade and integrity behavior is `L2 VERIFIED_LOCAL` on a
 digest-pinned disposable MySQL 8.4.11 container. Backup/restore now uses strict metadata/checksums,
 an out-of-band manifest digest, private staging before import, a failed-restore readiness marker,
 and a separate no-network isolated package verifier. Production liveness/readiness failure
-injection and first-OWNER concurrent bootstrap are implemented in the release verifier and passed
-against the current pre-pip-removal Distroless tree at `L2 VERIFIED_LOCAL`. The final pip-removal
-tree still requires a frozen-image rerun; the current restricted Docker engine cannot perform that
-post-fix exercise. None of this is `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
+injection and first-OWNER concurrent bootstrap passed locally and in GitHub release run
+`32073448704`. Local Docker evidence is `VERIFIED_LOCAL`; GitHub-hosted clean-runner CI, scan,
+artifact, and release-smoke evidence is `VERIFIED_REAL`. Real merchant/platform behavior is not.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -542,7 +540,17 @@ New V2 revisions are explicit additive Alembic migrations. Legacy tables remain 
 compatibility window; production migrations must not use global `create_all` or `drop_all`.
 Queues/workers and Redis are introduced only when synchronization workloads require them.
 
-## 7. Non-Production Assets
+## 7. Release Candidate deployment state
+
+The `fc20643` RC uses a digest-pinned Distroless Debian 13 non-root runtime, a production-only
+Compose topology, separate least-privilege MySQL roles, TLS reverse proxy, liveness/readiness,
+maintenance backup/restore profiles, and an audited first-OWNER bootstrap path. GitHub release
+run `32073448704` executed the deployment/recovery/browser path on a clean hosted runner. Security
+run `32073445904` scanned and exported the same image; artifact archive, config, OCI manifest, and
+source revision were independently verified after download and load. This is the COM-P1-011
+`RC READY` architecture checkpoint, not evidence of real Douyin/TikTok Shop execution.
+
+## 8. Non-Production Assets
 
 Mock ERP, Mock Crawler, mock competitor site, fixed identifiers, and seed data are retained only
 for legacy regression, local development, fixtures, and demos. Legacy Streamlit is a Demo surface;

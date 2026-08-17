@@ -67,6 +67,15 @@ The current-tree 2026-08-18 rerun contains High `0`, Medium `10`, and Low `54`. 
 still limited to the reviewed B104, B108, and B608 verifier/configuration patterns described above;
 the changed counts replace, rather than silently inherit, the earlier baseline.
 
+### Final frozen-image review — `fc20643`
+
+Security dispatch `32073445904` ran after commit `fc20643` and exported the exact scanned image.
+The complete Trivy SARIF contains `0 Critical / 0 High / 9 Medium / 7 Low`; all 16 are unfixed
+Debian 13 OS-package findings and no Python/pip finding remains. The exact CVE/package/version
+register, owner, expiry, controls, and remediation are recorded in ADR-033 in
+`docs/DECISIONS.md`. The blocking scan, Gitleaks, Bandit, and pip-audit jobs passed. This is a
+reviewed, time-bounded residual risk and does not weaken the Critical/High release gate.
+
 ## Local Parity
 
 Run scanners in an isolated environment and do not install them into the production lock:

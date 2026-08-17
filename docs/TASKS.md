@@ -5,9 +5,9 @@ Priorities: P0 blocks product/data integrity/security; P1 is mandatory product b
 P2/P3 are quality and future work.
 
 Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`.
-Current task: `COM-P1-011E` — Release Candidate CI Pipeline (`IN_PROGRESS`).
-Next task: `COM-P1-011E`.
-Last completed task: `COM-P1-011D` — Health and Readiness Verification (`DONE`).
+Current task: none; `COM-P1-011` Release Candidate hardening is `DONE`.
+Next task: post-RC real-platform/operator rollout; not part of COM-P1-011.
+Last completed task: `COM-P1-011H` — Final Acceptance Review (`DONE`).
 `COM-P1-010` passed Product, Architecture, Security, Testing, API/workflow, Compose, and browser
 Exit Review. The current hardening worktree suite is `550 passed, 19 skipped, 1 warning`; the final
 Agent/frontend slice is `54 passed`; the explicit V2 browser success path is `1 passed` against a
@@ -748,7 +748,7 @@ remain outside this task.
 
 ### COM-P1-011 — Production Deployment and Reliability Hardening
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-010.
 Scope: production-oriented deployment/configuration, backup and recovery procedures, HTTPS reverse
 proxy guidance, health/observability, Compose release path, restart/recovery gates, and final
@@ -850,7 +850,7 @@ resources were verified absent afterward. Checkpoint: `L2 VERIFIED_LOCAL`.
 
 #### COM-P1-011E — Release Candidate CI Pipeline
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-011A through COM-P1-011D.
 Scope: automated lint, format, typing, unit/integration/workflow/migration regression, production
 contract, image build, production Compose configuration, and explicit reporting of environment-
@@ -865,15 +865,14 @@ and contract tests are implemented. The current local regression is `550 passed,
 skips, 1 warning`; the skip verifier accepted exactly 19. Full Ruff, format, strict MyPy, YAML
 parse, single head, and `git diff --check` pass. Independent review's two High verification-
 integrity findings (production-lock mismatch and permissive skips) were fixed. GitHub PR run
-`32062779729` on `ad36dd8` passed Python 3.11/3.12 quality, MySQL 8.4 migration integrity, and
-the production Compose/image contract; the release smoke was skipped by its documented PR
-condition. The master branch protection rule requires these checks with strict status enforcement.
-The current worktree has an additional uncommitted pip-removal image hardening change, so 011E
-remains `IN_PROGRESS` until that tree is frozen and rerun.
+`32073448704` on frozen commit `fc20643` passed Python 3.11/3.12 quality, MySQL 8.4 migration
+integrity, production Compose/image contract, and isolated production release smoke. The master
+branch protection rule was queried directly and requires all six named quality/security checks with
+strict status and administrator enforcement.
 
 #### COM-P1-011F — Release Candidate Security Scanning
 Priority: P1
-Status: TODO
+Status: DONE
 Dependencies: COM-P1-011E.
 Scope: source secret scanning, Python dependency audit, static application security analysis,
 container/image scanning, production configuration leakage checks, and triaged findings.
@@ -892,18 +891,15 @@ same 14 reviewed test false positives after excluding the ignored local `.env`. 
 9 fixable High findings in the original OS layer; the base digest/security upgrade was remediated,
 then the exact rebuilt image passed the fixable Critical/High gate with 0. The historical Debian
 candidate's complete SARIF contained 14 unfixed findings (4 Critical, 10 High) and is superseded.
-The current Distroless candidate on `ad36dd8` passed GitHub security run `32063279908`: complete
-SARIF `0 Critical / 0 High / 13 Medium / 8 Low`; source security and image scan both succeeded.
-That run exported one scanned image whose archive/config/OCI manifest/source revision passed the
-repository artifact verifier. The current uncommitted Dockerfile removes runtime pip (five of the
-known Medium/Low findings) and therefore invalidates the old image identity for final release.
-The remaining no-fixed-version OS findings still require explicit Final Acceptance risk records;
-no 011F checkpoint is claimed until the frozen pip-removal tree is rebuilt, scanned, exported,
-loaded, and verified.
+Security dispatch `32073445904` on frozen commit `fc20643` passed source security and Trivy and
+exported one exact scanned image artifact. Complete SARIF is `0 Critical / 0 High / 9 Medium / 7
+Low`; all residuals are unfixed Debian OS packages and are individually registered in ADR-033 with
+owner, expiry, controls, and remediation. The artifact was loaded and verified by
+`verify_release_image_artifact.py`, including archive/config/manifest/source-revision identity.
 
 #### COM-P1-011G — Production Deployment Documentation
 Priority: P1
-Status: TODO
+Status: DONE
 Dependencies: COM-P1-011A through COM-P1-011F.
 Scope: supported topology, prerequisites, secret provisioning, start/upgrade, health, TLS,
 backup/restore, rollback, monitoring, identity-provisioning limitation, and release procedure.
@@ -918,14 +914,13 @@ secret-file permissions, bounded logs, health/TLS/rollback/monitoring instructio
 contracts are implemented. An independent clean checkout at `17b8323` created a fresh Python 3.12
 environment under the production lock, passed the official MySQL migration gate and image
 contract, installed the documented Chromium runtime, and passed the full Production verifier with
-zero residual smoke containers/volumes/networks. GitHub PR/dispatch evidence now exists for the
-`ad36dd8` tree, but registry promotion and a clean-host run against the final pip-removal commit
-remain pending. Status remains `TODO` behind 011E/F; the walkthrough does not override dependency
-gates or accept outstanding image findings.
+zero residual smoke containers/volumes/networks. The GitHub dispatch release smoke also passed on
+`fc20643`; promotion remains an operator action that must use the recorded immutable artifact and
+must not rebuild.
 
 #### COM-P1-011H — Final Acceptance Review
 Priority: P1
-Status: TODO
+Status: DONE
 Dependencies: COM-P1-011A through COM-P1-011G.
 Scope: final Product, Architecture, Security, Testing, Deployment, Recovery, and Operations review;
 reconcile all source-of-truth documents and generate the V2 Release Candidate report.
@@ -934,6 +929,11 @@ Acceptance: mandatory P0/P1 work is DONE; no unresolved Critical/High issue or u
 external limitations; `docs/FINAL_REPORT.md` is replaced with an honest V2 RC report.
 Checkpoint evidence: full release gate, independent reviews, source-of-truth reconciliation,
 final report, and signed-off RC checkpoint. `COMPLETE` is claimed only if evidence supports it.
+Verification: final commit `fc20643` passed local production deployment/recovery and GitHub-hosted
+run `32073448704`; security/artifact run `32073445904` passed with 0 Critical/High and ADR-033
+records all 9 Medium/7 Low residuals. Required branch checks are strict and admin-enforced. The
+RC checkpoint is `READY`; this does not claim real Douyin/TikTok Shop execution or overall product
+`VERIFIED_REAL`.
 
 ## External Verification
 
@@ -944,5 +944,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 1 (`COM-P1-011`); `COM-P1-001` through `COM-P1-010` are `DONE`.
+- P1 remaining: 0; `COM-P1-001` through `COM-P1-011` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.
