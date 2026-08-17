@@ -9,7 +9,7 @@ Last completed task: `COM-P1-011D` — Health and Readiness Verification (`DONE`
 Phase 9 Exit Review passed. Tenant-scoped dashboard metrics, task-effect measurement, bounded
 Agent read/draft tools, server-owned evidence rendering, internal V2 Streamlit UI, API/workflow,
 Compose health, and local browser contract evidence are verified. The current hardening worktree
-suite is `545 passed, 19 skipped, 1 warning`; the 19 environment-gated skips are not PASS evidence.
+suite is `550 passed, 19 skipped, 1 warning`; the 19 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -215,7 +215,8 @@ fresh/upgrade/rollback/re-upgrade, data-preservation, constraint, concurrency, a
 current production image contract and unchanged end-to-end verifier passed hostile import/root,
 MySQL role isolation, concurrent first-OWNER bootstrap, restart/readiness failure injection,
 backup/delete/restore, partial failure marker and retry, HTTPS/browser, and exact cleanup. Current
-execution advances to 011E; GitHub-hosted CI evidence is not yet claimed.
+execution advances to 011E. GitHub PR/dispatch evidence now exists for `ad36dd8`, but the final
+pip-removal tree is not yet frozen or rerun, so 011E/F/G/H remain open.
 An independent clean checkout at `17b8323` also passed the documented Python 3.12 setup, migration,
 production-image, recovery, readiness, and browser walkthrough after the runbook was corrected to
 install Chromium. This is preliminary 011G operator evidence; 011G remains gated by 011E/F.

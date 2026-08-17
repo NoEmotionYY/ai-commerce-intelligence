@@ -22,7 +22,7 @@ COPY .streamlit ./.streamlit
 RUN pip install --no-cache-dir -r requirements.production.lock \
     && pip install --no-cache-dir setuptools==80.9.0 wheel==0.45.1 \
     && pip install --no-cache-dir --no-deps --no-build-isolation . \
-    && pip uninstall --yes setuptools wheel
+    && pip uninstall --yes setuptools wheel pip
 
 # The final image has no shell or package manager. Remove standard-library extension modules that
 # are not part of the production path, then carry only the additional shared libraries still

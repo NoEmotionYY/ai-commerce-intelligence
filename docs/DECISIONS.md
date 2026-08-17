@@ -790,9 +790,11 @@ Status: ACCEPTED / IMPLEMENTED_UNVERIFIED
 
 Context: A real GitHub security artifact had a valid archive checksum, recorded config digest, OCI
 manifest, and source revision, but Docker Desktop's containerd store reported the manifest digest
-as `.Id`; the GitHub runner's classic store had recorded the config digest as `.Id`. The same scan
-also retained 14 unfixed Debian Critical/High findings, so reachability commentary alone could not
-close 011F.
+as `.Id`; the GitHub runner's classic store had recorded the config digest as `.Id`. The original
+Debian candidate retained 14 unfixed Critical/High findings and is superseded. The later Distroless
+candidate on `ad36dd8` produced a GitHub SARIF with 0 Critical/High, 13 Medium, and 8 Low, and its
+artifact identity was independently checked. A subsequent uncommitted hardening change removes
+runtime pip and therefore requires a new frozen scan before promotion.
 
 Decision: Verify release artifacts from the checksummed archive itself: require one image, hash the
 recorded config and OCI manifest blobs, bind the source revision, then accept only the classic
@@ -805,7 +807,7 @@ because production Playwright has no musllinux wheel; a Bookworm slim candidate 
 Critical/High findings than Trixie and was also rejected.
 
 Consequences: Artifact validation is stronger and portable across the two observed Docker stores;
-it does not rebuild or weaken Trivy. The Distroless change is not a security checkpoint until GitHub
-Trivy reports, the production image contract, and the full local Production verifier pass against
-it. The previous Debian artifact remains evidence of the workflow but is not the promotable RC
-image.
+it does not rebuild or weaken Trivy. The Distroless candidate has GitHub/local evidence, but the
+pip-removal tree remains `IMPLEMENTED_UNVERIFIED` until it is frozen and passes image contract,
+release smoke, Trivy, artifact load, and final risk review. The previous Debian artifact remains
+historical evidence and is not the promotable RC image.

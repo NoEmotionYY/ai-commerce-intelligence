@@ -65,17 +65,19 @@ The application image uses a digest-pinned Python 3.12 base and exact production
 Security CI is designed to build once, scan that image, label the frozen source revision, and export
 the same archive only after source-security and blocking image gates pass. Promotion must bind the
 loaded Docker image ID to the registry manifest `config.digest` and deploy by immutable registry
-digest. This artifact path is `IMPLEMENTED_UNVERIFIED` until the GitHub workflow and registry
-promotion exercise run; the earlier 011A Compose PASS predates the current lock and is historical
-L2 evidence only.
+digest. The `ad36dd8` GitHub workflow built/scanned/exported one archive and the repository verifier
+checked its source/config/manifest identity; registry promotion and the final pip-removal image are
+still `IMPLEMENTED_UNVERIFIED`. The earlier 011A Compose PASS predates the current lock and is
+historical L2 evidence only.
 
 Alembic fresh/upgrade/rollback/re-upgrade and integrity behavior is `L2 VERIFIED_LOCAL` on a
 digest-pinned disposable MySQL 8.4.11 container. Backup/restore now uses strict metadata/checksums,
 an out-of-band manifest digest, private staging before import, a failed-restore readiness marker,
 and a separate no-network isolated package verifier. Production liveness/readiness failure
-injection and first-OWNER concurrent bootstrap are implemented in the release verifier. Those
-recovery/operability paths remain `IMPLEMENTED_UNVERIFIED` because the current Docker engine cannot
-run the post-fix exercise.
+injection and first-OWNER concurrent bootstrap are implemented in the release verifier and passed
+against the current pre-pip-removal Distroless tree at `L2 VERIFIED_LOCAL`. The final pip-removal
+tree still requires a frozen-image rerun; the current restricted Docker engine cannot perform that
+post-fix exercise. None of this is `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 

@@ -31,6 +31,11 @@ The current Docker Desktop/containerd layer I/O failure and low system-drive cap
 infrastructure conditions, not `BLOCKED_EXTERNAL`. They prevent current-tree C/D/image dynamic
 evidence but do not convert unfinished internal release gates into an external product blocker.
 
+The current Codex process also cannot access the Docker named pipe/configuration and its local
+`gh` token is invalid. These are tool-session permissions, not product or platform blockers; they
+simply leave the final-tree Docker/GitHub evidence pending. No credentials are being bypassed or
+injected to manufacture a release result.
+
 As of the final `COM-P1-010` Exit Review, active `BLOCKED_EXTERNAL` count is `0`. The final local
 and mock evidence does not substitute for real-platform verification; absence of a confirmed
 credential/approval/environment denial is intentionally not recorded as an external blocker.

@@ -82,6 +82,11 @@ def test_production_image_runs_as_unprivileged_user() -> None:
     assert "_curses*.so" in dockerfile
     assert "requirements.production.lock" in dockerfile
     assert "--no-deps --no-build-isolation ." in dockerfile
+    assert "pip uninstall --yes setuptools wheel pip" in dockerfile
+    image_contract = (ROOT / "scripts/verify_production_image_contract.py").read_text(
+        encoding="utf-8"
+    )
+    assert "importlib.util.find_spec('pip') is None" in image_contract
 
 
 def test_production_owner_bootstrap_pins_project_and_alembic_roots() -> None:

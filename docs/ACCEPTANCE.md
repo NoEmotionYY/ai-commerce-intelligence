@@ -318,7 +318,7 @@ React/Next.js interface remains TARGET and is not implied by these checks.
 - [x] Database migrations verified.
 - [x] Retry behavior tested.
 - [x] Idempotency tested.
-- [ ] Restart/recovery behavior tested.
+- [x] Restart/recovery behavior tested.
 - [x] Sync recovery tested.
 - [x] Health endpoint exists.
 - [x] Backup procedure documented.
@@ -329,7 +329,9 @@ Production migration status: `PASS / L2 VERIFIED_LOCAL` at `COM-P1-011B`. The si
 rollback/re-upgrade, schema/behavioral constraints, representative data preservation, and MySQL
 concurrency gates in a digest-pinned disposable MySQL 8.4.11 instance. The random test container
 and anonymous data volume were verified removed. This does not imply recovery or real-platform
-verification.
+verification. Restart/recovery is separately `PASS / L2 VERIFIED_LOCAL` at COM-P1-011C/D: the
+production verifier proved MySQL restart persistence, live/readiness failure behavior, restore
+marker refusal, clean retry, HTTPS, and authenticated browser smoke with exact cleanup.
 
 ---
 
@@ -374,12 +376,15 @@ Before COMPLETE:
 - [ ] Final security review has no unresolved Critical issue.
 - [ ] Final security review has no unresolved High issue.
 
-Interim local evidence on the unfrozen hardening worktree is `545 passed, 19 skipped, 1 warning`;
+Interim local evidence on the unfrozen hardening worktree is `550 passed, 19 skipped, 1 warning`;
 the exact skip verifier accepted all 19 reviewed environment-gated E2E skips. This is useful local
 regression evidence, not the Final Acceptance gate. Current-tree Production verifier, local
-Gitleaks/Bandit/pip-audit/Trivy, and scanned-image export/load have executed. GitHub-hosted workflows,
-required-check configuration, disposition of 14 unfixed image findings, clean-host walkthrough,
-and the final independent review remain open.
+Gitleaks/Bandit/pip-audit/Trivy, and scanned-image export/load have executed. GitHub PR/dispatch
+workflows and required-check configuration are now evidenced on `ad36dd8`; the final pip-removal
+tree still requires frozen-commit image build/scan/artifact verification, release smoke, explicit
+disposition of remaining Medium/Low findings, clean-host walkthrough, and final independent review.
+The old Debian candidate's 14 findings are historical/superseded; the current `ad36dd8` Distroless
+SARIF is `0 Critical / 0 High / 13 Medium / 8 Low` but is not the final image identity.
 
 ---
 

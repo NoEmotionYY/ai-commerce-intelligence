@@ -15,3 +15,4 @@ commerce.db
 test.db
 playwright-report/
 backups/
+/.tmp-security-*/

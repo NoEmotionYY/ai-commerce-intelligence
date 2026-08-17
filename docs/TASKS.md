@@ -861,13 +861,15 @@ are reported and never represented as PASS.
 Checkpoint evidence: workflow syntax review, local parity commands, CI documentation, independent
 testing review, and CI checkpoint.
 Verification: workflows, production-image contract helper, single-head gate, exact skip allowlist,
-and contract tests are implemented. Full local regression is `545 passed, 19 reviewed E2E skips,
-1 warning`; the skip verifier accepted exactly 19. Full Ruff, format, strict MyPy, YAML parse,
-single head, and `git diff --check` pass. Independent review's two High verification-integrity
-findings (production-lock mismatch and permissive skips) were fixed. Current workflow Actionlint
-and 11 CI/security contract tests pass, and the clean production image contract plus the full
-Production verifier pass dynamically. GitHub-hosted workflow execution and repository required-
-check configuration remain unverified, so status stays `IN_PROGRESS`.
+and contract tests are implemented. The current local regression is `550 passed, 19 reviewed E2E
+skips, 1 warning`; the skip verifier accepted exactly 19. Full Ruff, format, strict MyPy, YAML
+parse, single head, and `git diff --check` pass. Independent review's two High verification-
+integrity findings (production-lock mismatch and permissive skips) were fixed. GitHub PR run
+`32062779729` on `ad36dd8` passed Python 3.11/3.12 quality, MySQL 8.4 migration integrity, and
+the production Compose/image contract; the release smoke was skipped by its documented PR
+condition. The master branch protection rule requires these checks with strict status enforcement.
+The current worktree has an additional uncommitted pip-removal image hardening change, so 011E
+remains `IN_PROGRESS` until that tree is frozen and rerun.
 
 #### COM-P1-011F — Release Candidate Security Scanning
 Priority: P1
@@ -888,11 +890,16 @@ Database URLs are excluded from Settings repr and production rejects webhook sec
 32 characters. Gitleaks 8.30.1 scanned 28 commits with no leak; the worktree scan returned only the
 same 14 reviewed test false positives after excluding the ignored local `.env`. Trivy 0.69.3 found
 9 fixable High findings in the original OS layer; the base digest/security upgrade was remediated,
-then the exact rebuilt image passed the fixable Critical/High gate with 0. The complete SARIF still
-contains 14 unfixed Debian findings (4 Critical, 10 High) awaiting Final Acceptance disposition.
-Local export/hash/remove/load proved the scanned image ID is preserved. GitHub-hosted execution,
-required checks, and disposition of the unfixed findings remain open, so no 011F checkpoint is
-claimed.
+then the exact rebuilt image passed the fixable Critical/High gate with 0. The historical Debian
+candidate's complete SARIF contained 14 unfixed findings (4 Critical, 10 High) and is superseded.
+The current Distroless candidate on `ad36dd8` passed GitHub security run `32063279908`: complete
+SARIF `0 Critical / 0 High / 13 Medium / 8 Low`; source security and image scan both succeeded.
+That run exported one scanned image whose archive/config/OCI manifest/source revision passed the
+repository artifact verifier. The current uncommitted Dockerfile removes runtime pip (five of the
+known Medium/Low findings) and therefore invalidates the old image identity for final release.
+The remaining no-fixed-version OS findings still require explicit Final Acceptance risk records;
+no 011F checkpoint is claimed until the frozen pip-removal tree is rebuilt, scanned, exported,
+loaded, and verified.
 
 #### COM-P1-011G — Production Deployment Documentation
 Priority: P1
@@ -911,7 +918,8 @@ secret-file permissions, bounded logs, health/TLS/rollback/monitoring instructio
 contracts are implemented. An independent clean checkout at `17b8323` created a fresh Python 3.12
 environment under the production lock, passed the official MySQL migration gate and image
 contract, installed the documented Chromium runtime, and passed the full Production verifier with
-zero residual smoke containers/volumes/networks. Registry promotion and GitHub-hosted execution
+zero residual smoke containers/volumes/networks. GitHub PR/dispatch evidence now exists for the
+`ad36dd8` tree, but registry promotion and a clean-host run against the final pip-removal commit
 remain pending. Status remains `TODO` behind 011E/F; the walkthrough does not override dependency
 gates or accept outstanding image findings.
 

@@ -14,10 +14,10 @@ V2 completion: `NOT_COMPLETE`
 
 Status:
 
-- `COM-P1-011E`: `IN_PROGRESS`; local parity and Docker gates pass, GitHub-hosted execution is
-  pending.
-- `COM-P1-011F`: `TODO / LOCAL_SCANS_EXECUTED`; the fixable image gate passes, but unfixed findings
-  require Final Acceptance disposition and GitHub execution remains pending.
+- `COM-P1-011E`: `IN_PROGRESS`; local parity passes and GitHub-hosted execution is evidenced for
+  frozen commit `ad36dd8`, but the current pip-removal worktree still needs a new frozen run.
+- `COM-P1-011F`: `TODO / LOCAL_SCANS_EXECUTED`; the `ad36dd8` GitHub scan is recorded below, but
+  the changed image requires a new scan and explicit residual-risk disposition.
 - RC remains `NOT_READY`.
 
 Evidence:
@@ -27,7 +27,7 @@ Evidence:
 | Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
 | CI/security contracts | `11 passed` | local contract evidence |
 | full regression + skip guard | `550 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
-| Ruff / format / strict MyPy / release head / diff | PASS; 176 files, 70 production/hardening sources, `0016_agent_workflow` | L2 local |
+| Ruff / format / strict MyPy / release head / diff | PASS; 178 files, 70 production/hardening sources, `0016_agent_workflow` | L2 local |
 | Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
 | Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
 | Bandit 1.9.4 blocking/full | blocking 0; High 0, Medium 10, Low 54 | local SAST |
@@ -83,10 +83,35 @@ The first post-fix local pytest invocation requested coverage from an interprete
 The complete no-coverage rerun produced the result above, while both locked GitHub quality jobs
 remain responsible for the XML coverage baseline.
 
-Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
-production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image
-artifact, configure required checks, and explicitly resolve or accept each unfixed finding under
-the documented time-bounded exception policy.
+GitHub PR run `32062779729` on frozen commit `ad36dd8` subsequently passed Python 3.11 and 3.12
+quality, MySQL 8.4 migration integrity, and the production Compose/image contract; its isolated
+release-smoke job was skipped by the documented PR-only condition. Security PR run `32062779646`
+passed source security and the image scan. Manual security run `32063279908` also passed both jobs
+and exported the single-build image artifact. GitHub recorded the 227 MB artifact digest as
+`sha256:79a8845126541d2a2b03758b9edcbb3303a8046ede3558db41d9771d3d03ae1a`.
+The downloaded artifact passed the repository verifier without loading: archive SHA-256
+`680436604e78862c38976fe248617597d007d61514a1398a4cf2660ba78cc022`, source revision
+`ad36dd8a7c041daeda351ebb3807cb51038fd248`, config digest
+`sha256:cbaa8b72e24cb436e556d39d99f952bac7f64985d840c611e95aac53588a9ab8`, and OCI manifest digest
+`sha256:9f1855d09fb2f2af68364c14f2553b9e5026edc7ec484030eddb861674327d66` all matched the archive.
+The final Docker load check is unavailable in the current restricted Codex process, but the same
+verifier's classic/containerd load path was proven on the earlier `1abeea0` artifact.
+
+Formal SARIF review of `ad36dd8` found 0 Critical, 0 High, 13 Medium, and 8 Low package findings.
+Five findings (four Medium and one Low) belong to `pip 25.0.1`, which is not needed at runtime and
+has fixes available. The current worktree therefore removes pip after building the application and
+adds a real image-contract assertion that the module is absent. This changes the production image,
+so the `ad36dd8` scan/artifact cannot be promoted as the final RC; the pip-removal tree must be
+frozen and rerun through image contract, full release smoke, Trivy, and artifact identity before
+011E/F close. The remaining OS findings have no fixed version in this SARIF and await final-current-
+image confirmation plus explicit monitored-risk disposition.
+
+Remaining 011E/F evidence: freeze/push the pip-removal source, rerun the GitHub-hosted quality,
+MySQL, production-image, Gitleaks/Bandit/pip-audit/Trivy jobs and manual artifact export, verify the
+new artifact, run the workflow-dispatch release smoke, and explicitly resolve or accept the final
+Medium/Low findings. The `master` branch protection already requires the two quality jobs, MySQL,
+production image contract, source security, and container scan with strict checks and admin
+enforcement; it must be rechecked against the final commit before checkpoint sign-off.
 
 The first GitHub PR run on Draft PR `#1` provided real fail-closed evidence. Source security and
 container security both passed; MySQL 8.4 migration integrity and the production image contract
@@ -135,7 +160,7 @@ Dynamic evidence:
 | production image contract | Compose config, hostile import/root, non-root/read-only runtime PASS | L2 |
 | unchanged full Production verifier | role isolation, restart persistence, backup/restore, negative controls, HTTPS/browser all PASS | L2 |
 | verifier cleanup | production-smoke containers 0, volumes 0, networks 0 | L2 |
-| full pytest + exact skip gate | `545 passed, 19 skipped, 1 warning`; 19 reviewed skips | L2 local regression |
+| full pytest + exact skip gate | `550 passed, 19 skipped, 1 warning`; 19 reviewed skips | L2 local regression |
 | Ruff / format / strict MyPy / single head / diff | PASS; 175 files, 141 typed sources, `0016_agent_workflow` | L2 |
 
 Review:
@@ -181,7 +206,7 @@ Local evidence:
 
 | Check | Result | Meaning |
 |---|---|---|
-| full pytest | `545 passed, 19 skipped, 1 warning` | local regression; all 19 skips accepted by exact module+reason verifier |
+| full pytest | `550 passed, 19 skipped, 1 warning` | local regression; all 19 skips accepted by exact module+reason verifier |
 | focused owner/backup/docs/CI/security/deployment contracts | `55 passed, 1 warning` | local contract evidence |
 | strict MyPy for new operational scripts | PASS | local type evidence |
 | workflow YAML parse | PASS | syntax parse only; not GitHub-hosted execution |

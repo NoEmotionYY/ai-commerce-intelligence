@@ -176,6 +176,8 @@ def main() -> None:
                     image_tag,
                     "python",
                     "-c",
+                    "import importlib.util; "
+                    "assert importlib.util.find_spec('pip') is None; "
                     "from commerce.config import get_settings; "
                     "get_settings().validate_production_startup(); "
                     "import commerce.agent_api; print('production runtime import: PASS')",
