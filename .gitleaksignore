@@ -1,0 +1,14 @@
+07542e2f86d5a465782dae3325704d409a4a2c9d:tests/integration/test_tiktok_shop_connector_api.py:generic-api-key:63
+07542e2f86d5a465782dae3325704d409a4a2c9d:tests/unit/test_tiktok_shop_sync_service.py:generic-api-key:320
+c77d488e79c3c988a26ee7b5b6e7211a4ce85c21:tests/integration/test_douyin_connector_api.py:generic-api-key:64
+c77d488e79c3c988a26ee7b5b6e7211a4ce85c21:tests/unit/test_douyin_sync_service.py:generic-api-key:228
+c77d488e79c3c988a26ee7b5b6e7211a4ce85c21:tests/unit/test_douyin_sync_service.py:generic-api-key:261
+4f9660f9df8f33de6551451538a5c81f82649f9e:tests/unit/test_data_import_service.py:generic-api-key:338
+4f9660f9df8f33de6551451538a5c81f82649f9e:tests/unit/test_data_import_service.py:generic-api-key:685
+93734163e8840b17e09c8ada7791434a9e92b869:tests/integration/test_purchasing_api.py:generic-api-key:46
+93734163e8840b17e09c8ada7791434a9e92b869:tests/integration/test_purchasing_api.py:generic-api-key:133
+2f3170289e7f411b17ee0350463de8f0c07909ef:tests/integration/test_finance_api.py:generic-api-key:51
+a9b39159e0aca243bf06580c5d7b45344979f6dd:tests/integration/test_order_api.py:generic-api-key:42
+a9b39159e0aca243bf06580c5d7b45344979f6dd:tests/integration/test_inventory_api.py:generic-api-key:56
+a9b39159e0aca243bf06580c5d7b45344979f6dd:tests/integration/test_ingestion_api.py:generic-api-key:56
+46e9b75a276ef57af6fb0975d3477fff25bcb314:tests/e2e/test_deepseek_cloud.py:generic-api-key:126

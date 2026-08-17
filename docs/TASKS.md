@@ -5,11 +5,11 @@ Priorities: P0 blocks product/data integrity/security; P1 is mandatory product b
 P2/P3 are quality and future work.
 
 Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`.
-Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`).
-Next task: `COM-P1-011`.
-Last completed task: `COM-P1-010` — Real Dashboard and Agent Tools (`DONE`).
+Current task: `COM-P1-011E` — Release Candidate CI Pipeline (`IN_PROGRESS`).
+Next task: `COM-P1-011E`.
+Last completed task: `COM-P1-011D` — Health and Readiness Verification (`DONE`).
 `COM-P1-010` passed Product, Architecture, Security, Testing, API/workflow, Compose, and browser
-Exit Review. The current full suite is `488 passed, 19 skipped, 1 warning`; the final Agent/frontend
+Exit Review. The current hardening worktree suite is `545 passed, 19 skipped, 1 warning`; the final Agent/frontend
 slice is `54 passed`; the explicit V2 browser success path is `1 passed` against a local contract
 fixture. Ruff, format, MyPy, `git diff --check`, Docker builds, Compose health, and container
 Alembic head `0016_agent_workflow` pass. The browser fixture is `VERIFIED_MOCK`, not real-platform
@@ -762,6 +762,166 @@ Verification: production configuration and Docker build checks; Compose startup/
 smoke; migration and database persistence/recovery smoke; backup/restore exercise; HTTPS proxy
 configuration validation; API/workflow/browser regression; Ruff, format, MyPy, full pytest,
 `git diff --check`, secret scan, and final Product/Architecture/Security/Testing review.
+
+Release Candidate rule: business capability is frozen for this task. Work is limited to making
+the existing V2 system deployable, recoverable, verifiable, maintainable, and operable. Every
+subtask requires implementation, automated or reproducible verification, independent review,
+documentation, and a recorded checkpoint before it may be marked `DONE`.
+
+#### COM-P1-011A — Production Docker/Compose Verification
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-010.
+Scope: production-only image and Compose topology, non-root/read-only runtime, TLS ingress,
+externalized secrets, persistent MySQL, explicit migration ordering, and exclusion of Demo/Mock
+services.
+Acceptance: production Compose renders with deployment-owned secrets, builds from the current
+tree, starts cleanly, reports healthy, serves the V2 UI/API only through HTTPS, preserves data
+across service restart, and tears down without touching any unrelated Compose project.
+Checkpoint evidence: static contract tests, `docker compose config`, isolated build/start/health,
+HTTPS and browser smoke, restart persistence, independent deployment review, and documentation.
+Verification: `22 passed, 1 warning` focused deployment tests; focused Ruff, format, strict MyPy,
+and `git diff --check` PASS. The isolated production verifier passed deployment, database-role
+isolation, restart persistence, backup/restore, HTTPS, and authenticated Dashboard browser checks
+without Demo services. Application image ID:
+`sha256:ded71001e2a0c144ad9732e41222aeba30c94a1c0a3929fb7bd4184fcb604e3c`.
+Project `commerce-prod-smoke-3d1877af` containers and volume were removed. Independent review:
+Critical 0, High 0, `GO`; checkpoint `COM-P1-011A` is `L2 VERIFIED_LOCAL`. Later migration,
+recovery, and readiness checkpoints are not implied by this status. The production lock and RC
+hardening code changed after this image was built, so Final Acceptance must rebuild and rerun A on
+the frozen source; this historical image is not a promotable artifact.
+
+#### COM-P1-011B — Production Migration Verification
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-011A.
+Scope: run the additive Alembic chain against official MySQL 8.4 with fresh install, upgrade,
+rollback/re-upgrade, schema constraints, data preservation, and a single current head.
+Acceptance: migration verification runs in an isolated database, preserves representative legacy
+and V2 data, exercises required concurrency/integrity gates, and leaves no temporary database.
+Checkpoint evidence: migration unit suite, `alembic heads`, disposable MySQL verifier output,
+independent migration review, and deployment documentation.
+Verification: migration suite `17 passed`; Alembic reports the single
+`0016_agent_workflow (head)`. `python scripts/verify_production_migrations.py` passed the official
+MySQL 8.4.11 fresh/upgrade/rollback/re-upgrade/schema/behavioral-constraint, legacy/V2 data-
+preservation, and synchronization/inventory/purchasing/alert/task/Agent/platform concurrency gates.
+The final container `commerce-rc-migration-9c7802e4` and its recorded anonymous data volume were
+removed and independently verified absent. Review: Critical 0, High 0, `GO`; checkpoint is
+`L2 VERIFIED_LOCAL`. No backup/restore checkpoint is implied.
+
+#### COM-P1-011C — Backup/Restore Exercise
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-011A, COM-P1-011B.
+Scope: production MySQL backup, protected artifact creation, destructive-restore confirmation,
+restore isolation, and post-restore business-row plus migration-head verification.
+Acceptance: a production-shaped isolated deployment creates a backup, deletes a unique marker,
+restores the backup, recovers the marker and exact Alembic head, and refuses unsafe file names,
+missing confirmation, or overwrite.
+Checkpoint evidence: script contract tests, isolated backup/delete/restore exercise, independent
+recovery review, operator runbook, and recovery checkpoint.
+Verification: strict package/source-digest validation, private staging, failed-restore readiness
+marker/retry, and an isolated no-network package verifier are implemented and independently
+reviewed. After local Docker storage recovery, the unchanged production verifier passed real MySQL
+8.4 backup, delete, restore, exact business-row/head recovery, partial-import marker, clean retry,
+strict manifest/hash/source-digest negative controls, HTTPS/browser, and exact runtime cleanup.
+The Windows CRLF manifest path is authenticated before line-ending normalization and retains exact
+two-entry/hash/name validation. Full regression is `545 passed, 19 reviewed skips, 1 warning`;
+Ruff, format, strict MyPy, single head, and diff pass. Checkpoint: `L2 VERIFIED_LOCAL`.
+
+#### COM-P1-011D — Health and Readiness Verification
+Priority: P1
+Status: DONE
+Dependencies: COM-P1-011A, COM-P1-011B.
+Scope: separate liveness from readiness; readiness validates production configuration, database
+connectivity, and exact migration head without leaking dependency details.
+Acceptance: liveness remains process-only; readiness returns healthy only for the current database
+head and sanitized `503` for invalid configuration, unavailable database, or stale schema;
+Compose dependency/health behavior is exercised.
+Checkpoint evidence: focused unit/API tests, production Compose probes, failure injection review,
+health documentation, and readiness checkpoint.
+Verification: safe reason codes/logging, restore-marker refusal, sanitized database-failure 503,
+liveness independence, and recovery-to-200 are implemented and covered by focused local tests.
+The production verifier stopped MySQL and proved `/health/live=200`, sanitized
+`/health/ready=503`, then restarted MySQL and recovered readiness to 200. The same run verified
+restore-marker refusal and post-restore recovery under the production Compose topology. Runtime
+resources were verified absent afterward. Checkpoint: `L2 VERIFIED_LOCAL`.
+
+#### COM-P1-011E — Release Candidate CI Pipeline
+Priority: P1
+Status: IN_PROGRESS
+Dependencies: COM-P1-011A through COM-P1-011D.
+Scope: automated lint, format, typing, unit/integration/workflow/migration regression, production
+contract, image build, production Compose configuration, and explicit reporting of environment-
+gated tests.
+Acceptance: CI fails closed on code-quality, test, migration, or production-contract failure;
+secrets are not required for static jobs; generated test credentials are isolated; skipped tests
+are reported and never represented as PASS.
+Checkpoint evidence: workflow syntax review, local parity commands, CI documentation, independent
+testing review, and CI checkpoint.
+Verification: workflows, production-image contract helper, single-head gate, exact skip allowlist,
+and contract tests are implemented. Full local regression is `545 passed, 19 reviewed E2E skips,
+1 warning`; the skip verifier accepted exactly 19. Full Ruff, format, strict MyPy, YAML parse,
+single head, and `git diff --check` pass. Independent review's two High verification-integrity
+findings (production-lock mismatch and permissive skips) were fixed. Current workflow Actionlint
+and 11 CI/security contract tests pass, and the clean production image contract plus the full
+Production verifier pass dynamically. GitHub-hosted workflow execution and repository required-
+check configuration remain unverified, so status stays `IN_PROGRESS`.
+
+#### COM-P1-011F — Release Candidate Security Scanning
+Priority: P1
+Status: TODO
+Dependencies: COM-P1-011E.
+Scope: source secret scanning, Python dependency audit, static application security analysis,
+container/image scanning, production configuration leakage checks, and triaged findings.
+Acceptance: no unresolved Critical/High finding; scan commands are reproducible in CI; suppressions
+are narrow, justified, and documented; known Medium/Low risks remain explicit rather than hidden.
+Checkpoint evidence: scan reports/summaries, remediation tests, independent security review,
+documented residual risk, and security checkpoint.
+Verification: the read-only security workflow and exception policy are implemented. Current local
+Bandit 1.9.4 High/High found 0; its full report contains High 0, Medium 10, and Low 54. `pip-audit`
+2.10.1 initially found 9 advisories in
+`cryptography==45.0.7`; the production constraint/lock now use `50.0.0`, re-audit found 0 known
+vulnerabilities, and 43 crypto/auth/deployment tests passed while explicitly loading 50.0.0.
+Database URLs are excluded from Settings repr and production rejects webhook secrets shorter than
+32 characters. Gitleaks 8.30.1 scanned 28 commits with no leak; the worktree scan returned only the
+same 14 reviewed test false positives after excluding the ignored local `.env`. Trivy 0.69.3 found
+9 fixable High findings in the original OS layer; the base digest/security upgrade was remediated,
+then the exact rebuilt image passed the fixable Critical/High gate with 0. The complete SARIF still
+contains 14 unfixed Debian findings (4 Critical, 10 High) awaiting Final Acceptance disposition.
+Local export/hash/remove/load proved the scanned image ID is preserved. GitHub-hosted execution,
+required checks, and disposition of the unfixed findings remain open, so no 011F checkpoint is
+claimed.
+
+#### COM-P1-011G — Production Deployment Documentation
+Priority: P1
+Status: TODO
+Dependencies: COM-P1-011A through COM-P1-011F.
+Scope: supported topology, prerequisites, secret provisioning, start/upgrade, health, TLS,
+backup/restore, rollback, monitoring, identity-provisioning limitation, and release procedure.
+Acceptance: a competent operator can deploy and recover the RC using only repository instructions;
+commands match the verified production path and do not overstate Streamlit, Worker, cloud LLM, or
+real-platform verification.
+Checkpoint evidence: command-to-implementation review, clean-environment walkthrough,
+documentation review, and runbook checkpoint.
+Verification: the runbook, immutable scanned-image promotion contract, out-of-band backup manifest
+digest, isolated restore-package verifier, first-OWNER bootstrap/audited short-lived token flow,
+secret-file permissions, bounded logs, health/TLS/rollback/monitoring instructions, and static docs
+contracts are implemented. Independent review findings are closed in code; clean-host Docker/GitHub
+execution is still pending. Final code-level architecture/security review is `GO`, Critical 0,
+High 0, but status remains `TODO` behind 011C-F because static review is not operator evidence.
+
+#### COM-P1-011H — Final Acceptance Review
+Priority: P1
+Status: TODO
+Dependencies: COM-P1-011A through COM-P1-011G.
+Scope: final Product, Architecture, Security, Testing, Deployment, Recovery, and Operations review;
+reconcile all source-of-truth documents and generate the V2 Release Candidate report.
+Acceptance: mandatory P0/P1 work is DONE; no unresolved Critical/High issue or unexplained internal
+`MISSING`/`PARTIAL` remains; evidence distinguishes local, mock, sandbox, real-platform, and
+external limitations; `docs/FINAL_REPORT.md` is replaced with an honest V2 RC report.
+Checkpoint evidence: full release gate, independent reviews, source-of-truth reconciliation,
+final report, and signed-off RC checkpoint. `COMPLETE` is claimed only if evidence supports it.
 
 ## External Verification
 

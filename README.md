@@ -77,7 +77,12 @@ APP_ENV=demo python -m scripts.seed
 - 工具日志只保存调用摘要，不保存模型私有思维过程或密钥。
 - 本项目不实现登录、验证码或访问控制绕过。
 
-详见 [系统架构](docs/ARCHITECTURE.md)、[架构决策](docs/DECISIONS.md) 和 [验收标准](docs/ACCEPTANCE.md)。
+详见 [系统架构](docs/ARCHITECTURE.md)、[生产部署](docs/DEPLOYMENT.md)、
+[RC CI](docs/CI.md)、[安全扫描](docs/SECURITY_SCANNING.md)、
+[架构决策](docs/DECISIONS.md) 和 [验收标准](docs/ACCEPTANCE.md)。
+
+生产部署、健康检查、TLS、备份/恢复和发布演练见 [生产部署指南](docs/DEPLOYMENT.md)。生产
+Compose 与上面的本地 Demo Compose 是两条独立路径，生产路径不启动任何 Mock/seed 服务。
 
 ## 许可证
 

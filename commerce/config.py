@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from dataclasses import dataclass, field
@@ -11,6 +13,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 RuntimeMode = Literal["production", "development", "test", "demo"]
+INSECURE_PLACEHOLDER_PATTERN = re.compile(
+    r"(?i)(?:replace[-_ ]?with|change[-_ ]?me|changeme|placeholder|example[-_ ]?secret)"
+)
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -47,7 +52,7 @@ class Settings(BaseSettings):
     app_env: RuntimeMode = "development"
     demo_data_enabled: bool = False
     log_level: str = "INFO"
-    database_url: str = "sqlite:///./commerce.db"
+    database_url: str = Field(default="sqlite:///./commerce.db", repr=False)
     erp_base_url: str = "http://localhost:8001"
     crawler_base_url: str = "http://localhost:8002"
     competitor_base_url: str = "http://localhost:8003"
@@ -99,6 +104,62 @@ class Settings(BaseSettings):
         return self.app_env in {"test", "demo"} or (
             self.app_env == "development" and self.demo_data_enabled
         )
+
+    def validate_production_startup(self) -> None:
+        """Fail closed before a production API process begins serving traffic."""
+        if not self.is_production:
+            return
+        if self.demo_data_enabled:
+            raise RuntimeConfigurationError("production 禁止启用 Demo 数据")
+        parsed_database = urlparse(self.database_url)
+        if (
+            parsed_database.scheme not in {"mysql", "mysql+pymysql"}
+            or not parsed_database.hostname
+            or not parsed_database.path.strip("/")
+            or not parsed_database.username
+            or not parsed_database.password
+            or INSECURE_PLACEHOLDER_PATTERN.search(parsed_database.password)
+        ):
+            raise RuntimeConfigurationError("production 必须配置显式 MySQL 数据库")
+        if len(self.auth_signing_key) < 32 or INSECURE_PLACEHOLDER_PATTERN.search(
+            self.auth_signing_key
+        ):
+            raise RuntimeConfigurationError("production 身份签名密钥未正确配置")
+        try:
+            raw_keys: Any = json.loads(self.credential_encryption_keys)
+            if not isinstance(raw_keys, dict) or not raw_keys:
+                raise ValueError
+            decoded_keys = {
+                key_id: base64.b64decode(encoded, validate=True)
+                for key_id, encoded in raw_keys.items()
+                if isinstance(key_id, str) and isinstance(encoded, str)
+            }
+        except (ValueError, TypeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise RuntimeConfigurationError("production 凭据加密密钥未正确配置") from exc
+        if (
+            len(decoded_keys) != len(raw_keys)
+            or self.credential_active_key_id not in decoded_keys
+            or any(
+                re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key_id) is None or len(key) != 32
+                for key_id, key in decoded_keys.items()
+            )
+        ):
+            raise RuntimeConfigurationError("production 凭据加密密钥未正确配置")
+        if self.llm_provider == "deepseek" and not self.deepseek_api_key:
+            raise RuntimeConfigurationError("production DeepSeek 凭据未配置")
+        if self.llm_provider == "openai" and not self.openai_api_key:
+            raise RuntimeConfigurationError("production OpenAI 凭据未配置")
+        webhook_applications: list[DouyinWebhookApplication | TikTokShopWebhookApplication] = []
+        if self.douyin_webhook_applications:
+            webhook_applications.extend(self.douyin_webhook_registry.values())
+        if self.tiktok_shop_webhook_applications:
+            webhook_applications.extend(self.tiktok_shop_webhook_registry.values())
+        if any(
+            len(application.app_secret) < 32
+            or INSECURE_PLACEHOLDER_PATTERN.search(application.app_secret)
+            for application in webhook_applications
+        ):
+            raise RuntimeConfigurationError("production Webhook 应用密钥强度不足")
 
     @property
     def douyin_webhook_registry(self) -> dict[str, DouyinWebhookApplication]:

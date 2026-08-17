@@ -321,21 +321,37 @@ React/Next.js interface remains TARGET and is not implied by these checks.
 - [ ] Restart/recovery behavior tested.
 - [x] Sync recovery tested.
 - [x] Health endpoint exists.
-- [ ] Backup procedure documented.
+- [x] Backup procedure documented.
 - [x] Failure logs are usable.
+
+Production migration status: `PASS / L2 VERIFIED_LOCAL` at `COM-P1-011B`. The single
+`0016_agent_workflow` head and complete additive chain passed fresh install, legacy upgrade,
+rollback/re-upgrade, schema/behavioral constraints, representative data preservation, and MySQL
+concurrency gates in a digest-pinned disposable MySQL 8.4.11 instance. The random test container
+and anonymous data volume were verified removed. This does not imply recovery or real-platform
+verification.
 
 ---
 
 ## R. Deployment
 
-- [ ] Production-oriented Docker build works.
-- [ ] Docker Compose deployment works.
-- [ ] Configuration documented.
+- [ ] Production-oriented Docker build works for the frozen RC tree.
+- [ ] Docker Compose deployment works for the frozen RC tree.
+- [x] Configuration documented.
 - [x] Secrets externalized.
 - [x] Database persistence configured.
-- [ ] Redis/worker configured when required.
-- [ ] Health checks documented.
-- [ ] HTTPS reverse-proxy deployment documented.
+- [x] Redis/worker is explicitly not required by the current measured workload.
+- [x] Health checks documented.
+- [x] HTTPS reverse-proxy deployment documented.
+
+Historical production image and Compose status: `PASS / L2 VERIFIED_LOCAL` at the
+`COM-P1-011A` checkpoint.
+The digest-pinned, dependency-locked image and isolated production-only topology passed build,
+startup ordering, least-privilege database-role, HTTPS, authenticated Dashboard, and cleanup gates.
+This does not yet mark migration, recovery, readiness, CI, security scanning, or documentation
+subtasks complete, and self-signed TLS is not real CA/DNS verification. The production dependency
+lock and hardening implementation changed afterward, so the frozen RC source/image must rerun this
+gate before the two current-tree checkboxes above may be selected.
 
 ---
 
@@ -343,26 +359,27 @@ React/Next.js interface remains TARGET and is not implied by these checks.
 
 Before COMPLETE:
 
-- [x] Ruff PASS.
-- [x] Format PASS.
-- [x] MyPy PASS.
-- [x] Full pytest PASS.
-- [x] Migration validation PASS.
-- [x] API integration tests PASS.
-- [x] Workflow tests PASS.
-- [x] Platform contract tests PASS.
-- [x] Docker build PASS.
-- [x] Docker Compose smoke PASS.
-- [x] Critical UI/browser flows PASS.
-- [x] git diff --check PASS.
-- [x] Security review has no unresolved Critical issue.
-- [x] Security review has no unresolved High issue.
+- [ ] Frozen-commit Ruff PASS.
+- [ ] Frozen-commit format PASS.
+- [ ] Frozen-commit MyPy PASS.
+- [ ] Frozen-commit full pytest PASS.
+- [ ] Frozen-commit migration validation PASS.
+- [ ] Frozen-commit API integration tests PASS.
+- [ ] Frozen-commit workflow tests PASS.
+- [ ] Frozen-commit platform contract tests PASS.
+- [ ] Exact scanned-image Docker build PASS.
+- [ ] Frozen-commit Docker Compose smoke PASS.
+- [ ] Frozen-commit critical UI/browser flows PASS.
+- [ ] Frozen-commit git diff --check PASS.
+- [ ] Final security review has no unresolved Critical issue.
+- [ ] Final security review has no unresolved High issue.
 
-Latest evidence: `488 passed, 19 skipped, 1 warning`; Ruff, format, MyPy, single Alembic head,
-Docker build, Compose health, container migration, and diff checks pass. The explicit V2 browser
-success path is `1 passed` against a local contract fixture and is `VERIFIED_MOCK`. The 19
-environment-gated Compose/legacy-browser/DeepSeek/default V2-browser skips are not counted as PASS;
-the separately executed build/Compose/V2 browser commands provide the checked evidence above.
+Interim local evidence on the unfrozen hardening worktree is `545 passed, 19 skipped, 1 warning`;
+the exact skip verifier accepted all 19 reviewed environment-gated E2E skips. This is useful local
+regression evidence, not the Final Acceptance gate. Current-tree Production verifier, local
+Gitleaks/Bandit/pip-audit/Trivy, and scanned-image export/load have executed. GitHub-hosted workflows,
+required-check configuration, disposition of 14 unfixed image findings, clean-host walkthrough,
+and the final independent review remain open.
 
 ---
 
@@ -449,7 +466,8 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-010 completion the current local suite is `488 passed, 19 skipped, 1 warning` under
+COM-P1-010 completion the product suite was `488 passed, 19 skipped, 1 warning`; the current RC
+hardening worktree suite is `545 passed, 19 skipped, 1 warning` under
 `python -m pytest -q`; skipped scenarios are environment-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
 denial are locally verified. The production V2 Agent now resolves tenant scope on the server,

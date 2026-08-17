@@ -12,7 +12,7 @@ dependencies = [
   "alembic>=1.14,<2",
   "apscheduler>=3.10,<4",
   "beautifulsoup4>=4.12,<5",
-  "cryptography>=42,<46",
+  "cryptography>=50,<51",
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "langchain-core>=1.2,<2",
@@ -31,6 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "defusedxml>=0.7,<1",
   "mypy>=1.13,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",

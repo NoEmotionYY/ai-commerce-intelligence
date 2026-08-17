@@ -670,3 +670,91 @@ review evidence. Alembic head is `0016_agent_workflow`; task-effect measurement,
 persistence, the tenant-scoped dashboard/Agent runtime, and internal V2 Streamlit UI are CURRENT.
 Cloud-LLM, React/Next.js, scheduler/Worker, production HTTPS/backup/recovery, and real-platform
 verification remain unclaimed. Phase 10 starts with `COM-P1-011`; no `BLOCKED_EXTERNAL` is recorded.
+
+## ADR-028 — V2 Release Candidate Feature Freeze and Ordered Hardening Gates
+
+Date: 2026-08-17
+Status: ACCEPTED
+
+Context: The V2 commerce domains and locally/mock-verified product loop are implemented through
+`COM-P1-010`, while production deployment, recovery, continuous verification, and release evidence
+remain incomplete. Continuing business expansion would increase release risk and blur the
+distinction between implemented capability and operable production evidence.
+
+Decision: Freeze new business capability for the V2 Release Candidate. Execute `COM-P1-011` as
+eight ordered hardening gates: Production Docker/Compose, MySQL migration verification,
+backup/restore, health/readiness, CI, security scanning, deployment documentation, and final
+acceptance. Every gate requires implementation, verification, independent review, documentation,
+and a recorded checkpoint. A gate may not claim evidence belonging to a later gate. React/Next.js,
+Worker/Redis, optional detectors, new connectors, and other feature work remain TARGET or future
+scope unless a demonstrated release-blocking operational requirement makes infrastructure
+necessary.
+
+Reasoning: A feature freeze makes the remaining risk measurable and keeps authoritative release
+claims tied to reproducible evidence. Ordered gates prevent a green unit suite or a rendered
+Compose file from being mistaken for recovery or production readiness.
+
+Consequences: `COM-P1-011A` is the only active implementation subtask at the RC0 checkpoint.
+`COM-P1-011B` through `COM-P1-011H` remain gated. V2 remains `NOT_COMPLETE`; real-platform and
+cloud-LLM verification levels do not change because of local release hardening.
+
+## ADR-029 — Authenticated Recovery Packages, Single-Build Promotion, and First-Owner Bootstrap
+
+Date: 2026-08-17
+Status: ACCEPTED / IMPLEMENTED_UNVERIFIED
+
+Context: A colocated dump checksum detects corruption but does not authenticate provenance because
+an actor with backup-directory write access can replace all files and recompute it. Rebuilding an
+application image after scanning similarly breaks artifact identity. A fresh production database
+also needs an auditable first identity before the documented authenticated browser gate can run;
+the test/demo fixture is intentionally forbidden in production.
+
+Decision: Keep the two-file checksum manifest for integrity, but require its SHA-256 from an
+immutable out-of-band deployment record in both isolated verification and destructive restore.
+Copy the selected three-file package into container-private staging before authenticating and use
+only that snapshot for validation/import. Build the application image once in security CI, require
+source-security and blocking Trivy success before export, label the source revision, and promote
+without rebuilding. Deployment is allowed only by a captured registry manifest digest whose
+`config.digest` equals the scanned Docker image ID.
+
+Provide a production-only OWNER bootstrap rather than weakening the fixture boundary. Readiness is
+checked in a separate transaction; the identity transaction holds a MySQL named lock on one
+dedicated physical Connection through commit and verified release. An empty identity store may
+atomically create exactly one organization/user/OWNER; later calls only issue a short-lived token
+to an exact already-active OWNER. Record the deployment operator as actor type and the OWNER as
+subject without logging the token.
+
+Reasoning: Independent provenance, immutable artifact identity, private recovery staging, and a
+serialized least-powerful identity bootstrap make the documented production gates executable
+without adding a public login/business module or trusting mutable tags/directories.
+
+Consequences: The implementation and static contracts exist, but the decision remains
+`IMPLEMENTED_UNVERIFIED` until current-tree Docker/MySQL recovery and concurrency, GitHub security
+workflow, Trivy, artifact download, registry binding, and clean-operator walkthrough all pass.
+
+## ADR-030 — Fail-Closed OS Security Upgrades Before Single-Build Image Scanning
+
+Date: 2026-08-18
+Status: ACCEPTED / VERIFIED_LOCAL
+
+Context: Trivy 0.69.3 found nine fixable High findings in the digest-pinned Python slim image. The
+current official Python tag still contained the affected Debian packages, while patched Trixie
+packages were already available from the security repository. Ignoring the findings or retaining
+the old digest would violate the RC blocking policy.
+
+Decision: Pin the reviewed current Python 3.12 slim digest and apply available Debian security
+upgrades before creating the unprivileged application user. Keep the release identity at the final
+single-built image: CI must scan that exact image, export it without rebuilding, and deployment
+must bind to its verified digest. Any later base/package resolution change requires a new scan and
+artifact.
+
+Reasoning: The base digest preserves the starting root filesystem identity, while the explicit
+security upgrade consumes published fixes that had not yet been rolled into the official base
+image. Exact scanned-artifact promotion prevents a later rebuild from inheriting an unreviewed apt
+state.
+
+Consequences: The rebuilt image passed the fixable Critical/High gate with zero findings and the
+full Production verifier passed. Build output depends on the Debian repository state, so only the
+exported scanned image is a release candidate; a rebuild is not equivalent. The complete SARIF
+still contains 14 unfixed Debian findings and no exception or RC acceptance is implied by this
+decision.

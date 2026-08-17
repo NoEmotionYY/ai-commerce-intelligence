@@ -52,6 +52,31 @@ measurement, production V2 Agent tool runtime, and an internal/admin V2 Streamli
 Production supplier/platform execution, optional price/order/finance detectors, React/Next.js,
 background Worker/scheduler, and a separate AuditLog model remain TARGET.
 
+### 2.1 CURRENT: V2 RC Production Topology And Evidence Boundary
+
+`docker-compose.production.yml` defines the supported production-shaped path: digest-pinned Nginx
+TLS ingress to the internal/admin V2 Streamlit client and FastAPI API, backed by persistent MySQL
+8.4. Runtime, migration, backup, and restore database identities are separate; one-shot role
+provisioning and Alembic migration must complete before the API becomes ready. Application
+processes run non-root/read-only with no-new-privileges, service ports remain internal, local
+container logs are bounded, and only HTTPS ingress is published.
+
+The application image uses a digest-pinned Python 3.12 base and exact production dependency lock.
+Security CI is designed to build once, scan that image, label the frozen source revision, and export
+the same archive only after source-security and blocking image gates pass. Promotion must bind the
+loaded Docker image ID to the registry manifest `config.digest` and deploy by immutable registry
+digest. This artifact path is `IMPLEMENTED_UNVERIFIED` until the GitHub workflow and registry
+promotion exercise run; the earlier 011A Compose PASS predates the current lock and is historical
+L2 evidence only.
+
+Alembic fresh/upgrade/rollback/re-upgrade and integrity behavior is `L2 VERIFIED_LOCAL` on a
+digest-pinned disposable MySQL 8.4.11 container. Backup/restore now uses strict metadata/checksums,
+an out-of-band manifest digest, private staging before import, a failed-restore readiness marker,
+and a separate no-network isolated package verifier. Production liveness/readiness failure
+injection and first-OWNER concurrent bootstrap are implemented in the release verifier. Those
+recovery/operability paths remain `IMPLEMENTED_UNVERIFIED` because the current Docker engine cannot
+run the post-fix exercise.
+
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
 `production` must use explicitly configured real data sources. Missing configuration returns

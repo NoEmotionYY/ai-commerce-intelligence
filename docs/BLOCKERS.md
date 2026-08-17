@@ -25,7 +25,11 @@ detectors and future product-frontend/deployment work are internal scope, not `B
 
 `COM-P1-007` through `COM-P1-009` completed without an external blocker. Real Douyin/TikTok Shop
 credentials, developer approval, seller authorization, or platform access have not been confirmed
-unavailable and are not recorded as active blockers. `COM-P1-011` is the next internal task.
+unavailable and are not recorded as active blockers. `COM-P1-011` is the active internal task.
+
+The current Docker Desktop/containerd layer I/O failure and low system-drive capacity are local
+infrastructure conditions, not `BLOCKED_EXTERNAL`. They prevent current-tree C/D/image dynamic
+evidence but do not convert unfinished internal release gates into an external product blocker.
 
 As of the final `COM-P1-010` Exit Review, active `BLOCKED_EXTERNAL` count is `0`. The final local
 and mock evidence does not substitute for real-platform verification; absence of a confirmed

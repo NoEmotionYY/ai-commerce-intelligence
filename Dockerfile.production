@@ -1,0 +1,32 @@
+FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    HOME=/home/commerce
+
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system commerce \
+    && useradd --system --gid commerce --create-home commerce
+
+WORKDIR /app
+COPY pyproject.toml ./
+COPY requirements.production.lock ./
+COPY commerce ./commerce
+COPY frontend ./frontend
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY scripts ./scripts
+COPY .streamlit ./.streamlit
+RUN pip install --no-cache-dir -r requirements.production.lock \
+    && pip install --no-cache-dir setuptools==80.9.0 wheel==0.45.1 \
+    && pip install --no-cache-dir --no-deps --no-build-isolation . \
+    && pip uninstall --yes setuptools wheel \
+    && chown -R commerce:commerce /app /home/commerce
+
+USER commerce
+
+CMD ["uvicorn", "commerce.agent_api:app", "--host", "0.0.0.0", "--port", "8000"]

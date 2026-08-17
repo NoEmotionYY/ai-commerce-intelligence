@@ -1,5 +1,10 @@
 # Production Release Checklist
 
+This checklist is the final frozen-commit/image gate for `COM-P1-011H`, not a summary of historical
+local checkpoints. It intentionally remains unchecked while 011C-G dynamic evidence is open. A
+local unit/contract PASS does not authorize selecting the corresponding Docker, scanner, recovery,
+browser, or final security item.
+
 ## Product
 
 - [ ] Core merchant workflow works.

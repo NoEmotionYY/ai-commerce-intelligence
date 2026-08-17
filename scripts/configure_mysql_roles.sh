@@ -1,0 +1,91 @@
+#!/bin/sh
+set -eu
+
+: "${MYSQL_HOST:?MYSQL_HOST is required}"
+: "${MYSQL_DATABASE:?MYSQL_DATABASE is required}"
+: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
+: "${MYSQL_RUNTIME_USER:?MYSQL_RUNTIME_USER is required}"
+: "${MYSQL_RUNTIME_PASSWORD:?MYSQL_RUNTIME_PASSWORD is required}"
+: "${MYSQL_MIGRATION_USER:?MYSQL_MIGRATION_USER is required}"
+: "${MYSQL_MIGRATION_PASSWORD:?MYSQL_MIGRATION_PASSWORD is required}"
+: "${MYSQL_BACKUP_USER:?MYSQL_BACKUP_USER is required}"
+: "${MYSQL_BACKUP_PASSWORD:?MYSQL_BACKUP_PASSWORD is required}"
+: "${MYSQL_RESTORE_USER:?MYSQL_RESTORE_USER is required}"
+: "${MYSQL_RESTORE_PASSWORD:?MYSQL_RESTORE_PASSWORD is required}"
+
+validate_identifier() {
+    value="$1"
+    label="$2"
+    case "$value" in
+        ""|*[!A-Za-z0-9_]*) echo "$label is invalid" >&2; exit 2 ;;
+    esac
+}
+
+validate_password() {
+    value="$1"
+    label="$2"
+    if [ "${#value}" -lt 32 ]; then
+        echo "$label must contain at least 32 characters" >&2
+        exit 2
+    fi
+    case "$value" in
+        *[!A-Za-z0-9._~-]*) echo "$label contains unsupported characters" >&2; exit 2 ;;
+    esac
+}
+
+validate_identifier "$MYSQL_DATABASE" MYSQL_DATABASE
+validate_identifier "$MYSQL_RUNTIME_USER" MYSQL_RUNTIME_USER
+validate_identifier "$MYSQL_MIGRATION_USER" MYSQL_MIGRATION_USER
+validate_identifier "$MYSQL_BACKUP_USER" MYSQL_BACKUP_USER
+validate_identifier "$MYSQL_RESTORE_USER" MYSQL_RESTORE_USER
+validate_password "$MYSQL_RUNTIME_PASSWORD" MYSQL_RUNTIME_PASSWORD
+validate_password "$MYSQL_MIGRATION_PASSWORD" MYSQL_MIGRATION_PASSWORD
+validate_password "$MYSQL_BACKUP_PASSWORD" MYSQL_BACKUP_PASSWORD
+validate_password "$MYSQL_RESTORE_PASSWORD" MYSQL_RESTORE_PASSWORD
+
+if [ "$MYSQL_RUNTIME_USER" = "$MYSQL_MIGRATION_USER" ] || \
+   [ "$MYSQL_RUNTIME_USER" = "$MYSQL_BACKUP_USER" ] || \
+   [ "$MYSQL_RUNTIME_USER" = "$MYSQL_RESTORE_USER" ] || \
+   [ "$MYSQL_MIGRATION_USER" = "$MYSQL_BACKUP_USER" ] || \
+   [ "$MYSQL_MIGRATION_USER" = "$MYSQL_RESTORE_USER" ] || \
+   [ "$MYSQL_BACKUP_USER" = "$MYSQL_RESTORE_USER" ]; then
+    echo "MySQL service users must be distinct" >&2
+    exit 2
+fi
+
+export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+attempt=0
+until mysqladmin ping --host="$MYSQL_HOST" --user=root --silent >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+        echo "MySQL root connection did not become ready" >&2
+        exit 3
+    fi
+    sleep 2
+done
+
+mysql --host="$MYSQL_HOST" --user=root <<SQL
+CREATE USER IF NOT EXISTS '$MYSQL_RUNTIME_USER'@'%' IDENTIFIED BY '$MYSQL_RUNTIME_PASSWORD';
+ALTER USER '$MYSQL_RUNTIME_USER'@'%' IDENTIFIED BY '$MYSQL_RUNTIME_PASSWORD';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$MYSQL_RUNTIME_USER'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_RUNTIME_USER'@'%';
+
+CREATE USER IF NOT EXISTS '$MYSQL_MIGRATION_USER'@'%' IDENTIFIED BY '$MYSQL_MIGRATION_PASSWORD';
+ALTER USER '$MYSQL_MIGRATION_USER'@'%' IDENTIFIED BY '$MYSQL_MIGRATION_PASSWORD';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$MYSQL_MIGRATION_USER'@'%';
+GRANT ALL PRIVILEGES ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_MIGRATION_USER'@'%';
+
+CREATE USER IF NOT EXISTS '$MYSQL_BACKUP_USER'@'%' IDENTIFIED BY '$MYSQL_BACKUP_PASSWORD';
+ALTER USER '$MYSQL_BACKUP_USER'@'%' IDENTIFIED BY '$MYSQL_BACKUP_PASSWORD';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$MYSQL_BACKUP_USER'@'%';
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_BACKUP_USER'@'%';
+
+CREATE USER IF NOT EXISTS '$MYSQL_RESTORE_USER'@'%' IDENTIFIED BY '$MYSQL_RESTORE_PASSWORD';
+ALTER USER '$MYSQL_RESTORE_USER'@'%' IDENTIFIED BY '$MYSQL_RESTORE_PASSWORD';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$MYSQL_RESTORE_USER'@'%';
+GRANT ALL PRIVILEGES ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_RESTORE_USER'@'%';
+GRANT SET_ANY_DEFINER ON *.* TO '$MYSQL_RESTORE_USER'@'%';
+FLUSH PRIVILEGES;
+SQL
+
+echo "MySQL release roles configured"

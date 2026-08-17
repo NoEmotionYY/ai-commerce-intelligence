@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 import threading
@@ -36,6 +37,7 @@ from commerce.credentials import (
     CredentialUnavailableError,
 )
 from commerce.database import get_session
+from commerce.deployment_health import DeploymentReadinessError, assert_deployment_ready
 from commerce.error_codes import safe_error_code
 from commerce.llm_agent import run_model_tool_loop
 from commerce.llm_provider import LLMConfigurationError, LLMServiceError, LLMTimeoutError
@@ -213,14 +215,26 @@ from commerce.v2_agent import V2AgentRequest, V2AgentResponse, run_v2_agent_tool
 from commerce.v2_agent_tools import V2AgentTools
 from commerce.workflow import create_purchase_draft, decide_approval, execute_approved_purchase
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    settings.validate_production_startup()
     yield
 
 
-app = FastAPI(title="Commerce Agent API", version="0.1.0", lifespan=lifespan)
+_startup_settings = get_settings()
+app = FastAPI(
+    title="Commerce Agent API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url=None if _startup_settings.is_production else "/docs",
+    redoc_url=None if _startup_settings.is_production else "/redoc",
+    openapi_url=None if _startup_settings.is_production else "/openapi.json",
+)
 
 MAX_SYNC_REQUEST_BYTES = 1_100_000
 MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 256_000
@@ -1136,6 +1150,21 @@ def verify_operator(x_operator_key: str = Header(default="")) -> AuthenticationS
 def health(session: Session = Depends(get_session)) -> dict[str, str]:
     session.execute(text("SELECT 1"))
     return {"status": "ok", "service": "agent-api"}
+
+
+@app.get("/health/live")
+def liveness() -> dict[str, str]:
+    return {"status": "ok", "service": "agent-api"}
+
+
+@app.get("/health/ready")
+def readiness(session: Session = Depends(get_session)) -> dict[str, object]:
+    try:
+        heads = assert_deployment_ready(session, get_settings())
+    except DeploymentReadinessError as exc:
+        logger.warning("deployment readiness failed reason=%s", exc.reason_code)
+        raise HTTPException(503, "服务尚未就绪") from exc
+    return {"status": "ok", "service": "agent-api", "schema_heads": list(heads)}
 
 
 @app.get("/api/v2/shops")

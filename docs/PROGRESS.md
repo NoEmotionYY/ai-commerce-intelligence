@@ -4,11 +4,399 @@
 
 Phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`
 Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`)
-Next task: `COM-P1-011`
+Next task: `COM-P1-011E`
 Last completed top-level task: `COM-P1-010` — Real Dashboard and Agent Tools
-Current verification slice: `COM-P1-010` final Exit Review (`DONE`)
-Last verified checkpoint: `COM-P1-010` code/UI and documentation checkpoints recorded with this evidence
+Current verification slice: `COM-P1-011E` Release Candidate CI Pipeline (`IN_PROGRESS`)
+Last verified checkpoint: `COM-P1-011D` Health and Readiness (`L2 VERIFIED_LOCAL`)
 V2 completion: `NOT_COMPLETE`
+
+## 2026-08-18 — COM-P1-011E/F Local CI and Security Execution
+
+Status:
+
+- `COM-P1-011E`: `IN_PROGRESS`; local parity and Docker gates pass, GitHub-hosted execution is
+  pending.
+- `COM-P1-011F`: `TODO / LOCAL_SCANS_EXECUTED`; the fixable image gate passes, but unfixed findings
+  require Final Acceptance disposition and GitHub execution remains pending.
+- RC remains `NOT_READY`.
+
+Evidence:
+
+| Check | Exact result | Boundary |
+|---|---|---|
+| Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
+| CI/security contracts | `11 passed` | local contract evidence |
+| full regression + skip guard | `545 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
+| Ruff / format / strict MyPy / release head / diff | PASS; 175 files, 141 sources, `0016_agent_workflow` | L2 local |
+| Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
+| Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
+| Bandit 1.9.4 blocking/full | blocking 0; High 0, Medium 10, Low 54 | local SAST |
+| pip-audit 2.10.1 exact production lock | 93 dependencies, 0 known vulnerabilities | local dependency scan |
+| Trivy 0.69.3 original production image | fixable High 9, Critical 0 | real blocking finding; failed as intended |
+| Trivy remediated image `sha256:fb4be3de...` | fixable Critical/High 0; complete SARIF has 14 unfixed findings | local image scan; not a GitHub artifact |
+| scanned-image export/load | gzip archive hash recorded; loaded image ID exactly matched `sha256:fb4be3de...` | local artifact-identity rehearsal |
+| post-remediation Production verifier | role isolation, bootstrap concurrency, restart/readiness, backup/restore negative controls, HTTPS/browser PASS | current-tree L2 |
+
+The Trivy blocking failure was not waived. `Dockerfile.production` now uses the current reviewed
+Python base digest and applies Debian security upgrades before creating the application user; the
+same rebuilt image then passed the fixable Critical/High gate. The full SARIF remains authoritative:
+it records 14 Debian Trixie findings without an available fixed package (4 Critical, 10 High).
+Debian classifies the reviewed gzip, ACL, ncurses, and several Perl issues as minor/no-DSA or
+postponed, while the application runtime is non-root/read-only and does not invoke these tools on
+merchant input. This is reachability context, not an exception or PASS. No residual-risk acceptance
+has been recorded.
+
+Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
+production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image
+artifact, configure required checks, and explicitly resolve or accept each unfixed finding under
+the documented time-bounded exception policy.
+
+## 2026-08-18 — COM-P1-011C/D Production Recovery and Readiness Checkpoints
+
+Status:
+
+- `COM-P1-011C`: `DONE / L2 VERIFIED_LOCAL`.
+- `COM-P1-011D`: `DONE / L2 VERIFIED_LOCAL`.
+- Parent `COM-P1-011` remains `IN_PROGRESS`; current task advances to 011E.
+
+Fixes validated before the checkpoint:
+
+- `bootstrap_production_owner.py` now derives the project root from its own absolute path, inserts
+  it at `sys.path[0]` before application imports, fails closed unless `commerce.__file__` resolves
+  to that project, and requires the imported Alembic root to be identical. The production image
+  also declares `WORKDIR /app` and `PYTHONPATH=/app` as defense in depth.
+- A hostile same-name site-packages package plus arbitrary cwd subprocess test resolves the project
+  package/head. The clean production image contract runs from `/tmp` while forcing site-packages in
+  `PYTHONPATH` and proves `/app/commerce`, `/app`, and `0016_agent_workflow`.
+- Restore authenticates the original out-of-band manifest digest before normalizing only standard
+  CRLF line endings in private staging; strict two-line/hash/exact-basename validation and checksum
+  verification remain unchanged.
+
+Dynamic evidence:
+
+| Check | Exact result | Level |
+|---|---|---|
+| exact cleanup of `commerce-prod-smoke-9e67c041` | containers 0, volumes 0, networks 0, images 0 | L2 environment evidence |
+| production image contract | Compose config, hostile import/root, non-root/read-only runtime PASS | L2 |
+| unchanged full Production verifier | role isolation, restart persistence, backup/restore, negative controls, HTTPS/browser all PASS | L2 |
+| verifier cleanup | production-smoke containers 0, volumes 0, networks 0 | L2 |
+| full pytest + exact skip gate | `545 passed, 19 skipped, 1 warning`; 19 reviewed skips | L2 local regression |
+| Ruff / format / strict MyPy / single head / diff | PASS; 175 files, 141 typed sources, `0016_agent_workflow` | L2 |
+
+Review:
+
+- No migration/readiness check was disabled and no verifier assertion/step was removed. The first
+  rerun exposed the real import-root defect; the next exposed that Windows CRLF prevented the
+  intended partial-restore scenario from reaching destructive SQL. Both root causes were fixed in
+  production hardening code, and the original verifier then passed end to end.
+- 011C proves backup/delete/restore, exact row/head recovery, source authentication, partial failure
+  marker, clean retry, and negative controls. 011D proves process-only liveness, sanitized database
+  outage readiness failure, restart recovery, and restore-marker behavior.
+
+## 2026-08-17 — COM-P1-011G Operability Hardening Implemented, Final Dynamic Gates Pending
+
+Status:
+
+- `COM-P1-011G`: `TODO / IMPLEMENTED_UNVERIFIED` behind open 011C-F checkpoints.
+- This section records implementation/review progress only; it is not a documentation checkpoint
+  or an RC Ready claim.
+
+Implemented:
+
+- Security CI builds once, scans the same image, labels it with the frozen revision, and exports it
+  only after source-security and blocking Trivy gates succeed. The promotion runbook loads that
+  archive, checks its image ID/revision, pushes without rebuilding, captures an immutable registry
+  manifest digest, and requires the registry config digest to equal the scanned Docker image ID.
+- Backup now emits a checksum-manifest digest for an audited out-of-band deployment record.
+  Production restore and the isolated verifier require that digest; restore snapshots exactly the
+  three selected files into private staging before authentication/import, closing host-replacement
+  TOCTOU. The isolated verifier uses a digest-pinned no-network MySQL container, mounts only the
+  selected package files, validates a tenant marker/head/charset/collation, removes only its exact
+  container/anonymous volume, and makes cleanup uncertainty a visible failure.
+- Added an audited production OWNER bootstrap. It validates readiness in a separate Session, then
+  holds a MySQL named lock on one dedicated physical Connection across identity/audit commit and
+  verified lock release. It atomically creates only the empty-store first OWNER or reissues a
+  bounded token to an exact active OWNER; the production verifier now contains two-identity
+  concurrent fail-closed and `IS_FREE_LOCK` checks.
+- Deployment instructions now cover Python/POSIX prerequisites, secret-file ACLs, bounded Docker
+  logs, isolated production-backup exercises, authenticated smoke, token lifecycle limitations,
+  `--no-build` restart/rollback, Docker staging capacity, and exact artifact evidence.
+
+Local evidence:
+
+| Check | Result | Meaning |
+|---|---|---|
+| full pytest | `545 passed, 19 skipped, 1 warning` | local regression; all 19 skips accepted by exact module+reason verifier |
+| focused owner/backup/docs/CI/security/deployment contracts | `55 passed, 1 warning` | local contract evidence |
+| strict MyPy for new operational scripts | PASS | local type evidence |
+| workflow YAML parse | PASS | syntax parse only; not GitHub-hosted execution |
+| production Compose maintenance config | PASS with explicit placeholder secrets/image digest | static rendered-contract evidence |
+
+Review and remaining evidence:
+
+- Independent reviewers found and drove fixes for identity bootstrap snapshot/connection-lock races,
+  backup cleanup visibility/source authentication/TOCTOU, runbook clean-host prerequisites, scanned
+  artifact cross-job gating, and registry digest-to-image binding. Final code-level architecture
+  and security re-reviews report `GO`, Critical `0`, High `0`.
+- Docker Desktop storage was repaired; current-lock image/import, concurrent bootstrap,
+  private-staging restore, C/D recovery, browser path, and exact cleanup now have L2 PASS evidence.
+- GitHub-hosted quality/security jobs, Gitleaks Action, Trivy, scanned-image artifact, immutable
+  registry promotion, branch ruleset, and clean-operator walkthrough remain unexecuted.
+- Superseded by the newer 2026-08-18 section: post-change Actionlint, local scanners, current-image
+  Trivy, artifact export/load, and the full Production verifier have now executed. GitHub-hosted and
+  clean-operator evidence remain open.
+
+## 2026-08-17 — COM-P1-011C Recovery Hardening, Historical Dynamic Failure
+
+Status:
+
+- Task: `COM-P1-011C`
+- Result: `HISTORICAL FAILURE / SUPERSEDED BY 2026-08-18 PASS`
+- Highest new evidence: local contract/API tests and independent code review; the post-fix
+  production Compose recovery exercise has not passed.
+
+Implemented and reviewed:
+
+- Backup packages bind the dump to exact database/head/charset/collation metadata and a strict
+  two-entry checksum manifest. Backup refuses a restore-in-progress database and requires the
+  head, charset, and collation snapshots to be unchanged before and after the dump.
+- Restore validates path, confirmation, package shape, both hashes, database, exact head, charset,
+  and collation before destructive SQL. It rebuilds a clean target database, preserves a
+  `deployment_restore_state` marker after any import/head failure, and clears it only after exact
+  head verification.
+- Readiness rejects the restore marker. The verifier separately covers truncated manifests,
+  structurally valid bad hashes, unsafe paths/confirmation/metadata, partial import, valid retry,
+  business-row/head recovery, and partial-table cleanup.
+- Earlier recovery review reached code-level `GO`; subsequent operability/security review found
+  additional source-authentication, TOCTOU, and cleanup issues. They are fixed, and the final static
+  re-review reports Critical `0`, High `0`; dynamic MySQL evidence is still mandatory.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| focused deployment/health tests | `24 passed, 1 warning` | local SQLite/static contracts | L2 for contracts only |
+| Ruff / format / strict MyPy / `git diff --check` | PASS | local | L2 |
+| `python scripts/verify_production_deployment.py` | INFRASTRUCTURE FAILURE while exporting image: containerd layer write `input/output error` | Docker Desktop | no PASS |
+
+Dynamic verification blocker:
+
+- The Docker failure occurred before the new restore path ran. Docker Desktop then reported it
+  was unable to start; C: had about 584 MiB free while D: had about 13.9 GiB free.
+- After C: temporarily recovered to about 1.83 GiB, Docker Desktop restarted and a current-tree
+  retry successfully completed the production dependency install and image layer export. It then
+  failed before the first MySQL container was created: containerd/overlay/network metadata writes
+  returned `input/output error`. Cleanup hit the same storage error. The exact project network is
+  now absent, but exact volume `commerce-prod-smoke-9e67c041_mysql-data` and application image
+  cleanup could not be verified/finished. Docker Desktop was stopped after C: reached effectively
+  0 GiB free; D: remained about 14.0 GiB free.
+- Initial normal restart/start attempts did not restore the engine. No Docker factory reset, broad prune,
+  or user/system-file deletion was attempted. The older project `commerce-prod-smoke-2834197b`
+  had no container/volume; its three exact unused generated image tags were removed after verifying
+  that no container referenced them. The new project `commerce-prod-smoke-9e67c041` still requires
+  exact cleanup verification after host storage is repaired.
+- This historical failure was not counted as PASS. It is superseded by the 2026-08-18 current-tree
+  Production verifier and exact-cleanup PASS recorded above.
+
+Health/readiness work prepared behind 011C:
+
+- Readiness now emits only bounded safe reason codes in logs and a generic public 503 body.
+- Local tests prove process-only liveness, database-failure sanitization, restore-marker refusal,
+  stale-head refusal, and return to 200 after recovery.
+- The production verifier now stops MySQL, requires live=200 and ready=503 with the exact sanitized
+  body, starts MySQL, and requires readiness recovery. This remains unverified in Compose until the
+  engine is restored.
+
+## 2026-08-17 — COM-P1-011E/F CI And Security Gates Implemented, Dynamic Gates Pending
+
+Status:
+
+- `COM-P1-011E`: `TODO / IMPLEMENTED_UNVERIFIED` behind open C/D checkpoints.
+- `COM-P1-011F`: `TODO / IMPLEMENTED_PARTIAL` behind E and unavailable Docker scan execution.
+- No later checkpoint is promoted by this implementation evidence.
+
+Implemented:
+
+- Added read-only, SHA-pinned GitHub workflows for Python 3.11/3.12 quality, official MySQL 8.4
+  migration integrity, production Compose/image contract, main/tag production smoke, Gitleaks,
+  Bandit, `pip-audit`, and two-pass Trivy scanning.
+- Python 3.12 full regression is constrained by the production lock; 3.11 separately verifies the
+  declared compatibility floor. An exact module+reason JUnit allowlist now makes every unreviewed
+  skip fail closed.
+- Added bounded timeouts, non-persisted checkout credentials, read-only permissions, isolated test
+  database/image tags, baseline coverage artifacts, and explicit no-PASS treatment for skips or
+  infrastructure failures.
+- Added `docs/CI.md` and `docs/SECURITY_SCANNING.md`; there is no reviewed vulnerability exception.
+  `.gitleaksignore` contains 14 exact historical fingerprints classified as test false positives,
+  not a broad path/rule suppression.
+
+Security findings and fixes:
+
+- Removed the Settings repr exposure path for password-bearing `database_url`.
+- Production startup now rejects configured Douyin/TikTok webhook secrets shorter than 32
+  characters or recognized placeholders.
+- Local `pip-audit` found 9 advisories against locked `cryptography==45.0.7`. The supported range
+  and lock were upgraded to `cryptography==50.0.0`; re-audit reported no known vulnerabilities.
+- An isolated `PYTHONPATH` load proved version 50.0.0 was active while 43 authentication,
+  credential encryption/service, readiness, and deployment-contract tests passed.
+
+Evidence:
+
+| Check | Result | Classification |
+|---|---|---|
+| full default pytest | `543 passed, 19 skipped, 1 warning`; all 19 exact-reviewed E2E skips | local L2 regression |
+| full Ruff / format / strict MyPy / single Alembic head / diff | PASS; 169 formatted files, 136 typed source files, head `0016_agent_workflow` | local L2 |
+| Bandit 1.9.4 `-lll -iii` | 0 findings | local scanner PASS |
+| pip-audit 2.10.1 after remediation | 0 known vulnerabilities | local scanner PASS |
+| workflow YAML parse and focused CI/security contracts | PASS | implementation/contract evidence |
+| Gitleaks Action / Trivy image scan / GitHub-hosted jobs | not executed | no PASS |
+
+Independent CI review initially reported Critical 0 and two High evidence-integrity gaps. Both were
+fixed (production-lock parity and fail-closed skip policy), and the focused CI re-review confirmed
+those fixes. Later artifact-promotion review findings are tracked in the 011G section. Production
+lock hashes remain a supply-chain hardening opportunity and are not represented as implemented.
+
+## 2026-08-17 — COM-P1-011B Production Migration Checkpoint
+
+Status:
+
+- Task: `COM-P1-011B`
+- Result: `DONE`
+- Verification level: `L2 VERIFIED_LOCAL`
+- Environment: local migration tests plus a digest-pinned official MySQL 8.4.11 disposable
+  container on a random loopback port and an empty random `test` database.
+
+Scope boundary:
+
+- Verified the existing additive Alembic chain and database behavior; added no migration, table,
+  business entity, connector, or application feature.
+- This checkpoint does not claim backup/restore, readiness failure injection, sandbox, or real-
+  platform evidence.
+
+Implemented:
+
+- Added `scripts/verify_production_migrations.py` as a repeatable local/CI wrapper around the
+  existing comprehensive MySQL verifier.
+- The wrapper pins MySQL by digest, generates container/database/password/port isolation, and the
+  inner verifier refuses non-MySQL, non-test, or non-empty targets.
+- Cleanup saves the returned container ID, removes only that ID with its anonymous volumes, and
+  confirms the recorded data volume no longer exists. Name collision cannot delete another
+  container.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| `python -m pytest -q tests/migration/test_migrations.py` | `17 passed` | SQLite/local migration harness | L2 |
+| `python -m alembic heads` | `0016_agent_workflow (head)` | local source tree | L2 |
+| `python scripts/verify_production_migrations.py` | full MySQL migration/integrity/data/concurrency contract PASS | disposable MySQL 8.4.11 | L2 |
+| focused deployment contract / Ruff / format / strict MyPy | PASS | local | L2 |
+
+Negative and cleanup evidence:
+
+- An initial socket-path race was corrected by verifying TCP readiness at `127.0.0.1`, matching
+  the application connection path.
+- Review found that plain container removal leaked the image-declared anonymous volume. Two
+  precisely time-attributed test volumes were removed; unrelated volumes were not touched.
+- Final verifier container: `commerce-rc-migration-9c7802e4`. Post-run container lookup was empty,
+  and no dangling volume created during the final run remained.
+
+Review:
+
+- Independent migration/architecture review: `GO`; Critical `0`, High `0`.
+
+Checkpoint: `COM-P1-011B` — `PASS / L2 VERIFIED_LOCAL`. Parent `COM-P1-011` remains
+`IN_PROGRESS`; `COM-P1-011C` is active; `BLOCKED_EXTERNAL` remains `0`.
+
+## 2026-08-17 — COM-P1-011A Production Docker/Compose Checkpoint
+
+Status:
+
+- Task: `COM-P1-011A`
+- Result: `DONE`
+- Verification level: `L2 VERIFIED_LOCAL`
+- Environment: Windows Docker Desktop, isolated production Compose, official MySQL 8.4.11,
+  digest-pinned Nginx, self-signed TLS, authenticated local test tenant.
+
+Scope boundary:
+
+- Hardened and verified only the existing V2 release image and production Compose topology.
+- Added no business entity, Agent tool, platform capability, alert type, or frontend module.
+- Self-signed TLS is local transport evidence, not real CA/DNS evidence. No cloud LLM or real
+  Douyin/TikTok seller environment was called.
+
+Implemented:
+
+- Digest-pinned Python, MySQL, and Nginx images plus an exact Linux production dependency lock.
+- Non-root/read-only application services, owned bounded tmpfs mounts, Host-bound TLS proxy,
+  internal-only API/frontend/database ports, and explicit migration ordering.
+- Distinct runtime, migration, backup, and restore database identities. Runtime is DML-only;
+  restore alone receives the audited trigger-definer permission required by MySQL 8.4 dumps.
+- Build-context exclusions for environment files, backups, SQL, certificates, and private keys;
+  LF checkout enforcement for container shell scripts.
+- Release verifier isolation from ambient Compose/database/secret variables and an authenticated
+  tenant Dashboard browser smoke using a generated User, Membership, Shop, and short-lived token.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| `python -m pytest -q tests/unit/test_deployment_health.py tests/unit/test_production_deployment_contract.py` | `22 passed, 1 warning` | local | L2 |
+| focused Ruff / format / strict MyPy | PASS | local | L2 |
+| `python scripts/verify_production_deployment.py` | deployment, role isolation, restart persistence, backup/restore, HTTPS/browser all PASS | isolated production Compose | L2 |
+| `git diff --check` | PASS | working tree | L2 |
+
+Negative and recovery evidence:
+
+- Runtime database identity successfully performed required DML and was denied a test `CREATE
+  TABLE`; migration, backup, and restore used separate credentials.
+- First review/run found and fixed proxy Host mismatch, ambient environment override, backup
+  privileges, read-only Nginx tmpfs ownership, MySQL startup race, trigger definer restore rights,
+  and Windows Docker output decoding. Each fix was retested by the final full verifier.
+- Final application image ID:
+  `sha256:ded71001e2a0c144ad9732e41222aeba30c94a1c0a3929fb7bd4184fcb604e3c`.
+- Isolated project `commerce-prod-smoke-3d1877af` left no containers or MySQL volume.
+
+Review:
+
+- Independent architecture/deployment review: `GO`; Critical `0`, High `0`.
+- Production dependency resolution is frozen by `requirements.production.lock`; changing the lock
+  or an image digest requires rerunning the release gates.
+
+Checkpoint: `COM-P1-011A` — `PASS / L2 VERIFIED_LOCAL`. Parent `COM-P1-011` remains
+`IN_PROGRESS`; `COM-P1-011B` is now active; `BLOCKED_EXTERNAL` remains `0`.
+
+## 2026-08-17 — COM-P1-011 RC0 Feature-Freeze and Task-Decomposition Checkpoint
+
+Decision:
+
+- Entered V2 Release Candidate mode. Business capability is frozen; `COM-P1-011` is limited to
+  deployability, recoverability, verifiability, maintainability, and operability.
+- Split the remaining P1 into ordered subtasks `COM-P1-011A` through `COM-P1-011H`: production
+  Docker/Compose, migration, backup/restore, health/readiness, CI, security scanning, deployment
+  documentation, and final acceptance.
+- Each subtask requires implementation, tests or a reproducible exercise, independent review,
+  documentation, and a checkpoint before completion.
+
+Baseline evidence:
+
+- Branch: `v2/commerce-operations-copilot`; HEAD at checkpoint start: `4e91097`.
+- Existing worktree contains in-progress production deployment files and modifications. They are
+  preserved and remain `IMPLEMENTED_UNVERIFIED` until their ordered checkpoint passes.
+- Docker Engine `29.5.3` and Docker Compose `v5.1.4` are available for isolated release exercises.
+- Last completed product checkpoint remains `COM-P1-010`: `488 passed, 19 skipped, 1 warning`;
+  the 19 environment-gated skips are not PASS evidence.
+- Active external blockers: `0`. Real Douyin/TikTok Shop verification remains
+  `IMPLEMENTED_UNVERIFIED` and is not silently promoted by RC work.
+
+Review:
+
+- Scope review confirms that React/Next.js, Worker/Redis, optional alert types, new platform
+  connectors, and other business expansion are prohibited during the RC hardening sequence.
+- Current task is `COM-P1-011A`; all later subtasks remain gated by the declared dependencies.
+
+Checkpoint: `COM-P1-011-RC0` — `PASS` for scope freeze and task decomposition only. No deployment,
+migration, recovery, CI, security, or final acceptance PASS is claimed by this checkpoint.
 
 ## 2026-08-16 — V2 Alignment Baseline
 
