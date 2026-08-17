@@ -2,15 +2,14 @@
 
 This roadmap reflects the audited repository, not the legacy Demo completion report.
 
-Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`).
-Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review.
-Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
-Phase 8 Exit Review passed. The platform-specific TikTok Shop adapter, bounded pull continuation,
-credential refresh rotation, webhook RawEvent ingress, normalization, reconciliation, and
-SQLite/MySQL migration/concurrency evidence are verified locally. The current full suite is
-`416 passed, 18 skipped, 1 warning`;
-the 18 environment-gated skips are not PASS evidence.
+Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`.
+Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`).
+Next task: `COM-P1-011`.
+Last completed task: `COM-P1-010` — Real Dashboard and Agent Tools (`DONE`).
+Phase 9 Exit Review passed. Tenant-scoped dashboard metrics, task-effect measurement, bounded
+Agent read/draft tools, server-owned evidence rendering, internal V2 Streamlit UI, API/workflow,
+Compose health, and local browser contract evidence are verified. The current full suite is
+`488 passed, 19 skipped, 1 warning`; the 19 environment-gated skips are not PASS evidence.
 All eight P0 tasks are DONE. Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## Phase 0 — Calibration and Runtime Boundary
@@ -178,12 +177,23 @@ Expose real normalized metrics, alerts, tasks, platform/shop comparisons, valida
 and measurable before/after effect tracking for executed tasks. AI remains interpretive and cannot
 replace deterministic calculations.
 
+Exit: satisfied. The normalized product remains useful through the dashboard without an LLM.
+The production Agent uses server-scoped tools and deterministic server-owned evidence, can create
+BusinessTask and purchase drafts without approving/executing them, and fails closed on fabricated,
+empty-contract, or over-wide evidence cases. The internal/admin Streamlit UI and explicit browser
+success fixture are locally verified; this is not a React/Next.js or real-platform claim.
+
 ## Phase 10 — Frontend and Production Hardening
 
 Dependencies: backend workflow stability.
 
 Move production UX toward React/Next.js while retaining Streamlit for internal use; add
 worker/queue only when justified, plus monitoring, backups, HTTPS, CI/CD, and release gates.
+
+Current execution starts with `COM-P1-011`: close mandatory deployment/reliability evidence,
+exercise backup/recovery and restart behavior, validate a production-oriented Compose path and
+HTTPS guidance, and decide the remaining production-frontend obligation from the actual product
+contract. React/Next.js and Worker/Redis remain TARGET until explicitly implemented and verified.
 
 ## Phase 11 — Final Acceptance
 

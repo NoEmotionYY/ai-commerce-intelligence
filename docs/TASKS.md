@@ -4,16 +4,16 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED_EXTERNAL`, `DONE`.
 Priorities: P0 blocks product/data integrity/security; P1 is mandatory product behavior;
 P2/P3 are quality and future work.
 
-Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`.
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`).
-Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review.
-Last completed task: `COM-P1-009` — TikTok Shop Connector (`DONE`).
-`COM-P1-009` passed Product, Architecture, Security, Testing, migration, and documentation Exit
-Review. The current full suite is `416 passed, 18 skipped, 1 warning`; the final TikTok/tenant
-slice is `93 passed, 1 warning`; Ruff, format, MyPy, `git diff --check`, SQLite, and disposable
-MySQL 8.4 fresh/upgrade/rollback/re-upgrade/data-preservation plus Douyin/TikTok webhook and token
-concurrency gates pass. Implementation and contract/mock verification pass; real-platform verification is
-`IMPLEMENTED_UNVERIFIED`, not `VERIFIED_REAL`.
+Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`.
+Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`).
+Next task: `COM-P1-011`.
+Last completed task: `COM-P1-010` — Real Dashboard and Agent Tools (`DONE`).
+`COM-P1-010` passed Product, Architecture, Security, Testing, API/workflow, Compose, and browser
+Exit Review. The current full suite is `488 passed, 19 skipped, 1 warning`; the final Agent/frontend
+slice is `54 passed`; the explicit V2 browser success path is `1 passed` against a local contract
+fixture. Ruff, format, MyPy, `git diff --check`, Docker builds, Compose health, and container
+Alembic head `0016_agent_workflow` pass. The browser fixture is `VERIFIED_MOCK`, not real-platform
+or cloud-LLM evidence.
 Phase 0, Phase 1, and Phase 2 exits are satisfied.
 
 ## P0
@@ -729,11 +729,39 @@ call was executed. Webhook consumption, scheduler, and Worker remain TARGET.
 
 ### COM-P1-010 — Real Dashboard and Agent Tools
 Priority: P1
-Status: IN_PROGRESS
+Status: DONE
 Dependencies: COM-P1-002, COM-P1-003, COM-P1-006, COM-P1-007.
 Scope: real normalized metrics, alerts/tasks, platform/shop comparison, validated Agent tools.
 Acceptance: product is useful without LLM and Agent output is grounded in services.
-Verification: API, workflow, browser, and complete-loop tests.
+Verification: tenant-scoped dashboard/API and internal Streamlit views cover currency-separated
+sales/profit, platform/shop comparison, trend, inventory risk, alerts, and tasks. Production Agent
+tools read normalized services, create only auditable drafts, preserve approval boundaries, render
+server-owned deterministic evidence, support explicit empty states, reject fabricated metrics and
+over-wide evidence combinations, and record tool/audit traces. Task effect measurement is
+auditable. Focused Agent/frontend suite: `54 passed`; full pytest: `488 passed, 19 skipped,
+1 warning`; Ruff, format, MyPy, single Alembic head, Compose build/health, container migration, and
+`git diff --check`: PASS. Explicit Playwright V2 success path: `1 passed` with a local contract
+fixture (`VERIFIED_MOCK`). The 19 environment-gated skips are not PASS. React/Next.js, background
+Worker/scheduler, production HTTPS/backup/recovery gates, cloud LLM, and real-platform verification
+remain outside this task.
+
+### COM-P1-011 — Production Deployment and Reliability Hardening
+Priority: P1
+Status: IN_PROGRESS
+Dependencies: COM-P1-010.
+Scope: production-oriented deployment/configuration, backup and recovery procedures, HTTPS reverse
+proxy guidance, health/observability, Compose release path, restart/recovery gates, and final
+release verification. Add a Worker/Redis only if an implemented workload proves it is required;
+do not introduce infrastructure solely to satisfy a diagram.
+Acceptance: mandatory Reliability, Deployment, and Verification criteria have repository evidence;
+secrets remain externalized; database persistence and backup/restore are documented and exercised;
+production services have usable health/failure behavior; Docker/Compose and critical browser paths
+pass without relying on Demo data. React/Next.js scope must be decided against the mandatory
+product contract and may not be represented as CURRENT before implementation.
+Verification: production configuration and Docker build checks; Compose startup/health/restart
+smoke; migration and database persistence/recovery smoke; backup/restore exercise; HTTPS proxy
+configuration validation; API/workflow/browser regression; Ruff, format, MyPy, full pytest,
+`git diff --check`, secret scan, and final Product/Architecture/Security/Testing review.
 
 ## External Verification
 
@@ -744,5 +772,5 @@ corresponding connector implementation exists.
 ## Status Summary
 
 - P0 remaining: 0; all eight P0 tasks are `DONE`.
-- P1 remaining: 1 (`COM-P1-010`); `COM-P1-001` through `COM-P1-009` are `DONE`.
+- P1 remaining: 1 (`COM-P1-011`); `COM-P1-001` through `COM-P1-010` are `DONE`.
 - `BLOCKED_EXTERNAL`: 0.

@@ -2,12 +2,12 @@
 
 ## V2 Status
 
-Phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`
-Current task: `COM-P1-010` — Real Dashboard and Agent Tools (`IN_PROGRESS`)
-Next task: Phase 10 frontend and production hardening selection after `COM-P1-010` Exit Review
-Last completed top-level task: `COM-P1-009` — TikTok Shop Connector
-Current verification slice: `COM-P1-009` final Exit Review (`DONE`)
-Last verified checkpoint: `COM-P1-009` final Exit Review (local checkpoint recorded with this evidence)
+Phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`
+Current task: `COM-P1-011` — Production Deployment and Reliability Hardening (`IN_PROGRESS`)
+Next task: `COM-P1-011`
+Last completed top-level task: `COM-P1-010` — Real Dashboard and Agent Tools
+Current verification slice: `COM-P1-010` final Exit Review (`DONE`)
+Last verified checkpoint: `COM-P1-010` code/UI and documentation checkpoints recorded with this evidence
 V2 completion: `NOT_COMPLETE`
 
 ## 2026-08-16 — V2 Alignment Baseline
@@ -1393,3 +1393,78 @@ Status:
 - Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`; current task:
   `COM-P1-010` (`IN_PROGRESS`). Next task selection is deferred to its Exit Review.
 - P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.
+
+## 2026-08-17 — COM-P1-010 Final Exit Review and Phase 10 Selection
+
+Implemented and hardened:
+
+- Added the tenant-scoped normalized operations dashboard and `/api/v2/dashboard` contract for
+  currency-separated sales/refund/profit, platform/shop comparison, trend, inventory risk, alerts,
+  and pending tasks. The dashboard remains useful without an LLM.
+- Added immutable task-effect measurements and execution purchase-order linkage so an auditable
+  BusinessTask can compare deterministic baseline/current state after execution.
+- Registered the production V2 Agent over server-owned principal/Shop scope. Read tools cover the
+  dashboard, Master SKU comparison, alert evidence, pending tasks, and deterministic replenishment;
+  write tools create only BusinessTask or purchase DRAFT records and cannot approve or execute.
+- Replaced untrusted LLM read narrative with server-owned deterministic renderers. Canonical
+  evidence preserves all sources for a normal dashboard + two-SKU + alert request. Wider evidence
+  combinations fail explicitly rather than silently truncating a tool source. Active-alert and
+  pending-task tools now return `{count, items}` so empty results render as normal grounded states.
+- Added an authenticated V2 API client and Streamlit internal/admin interface. It renders normalized
+  dashboard data and Agent evidence, accepts tokens through a password input, and does not read the
+  database or legacy Demo endpoints. Compose passes optional token/organization/shop configuration
+  without embedding credentials.
+- Added API client, AppTest, Agent-loop, tenant/permission, cross-shop purchase-link, evidence-
+  completeness, empty-state, and Playwright browser regression coverage. The browser success API is
+  a deterministic local contract fixture and therefore `VERIFIED_MOCK`, not cloud-LLM, sandbox, or
+  real-platform evidence.
+
+Exit Review:
+
+- Product: the normalized dashboard works without AI; the Agent operates on arbitrary tenant data,
+  not A102/B205/COMP-B or Demo services. Empty operational states are useful responses rather than
+  502 errors.
+- Architecture: `authenticated scope -> validated tool -> business service -> persistence` is
+  preserved. Agent tools cannot choose tenant scope. Server-owned evidence is complete or fails
+  closed. V2 Streamlit is CURRENT only as an internal/admin client; React/Next.js remains TARGET.
+- Security: no arbitrary SQL, unrestricted URL, credential, approve, or execute tool exists. Token
+  text is password-masked and absent from browser content; controlled frontend errors do not echo
+  backend detail. Cross-tenant and permission denial tests pass. Changed/untracked files contain no
+  private-key or token-shaped secret; fixture tokens are explicit test-only constants.
+- Testing: Product/Architecture independent review found no unresolved Critical/High/P1 issue after
+  evidence-capacity and empty-state fixes. Full regression, static checks, Compose build/health,
+  migration head, API/workflow, and explicit browser success pass. Default gated skips remain not
+  PASS and do not become `BLOCKED_EXTERNAL`.
+
+Commands and evidence:
+
+- `python -m pytest -q tests/unit/test_v2_agent.py tests/unit/test_v2_frontend_api_client.py
+  tests/ui/test_v2_streamlit_app.py`: `54 passed`.
+- Explicit browser success stack: `uvicorn v2_frontend_stub_api:app --app-dir tests/support --host
+  127.0.0.1 --port 8012`; `python -m streamlit run frontend/v2_streamlit_app.py ...`; then
+  `RUN_V2_UI_E2E=1`, `V2_E2E_AGENT_MODE=success` and
+  `python -m pytest -q tests/e2e/test_v2_streamlit_browser.py`: `1 passed`.
+- The first fixture command using module path `tests.support.v2_frontend_stub_api:app` failed because
+  `tests` is not a package; `--app-dir tests/support` fixed the launch. The installed `streamlit`
+  console shim also referenced the removed `streamlit.cli`; `python -m streamlit` used the verified
+  installed module entry point. Neither failure affected application code or final evidence.
+- `python -m pytest -q`: `488 passed, 19 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`157 files already formatted`).
+- `mypy .`: PASS (`126 source files`); `alembic heads`: `0016_agent_workflow (head)`;
+  `git diff --check`: PASS; `docker compose config --quiet`: PASS.
+- `docker compose up -d --build agent-api frontend-v2`: PASS. Rebuilt `agent-api` and
+  `frontend-v2` are healthy; existing MySQL remains healthy; `init-db` exits successfully;
+  container `alembic current` is `0016_agent_workflow (head)`. Existing long-running legacy/demo
+  services were not stopped or recreated.
+- The 19 default skips comprise environment-gated Compose, legacy browser, DeepSeek cloud, and V2
+  browser tests. They were not counted as PASS. The relevant V2 build/Compose health and browser
+  success were executed separately; cloud DeepSeek and real-platform verification were not run.
+
+Status:
+
+- `COM-P1-010`: `DONE`; local implementation/API/workflow/browser-contract evidence PASS.
+- Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`; current/next task:
+  `COM-P1-011` (`IN_PROGRESS`).
+- P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.
+- V2 remains `NOT_COMPLETE`: restart/backup/restore, production-oriented deployment/configuration,
+  HTTPS/release gates, and the production frontend decision remain internal Phase 10 work.

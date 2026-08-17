@@ -166,18 +166,24 @@ OperationLog evidence. `WAITING_APPROVAL -> DONE` requires `APPROVE_ACTION`; oth
 
 ## K. Agent
 
-- [ ] Metrics read only through validated tools/services.
-- [ ] No arbitrary SQL.
-- [ ] No direct high-impact platform write.
-- [ ] Agent can analyze shop performance.
-- [ ] Agent can compare platforms.
-- [ ] Agent can compare Master SKUs.
-- [ ] Agent can explain alerts.
-- [ ] Agent can create BusinessTasks.
-- [ ] Agent can create purchase drafts.
-- [ ] Agent cannot bypass approval.
-- [ ] Important numeric answers are grounded in deterministic calculations.
-- [ ] Tests cover fabricated/invalid numeric claims where practical.
+- [x] Metrics read only through validated tools/services.
+- [x] No arbitrary SQL.
+- [x] No direct high-impact platform write.
+- [x] Agent can analyze shop performance.
+- [x] Agent can compare platforms.
+- [x] Agent can compare Master SKUs.
+- [x] Agent can explain alerts.
+- [x] Agent can create BusinessTasks.
+- [x] Agent can create purchase drafts.
+- [x] Agent cannot bypass approval.
+- [x] Important numeric answers are grounded in deterministic calculations.
+- [x] Tests cover fabricated/invalid numeric claims where practical.
+
+Implementation Status: `PASS`. Contract/Mock Verification Status: `PASS` / `L2 VERIFIED_LOCAL`.
+The LLM receives bounded server-scoped tools, cannot select tenant scope, and cannot approve or
+execute high-impact actions. Read responses use server-owned deterministic evidence and controlled
+empty states; fabricated values and over-wide evidence combinations fail closed. Cloud-provider
+verification is not implied by the local fixture/provider tests.
 
 ---
 
@@ -271,17 +277,22 @@ consumption, a scheduler, and a Worker remain TARGET and are not implied by the 
 
 ## O. Dashboard
 
-- [ ] GMV.
-- [ ] Orders.
-- [ ] Estimated profit.
-- [ ] Actual profit when data exists.
-- [ ] Refund rate.
-- [ ] Stockout risks.
-- [ ] Alerts.
-- [ ] Pending tasks.
-- [ ] Platform comparison.
-- [ ] Shop comparison.
-- [ ] Trend view.
+- [x] GMV.
+- [x] Orders.
+- [x] Estimated profit.
+- [x] Actual profit when data exists.
+- [x] Refund rate.
+- [x] Stockout risks.
+- [x] Alerts.
+- [x] Pending tasks.
+- [x] Platform comparison.
+- [x] Shop comparison.
+- [x] Trend view.
+
+Implementation Status: `PASS`. API/Local Verification Status: `PASS`. The primary normalized
+dashboard is tenant scoped and currency separated. A V2 Streamlit interface is CURRENT for
+internal/admin use and has AppTest plus explicit Playwright contract-fixture evidence. A production
+React/Next.js interface remains TARGET and is not implied by these checks.
 
 ---
 
@@ -304,14 +315,14 @@ consumption, a scheduler, and a Worker remain TARGET and are not implied by the 
 
 ## Q. Reliability
 
-- [ ] Database migrations verified.
-- [ ] Retry behavior tested.
-- [ ] Idempotency tested.
+- [x] Database migrations verified.
+- [x] Retry behavior tested.
+- [x] Idempotency tested.
 - [ ] Restart/recovery behavior tested.
-- [ ] Sync recovery tested.
-- [ ] Health endpoint exists.
+- [x] Sync recovery tested.
+- [x] Health endpoint exists.
 - [ ] Backup procedure documented.
-- [ ] Failure logs are usable.
+- [x] Failure logs are usable.
 
 ---
 
@@ -320,8 +331,8 @@ consumption, a scheduler, and a Worker remain TARGET and are not implied by the 
 - [ ] Production-oriented Docker build works.
 - [ ] Docker Compose deployment works.
 - [ ] Configuration documented.
-- [ ] Secrets externalized.
-- [ ] Database persistence configured.
+- [x] Secrets externalized.
+- [x] Database persistence configured.
 - [ ] Redis/worker configured when required.
 - [ ] Health checks documented.
 - [ ] HTTPS reverse-proxy deployment documented.
@@ -332,20 +343,26 @@ consumption, a scheduler, and a Worker remain TARGET and are not implied by the 
 
 Before COMPLETE:
 
-- [ ] Ruff PASS.
-- [ ] Format PASS.
-- [ ] MyPy PASS.
-- [ ] Full pytest PASS.
-- [ ] Migration validation PASS.
-- [ ] API integration tests PASS.
-- [ ] Workflow tests PASS.
-- [ ] Platform contract tests PASS.
-- [ ] Docker build PASS.
-- [ ] Docker Compose smoke PASS.
-- [ ] Critical UI/browser flows PASS.
-- [ ] git diff --check PASS.
-- [ ] Security review has no unresolved Critical issue.
-- [ ] Security review has no unresolved High issue.
+- [x] Ruff PASS.
+- [x] Format PASS.
+- [x] MyPy PASS.
+- [x] Full pytest PASS.
+- [x] Migration validation PASS.
+- [x] API integration tests PASS.
+- [x] Workflow tests PASS.
+- [x] Platform contract tests PASS.
+- [x] Docker build PASS.
+- [x] Docker Compose smoke PASS.
+- [x] Critical UI/browser flows PASS.
+- [x] git diff --check PASS.
+- [x] Security review has no unresolved Critical issue.
+- [x] Security review has no unresolved High issue.
+
+Latest evidence: `488 passed, 19 skipped, 1 warning`; Ruff, format, MyPy, single Alembic head,
+Docker build, Compose health, container migration, and diff checks pass. The explicit V2 browser
+success path is `1 passed` against a local contract fixture and is `VERIFIED_MOCK`. The 19
+environment-gated Compose/legacy-browser/DeepSeek/default V2-browser skips are not counted as PASS;
+the separately executed build/Compose/V2 browser commands provide the checked evidence above.
 
 ---
 
@@ -363,6 +380,12 @@ real or faithfully imported commerce data
 → execution
 → audit log
 → measurable resulting state
+
+Implementation Status: `PASS`. Local Workflow Verification Status: `PASS`. Tests cover imported or
+normalized order/inventory/finance state, deterministic alerts and replenishment, grounded Agent
+explanation, BusinessTask/purchase-DRAFT creation, independent approval and idempotent internal
+execution, operation/history evidence, execution linkage, and deterministic task-effect
+measurement. This is local workflow evidence; it does not claim real supplier/platform execution.
 
 ---
 
@@ -426,14 +449,13 @@ an unimplemented adapter is `MISSING`, not `BLOCKED_EXTERNAL`.
 
 The repository still contains a V1/Demo compatibility implementation. A102, B205, COMP-B,
 DemoMall, MockMarket, Mock ERP, and fixed seed time are not V2 production evidence. After
-COM-P1-008 completion the current local suite is `338 passed, 18 skipped, 1 warning` under
-`python -m pytest -q`;
-skipped scenarios are Compose, browser, or cloud-gated and must not be counted as V2 PASS.
+COM-P1-010 completion the current local suite is `488 passed, 19 skipped, 1 warning` under
+`python -m pytest -q`; skipped scenarios are environment-gated and must not be counted as V2 PASS.
 Tenant identity, membership, permission, V2 shop/credential APIs, and production legacy-route
-denial are locally verified. Agent schemas and denial boundaries are verified, but production
-Agent commerce reads remain unavailable until tenant-aware V2 commerce services exist. Encrypted
-credential storage/lifecycle/leakage boundaries are locally verified; unified commerce workflows
-and the remaining P0/P1 work are still incomplete. Additive migrations are verified on SQLite
+denial are locally verified. The production V2 Agent now resolves tenant scope on the server,
+reads normalized dashboard/SKU/alert/task/replenishment services through bounded tools, creates
+only auditable drafts, and uses server-owned grounded response rendering. Encrypted credential
+storage/lifecycle/leakage boundaries are locally verified. Additive migrations are verified on SQLite
 and official MySQL Community Server 8.4.11 for fresh install, legacy upgrade, rollback/re-upgrade,
 key constraints, and legacy/tenant data preservation. Organization-scoped MasterProduct,
 MasterSKU, PlatformSKU, manual correction, exact external identity, and cross-tenant denial are
@@ -451,14 +473,13 @@ lineage, stale/idempotent reconciliation, and deterministic current/incoming-awa
 locally verified on SQLite and MySQL. Tenant-scoped suppliers, commercial terms, purchase orders,
 independent approval, inbound shipments, monotonic cumulative receipts, and ETA-bounded incoming
 stock are locally verified. Replenishment uses actual order velocity, available stock, open
-inbound quantities, lead time, safety days, MOQ, and package size. The validated standalone Agent
-tool can read this recommendation and create an idempotent DRAFT without accepting quantity or
-policy overrides; it is not yet registered into production chat. Real supplier/platform execution
-and integrations remain `MISSING`, not `BLOCKED_EXTERNAL`.
+inbound quantities, lead time, safety days, MOQ, and package size. The production Agent can read
+this recommendation and create an idempotent DRAFT without accepting quantity or policy overrides.
+Real supplier/platform execution and integrations remain `MISSING`, not `BLOCKED_EXTERNAL`.
 The five mandatory deterministic alert rules and the tenant-scoped Alert/BusinessTask lifecycle are
 locally verified, including MySQL concurrent deduplication/idempotency. Optional price/order/finance
-detectors, production Agent alert/task tools, and measurable effect tracking remain later internal
-work and are not represented as PASS.
+detectors remain optional internal work. Production Agent alert/task tools and auditable before/
+after task-effect measurement are CURRENT and locally verified.
 CSV/XLSX catalog, order, warehouse/channel inventory, and cost imports are locally verified through
 an explicit preview then execute workflow. Every staged record has file-source RawEvent evidence;
 tenant/permission checks, bounded parsing, mapping validation, exact source identity, duplicate and

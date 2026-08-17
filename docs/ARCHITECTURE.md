@@ -31,9 +31,8 @@ Existing and locally tested components include:
 This is not yet a complete production product: legacy Demo tables coexist with the verified V2
 unified domains. `COM-P0-002` provides Organization,
 User, OrganizationMembership, and Shop tables, signed V2 identity, centralized permission
-checks, tenant-scoped shop APIs, and the TenantContext/resolver foundation. No production Agent
-runtime currently calls that resolver or exposes tenant-aware commerce tools. Production denies
-the unscoped legacy business APIs rather than treating legacy rows as tenant-safe.
+checks, tenant-scoped shop APIs, and the TenantContext/resolver foundation. Production denies the
+unscoped legacy business APIs rather than treating legacy rows as tenant-safe.
 `COM-P0-003` provides the encrypted ShopCredential lifecycle described below. COM-P0-006 provides
 the locally verified PlatformRawEvent and SyncJob foundation described below. COM-P0-007 provides
 the separate unified commerce order model and validated import service. COM-P1-001 provides an
@@ -45,13 +44,13 @@ described below. COM-P1-003 adds tenant-scoped SKU cost history, refunds, settle
 transactions, immutable estimated/settled profit snapshots, and bounded finance/refund APIs.
 COM-P1-004 adds the locally verified supplier, purchasing, inbound shipment, and deterministic
 replenishment foundation described below. COM-P1-005 adds a locally verified
-recommendation-to-DRAFT API and isolated LangChain tool surface plus approved internal execution
-retry/concurrency evidence. That tool surface is not registered in production chat and contains no
-approval or execution operation. Production supplier/platform execution, production Agent
-integration, effect measurement, and AuditLog remain TARGET. COM-P1-006 adds the locally verified
-Alert and BusinessTask foundation described below; it does not add optional price/order/finance
-detectors or production Agent registration. COM-P1-007 adds the locally verified two-stage
-CSV/XLSX import path described below; it does not implement a platform connector.
+recommendation-to-DRAFT API and approved internal execution retry/concurrency evidence.
+COM-P1-006 adds the locally verified Alert and BusinessTask foundation; COM-P1-007 adds the
+two-stage CSV/XLSX import path; COM-P1-008 and COM-P1-009 add separate local/mock-verified Douyin
+and TikTok Shop adapters. COM-P1-010 adds the tenant-scoped dashboard, auditable effect
+measurement, production V2 Agent tool runtime, and an internal/admin V2 Streamlit interface.
+Production supplier/platform execution, optional price/order/finance detectors, React/Next.js,
+background Worker/scheduler, and a separate AuditLog model remain TARGET.
 
 ## 3. CURRENT: Runtime Boundaries After COM-P0-001
 
@@ -74,10 +73,10 @@ centralized OWNER/OPERATOR/APPROVER permission matrix, and refuses shops outside
 organization. V2 shop routes authenticate signed bearer tokens before resolving the requested
 organization. Production rejects unscoped legacy `/api/*` routes; V2 shop reads/writes apply
 membership and permission checks. Agent Tool schemas do not expose organization/shop selectors
-to the LLM, but the production Agent runtime is not yet wired to the implemented tenant-aware V2
-catalog/order/inventory/finance/purchasing/alert/task services; its commerce tools therefore return
-a controlled unavailable error. Those V2 domain services and APIs are CURRENT; end-to-end Agent
-tenant context remains TARGET.
+to the LLM. The V2 Agent request resolves the signed principal and optional Shop on the server,
+then constructs tenant-scoped dashboard, Master SKU, alert, task, replenishment, and draft tools.
+Cross-tenant arguments cannot be supplied through the model schema. Missing model-provider
+configuration returns a controlled unavailable error instead of falling back to Demo behavior.
 
 ## 3.2 CURRENT: Encrypted Shop Credentials
 
@@ -102,8 +101,8 @@ unrelated business writes.
 
 ## 3.4 CURRENT: Additive Migration Foundation
 
-The repository has one Alembic head at `0014_douyin_webhook_lookup`. Revisions `0003`
-through `0014`
+The repository has one Alembic head at `0016_agent_workflow`. Revisions `0003`
+through `0016`
 explicitly add tenant, encrypted-credential, unified-catalog, raw-event, sync-job, and unified-order
 tables plus the current shop connection/capability tables while preserving
 legacy data. Fresh install, existing `0002` upgrade, rollback/re-upgrade, key constraints, legacy
@@ -135,6 +134,10 @@ Revision `0014` adds the non-reversible Douyin credential identifier lookup hash
 index. SQLite and disposable MySQL 8.4 checks cover `0013 -> 0014 -> 0013 -> 0014`, legacy
 identifier backfill behavior, credential ciphertext preservation, and existing tenant/raw-event
 data preservation. The explicit deployment backfill remains required for legacy NULL hashes.
+Revision `0015` adds immutable task-effect observations and the BusinessTask execution linkage used
+to compare deterministic before/after state. Revision `0016` adds tenant-scoped Agent sessions,
+draft requests, and idempotent draft workflow persistence. Both are additive and included in the
+current SQLite/full-suite and disposable MySQL migration/integrity verification history.
 Legacy Demo order rows remain separate and unchanged.
 
 ## 3.5 CURRENT: Unified Catalog Identity
@@ -288,8 +291,9 @@ transition without exposing idempotency hashes through the API.
 Replenishment is deterministic Python/SQL logic using unified order velocity, current warehouse
 available stock, ETA-bounded open inbound quantities, lead time, safety-stock days, MOQ, and package
 size. It returns the authoritative quantity as data; no LLM participates in the calculation.
-The COM-P1-005 draft endpoint and `PurchasingAgentTools` accept only warehouse, supplier-product,
-and idempotency identity. Extra quantity or policy fields fail schema validation. A stable logical
+The COM-P1-005 draft endpoint and production V2 Agent purchasing tools accept only warehouse,
+supplier-product, business-task context, and server-owned idempotency identity. Extra quantity or
+policy fields fail schema validation. A stable logical
 request hash preserves the original draft when current replenishment inputs later change, while the
 response explicitly distinguishes current recommendation from the persisted draft quantity.
 The tool list exposes recommendation read and DRAFT creation only; approval and execution remain
@@ -319,9 +323,11 @@ not serialize internal hashes. MySQL locking reads after unique-key races ensure
 transactions observe the winner; a two-thread verifier proves one alert, one task, one history row,
 and one audit for each logical operation.
 
-This is `L2 VERIFIED_LOCAL`. Optional PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors,
-production Agent alert/task registration, broader order/supplier/purchase-order context links, and
-measurable effect tracking remain TARGET.
+Task effect observations snapshot deterministic baseline/current metrics and link an executed
+purchase order to its originating BusinessTask. Cross-tenant or conflicting purchase links fail
+closed; repeated measurement is idempotent and auditable. This is `L2 VERIFIED_LOCAL`. Optional
+PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors and broader business-context links
+remain TARGET.
 
 ## 3.13 CURRENT: CSV/XLSX File Import
 
@@ -442,6 +448,30 @@ Verification state: `Implementation: PASS`; `Contract/Mock: PASS` at `L2 VERIFIE
 migration/data-preservation/webhook/token-race gates pass. No sandbox, seller credential, or live
 platform execution was used, so this is not `VERIFIED_SANDBOX` or `VERIFIED_REAL`.
 
+## 3.16 CURRENT: Dashboard, Agent Runtime, and Internal V2 UI
+
+`DashboardService` reads only unified tenant-scoped orders, refunds, immutable profit snapshots,
+inventory risk, alerts, and tasks. It returns currency-separated sales/profit, platform/shop
+comparison, trend, and workload summaries; it never performs implicit exchange-rate aggregation.
+The authenticated `/api/v2/dashboard` route resolves organization and optional Shop scope on the
+server. The product therefore remains useful without an LLM.
+
+The authenticated `/api/v2/agent` runtime creates a server-scoped `V2AgentTools` instance. Read
+tools expose dashboard, Master SKU comparison, active-alert evidence, pending tasks, and
+deterministic replenishment. Write tools can create an auditable BusinessTask or purchase DRAFT
+only; they cannot approve, execute, refund, reprice, call arbitrary URLs, select tenant scope, or
+run SQL. Canonical read evidence is selected and narrated by server code rather than trusting LLM
+free text. Common dashboard/SKU/alert combinations preserve every source; combinations exceeding
+the bounded response contract fail explicitly instead of silently truncating a tool. Empty alert
+and task lists return grounded `count=0` states.
+
+`TaskEffectMeasurement` snapshots deterministic before/after values for one BusinessTask and its
+linked execution purchase order. Agent sessions and draft requests preserve idempotent workflow
+and audit evidence. The V2 Streamlit interface calls only authenticated V2 dashboard/Agent APIs,
+uses password-style token input, and is retained as an internal/admin surface. Its AppTest and
+explicit Playwright contract-fixture success path are locally verified. React/Next.js remains
+TARGET; the fixture/browser result is `VERIFIED_MOCK`, not a cloud-LLM or real-platform claim.
+
 ## 4. TARGET: Production Data Flow
 
 ```text
@@ -462,8 +492,8 @@ PlatformRawEvent, SyncJob, CommerceOrder, CommerceOrderItem, ShopConnection, Sho
 Warehouse, WarehouseInventory, ChannelInventory, Refund, RefundItem, SKUCost,
 FinanceTransaction, Settlement, ProfitSnapshot, Supplier, SupplierProduct,
 CommercePurchaseOrder, CommercePurchaseOrderItem, InboundShipment, InboundShipmentItem,
-CommerceAlert, BusinessTask, and BusinessTaskHistory, plus future platform execution records,
-effect measurements, and AuditLog.
+CommerceAlert, BusinessTask, BusinessTaskHistory, TaskEffectMeasurement, AgentSession, and
+AgentDraftRequest, plus future platform execution records and AuditLog.
 
 ## 5. TARGET: Dependency Direction
 
@@ -484,6 +514,7 @@ Queues/workers and Redis are introduced only when synchronization workloads requ
 
 ## 7. Non-Production Assets
 
-Mock ERP, Mock Crawler, mock competitor site, fixed identifiers, seed data, and Streamlit
-are retained only for legacy regression, local development, fixtures, and demos. They must
-never be required by a production merchant workflow.
+Mock ERP, Mock Crawler, mock competitor site, fixed identifiers, and seed data are retained only
+for legacy regression, local development, fixtures, and demos. Legacy Streamlit is a Demo surface;
+the V2 Streamlit app is an internal/admin client over production V2 APIs. Neither may be required
+as a source of production merchant data, and the production product frontend remains TARGET.

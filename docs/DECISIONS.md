@@ -630,3 +630,43 @@ SQLite, and disposable MySQL 8.4 migration, data-preservation, webhook-idempoten
 gates. Real TikTok Shop status is `IMPLEMENTED_UNVERIFIED`, not sandbox/real PASS. A scheduler,
 webhook domain consumer, Worker, and real seller validation remain future or external verification
 work. Phase 9 and `COM-P1-010` are next; no `BLOCKED_EXTERNAL` is recorded.
+
+## ADR-027 — Server-Owned Agent Read Responses and Internal V2 Operations UI
+
+Date: 2026-08-17
+Status: ACCEPTED
+
+Context: A production commerce Agent must explain deterministic business results without allowing
+the model to invent numeric claims, action completion, tenant scope, or evidence. Returning only
+the evidence paths selected by the model could omit important fields or complete tool sources.
+Empty list results also need a valid grounded response. The repository additionally needs an
+operable V2 interface before a later production-frontend decision, but Streamlit must not be
+misrepresented as the final React/Next.js product.
+
+Decision: Resolve principal, organization, and optional Shop before constructing `V2AgentTools`.
+Keep calculations and draft writes in business services; expose no tenant selector, arbitrary SQL,
+approval, or execution tool. For read operations, replace model narrative with server-owned
+renderers over canonical tool outputs. Preserve every source for the common dashboard + two-SKU +
+alert combination. Collect evidence before applying the bounded response limit and fail explicitly
+when a wider combination cannot be represented; never silently truncate a complete tool source.
+Return list reads as `{count, items}` so `count=0` is authoritative evidence and renders a normal
+empty state. Continue allowing only BusinessTask and purchase DRAFT creation through idempotent,
+audited service paths.
+
+Add a V2 Streamlit client as an internal/admin UI over authenticated V2 APIs. Tokens use a
+password-style input and optional externalized environment configuration; the UI does not read the
+database or legacy Demo services. Browser success uses a deterministic local API contract fixture
+and is labelled `VERIFIED_MOCK`. React/Next.js remains TARGET and must be decided/implemented in a
+later production-frontend task rather than inferred from Streamlit evidence.
+
+Reasoning: Server-owned rendering makes authoritative values and action state independent of model
+prose while retaining the LLM for intent/tool orchestration. Explicit capacity failure is safer
+than incomplete evidence. A count envelope makes empty results first-class. The internal UI gives
+operators a verifiable normalized workflow without coupling backend correctness to the final
+frontend technology.
+
+Consequences: `COM-P1-010` is locally complete after API/workflow/browser/Compose and independent
+review evidence. Alembic head is `0016_agent_workflow`; task-effect measurement, Agent session/draft
+persistence, the tenant-scoped dashboard/Agent runtime, and internal V2 Streamlit UI are CURRENT.
+Cloud-LLM, React/Next.js, scheduler/Worker, production HTTPS/backup/recovery, and real-platform
+verification remain unclaimed. Phase 10 starts with `COM-P1-011`; no `BLOCKED_EXTERNAL` is recorded.
