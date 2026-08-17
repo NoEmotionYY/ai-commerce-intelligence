@@ -63,7 +63,13 @@ constraint; do not run the migration or full release verifiers from an unrelated
 python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install -c requirements.production.lock -e ".[dev]"
+python -m playwright install --with-deps chromium
 ```
+
+The browser download is mandatory for the authenticated release smoke gate. Installing the Python
+package alone does not install Chromium. On a Windows release workstation use
+`python -m playwright install chromium`; the Linux/WSL command above also installs the required OS
+libraries and may require deployment-workstation administrator privileges.
 
 The isolated backup-package verifier itself uses only Python's standard library plus Docker, but it
 must still be run from the matching frozen checkout so it mounts the reviewed restore script.

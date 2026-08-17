@@ -37,6 +37,15 @@ Evidence:
 | scanned-image export/load | gzip archive hash recorded; loaded image ID exactly matched `sha256:fb4be3de...` | local artifact-identity rehearsal |
 | post-remediation Production verifier | role isolation, bootstrap concurrency, restart/readiness, backup/restore negative controls, HTTPS/browser PASS | current-tree L2 |
 
+The first independent clean-host walkthrough cloned frozen commit `70b2119`, created a fresh
+Python 3.12.13 environment, resolved the dev/runtime graph under the production lock, passed the
+release-head gate, passed the official MySQL migration verifier, and passed the production image
+contract. Its full verifier reached the browser step after all database/recovery checks but failed
+because the runbook installed the Playwright package without downloading Chromium. Runtime
+containers, volumes, and networks were all absent after the failure. The runbook now explicitly
+installs Chromium (and Linux OS dependencies) before the release exercise; the unchanged verifier
+must be rerun from the updated frozen commit before 011G can advance.
+
 The Trivy blocking failure was not waived. `Dockerfile.production` now uses the current reviewed
 Python base digest and applies Debian security upgrades before creating the application user; the
 same rebuilt image then passed the fixable Critical/High gate. The full SARIF remains authoritative:

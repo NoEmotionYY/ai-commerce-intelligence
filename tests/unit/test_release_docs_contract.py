@@ -43,6 +43,8 @@ def test_deployment_runbook_matches_immutable_release_path() -> None:
     assert "--expected-manifest-sha256" in deployment
     assert "EXPECTED_BACKUP_MANIFEST_SHA256=<digest-from-deployment-record>" in deployment
     assert 'pip install -c requirements.production.lock -e ".[dev]"' in deployment
+    assert "python -m playwright install --with-deps chromium" in deployment
+    assert "python -m playwright install chromium" in deployment
     assert "POSIX shell" in deployment
 
 
