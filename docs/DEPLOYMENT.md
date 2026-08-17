@@ -99,6 +99,11 @@ Docker daemon/Administrators group as secret access because those operators can 
 configuration. Apply equivalent ACLs to TLS private keys and the backup directory; keep the source
 of truth in an audited secret manager.
 
+Set `BACKUP_UID` and `BACKUP_GID` to the numeric owner of the deployment backup directory. The
+maintenance backup container uses these values so the operator can read the generated package
+without making the directory world-readable; do not leave the Compose default `0:0` on a non-root
+host. The release verifier derives the current host UID/GID automatically.
+
 Example secret generation:
 
 ```bash

@@ -200,6 +200,8 @@ def verify_production_deployment() -> None:
         root_password = secrets.token_hex(24)
         signing_key = secrets.token_hex(32)
         encryption_key = base64.b64encode(secrets.token_bytes(32)).decode()
+        backup_uid = str(os.getuid()) if hasattr(os, "getuid") else "0"
+        backup_gid = str(os.getgid()) if hasattr(os, "getgid") else "0"
         env_file = runtime_directory / "production.env"
         env_file.write_text(
             "\n".join(
@@ -230,6 +232,8 @@ def verify_production_deployment() -> None:
                     f"COMMERCE_HTTPS_PORT={https_port}",
                     f"COMMERCE_PUBLIC_HTTPS_PORT={https_port}",
                     f"BACKUP_DIRECTORY={backup_directory.as_posix()}",
+                    f"BACKUP_UID={backup_uid}",
+                    f"BACKUP_GID={backup_gid}",
                 ]
             )
             + "\n",

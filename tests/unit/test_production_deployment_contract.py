@@ -120,6 +120,7 @@ def test_https_proxy_contract_is_hardened_and_supports_streamlit_websocket() -> 
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     assert "Host: $$PUBLIC_HOSTNAME" in compose
     assert "/etc/nginx/conf.d:size=1m,mode=0755,uid=101,gid=101" in compose
+    assert 'user: "${BACKUP_UID:-0}:${BACKUP_GID:-0}"' in compose
 
 
 def test_backup_restore_contract_fails_closed() -> None:
@@ -177,6 +178,14 @@ def test_release_verifier_drops_ambient_compose_and_secret_overrides() -> None:
         }
     )
     assert isolated == {"PATH": "safe-path", "SYSTEMROOT": "safe-root"}
+
+
+def test_production_verifier_aligns_backup_file_owner_with_host() -> None:
+    verifier = (ROOT / "scripts/verify_production_deployment.py").read_text(encoding="utf-8")
+    assert 'backup_uid = str(os.getuid()) if hasattr(os, "getuid") else "0"' in verifier
+    assert 'backup_gid = str(os.getgid()) if hasattr(os, "getgid") else "0"' in verifier
+    assert 'f"BACKUP_UID={backup_uid}"' in verifier
+    assert 'f"BACKUP_GID={backup_gid}"' in verifier
 
 
 def test_release_verifier_checks_runtime_database_least_privilege() -> None:
