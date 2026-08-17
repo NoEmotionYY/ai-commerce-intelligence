@@ -1,6 +1,6 @@
 # V2 Release Candidate Security Gates
 
-The RC security workflow runs on pull requests, `main`, `v2-rc-*` tags, and manual dispatch. It
+The RC security workflow runs on pull requests, `master`, `v2-rc-*` tags, and manual dispatch. It
 does not receive merchant, platform, LLM, database, or deployment secrets.
 
 ## Blocking Gates
@@ -16,7 +16,7 @@ does not receive merchant, platform, LLM, database, or deployment secrets.
   vulnerabilities block. A second non-blocking SARIF pass retains unfixed Critical/High findings
   for release review instead of hiding them.
 
-On `main`, `v2-rc-*`, or manual release runs, the container job exports that same already-scanned
+On `master`, `v2-rc-*`, or manual release runs, the container job exports that same already-scanned
 image with `docker save`; it does not rebuild. The seven-day artifact includes the gzip archive,
 archive SHA-256, Docker image ID, and source revision. Promotion must load and verify this artifact,
 then tag/push it to the deployment registry. An image rebuilt outside that job has no scan identity

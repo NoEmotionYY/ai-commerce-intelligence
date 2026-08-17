@@ -17,6 +17,9 @@ def workflow_text() -> str:
 
 def test_rc_workflow_has_minimum_blocking_jobs() -> None:
     workflow = workflow_text()
+    assert "branches: [master]" in workflow
+    assert "refs/heads/master" in workflow
+    assert "refs/heads/main" not in workflow
     for job in (
         "quality:",
         "mysql-migration-integrity:",

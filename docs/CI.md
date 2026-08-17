@@ -13,7 +13,7 @@ merchant, platform, LLM, or database secrets.
 
 ## Pull Request Gates
 
-Configure branch protection for `main` to require these job results:
+Configure branch protection for `master` to require these job results:
 
 - `Quality / Python 3.11`
 - `Quality / Python 3.12`
@@ -43,7 +43,7 @@ job-owned image tag.
 
 ## Main And RC Tag Gate
 
-Pushes to `main`, `v2-rc-*` tags, and manual dispatch run
+Pushes to `master`, `v2-rc-*` tags, and manual dispatch run
 `Isolated production release smoke` after all non-security jobs in the primary workflow pass. It
 installs Chromium and runs `scripts/verify_production_deployment.py` against a random Compose
 project with generated credentials, self-signed TLS, isolated MySQL data, failure injection,
@@ -59,7 +59,7 @@ Quality JUnit/coverage artifacts are retained for 14 days. Bandit, dependency au
 reports are retained for 30 days. Artifact upload uses `if: always()` so a failing scan retains its
 evidence; the original scan step remains failed because `continue-on-error` is forbidden.
 
-After a successful container scan on `main`, an RC tag, or a manual release run, the security
+After a successful container scan on `master`, an RC tag, or a manual release run, the security
 workflow also retains `production-image-<commit>` for seven days. It contains the exact scanned
 image archive, archive checksum, Docker image ID, and source revision. Promotion loads this
 artifact and pushes it to the registry without rebuilding; failed scans never export a release

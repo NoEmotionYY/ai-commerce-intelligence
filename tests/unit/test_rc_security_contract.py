@@ -13,6 +13,9 @@ def workflow_text() -> str:
 
 def test_security_workflow_has_required_gates() -> None:
     workflow = workflow_text()
+    assert "branches: [master]" in workflow
+    assert workflow.count("refs/heads/master") == 2
+    assert "refs/heads/main" not in workflow
     assert "gitleaks/gitleaks-action@" in workflow
     assert "bandit==1.9.4" in workflow
     assert "-lll -iii" in workflow
