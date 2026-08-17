@@ -27,7 +27,7 @@ Evidence:
 | Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
 | CI/security contracts | `11 passed` | local contract evidence |
 | full regression + skip guard | `550 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
-| Ruff / format / strict MyPy / release head / diff | PASS; 176 files, 69 production/hardening sources, `0016_agent_workflow` | L2 local |
+| Ruff / format / strict MyPy / release head / diff | PASS; 176 files, 70 production/hardening sources, `0016_agent_workflow` | L2 local |
 | Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
 | Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
 | Bandit 1.9.4 blocking/full | blocking 0; High 0, Medium 10, Low 54 | local SAST |
@@ -60,9 +60,28 @@ production Playwright has no musllinux distribution. An upgraded Bookworm slim c
 passed the fixable gate but retained 6 Critical and 18 High findings, so it was also rejected. The
 current candidate builds on the reviewed Python 3.12 glibc image, then copies the Python/app runtime
 onto a digest-pinned Distroless Debian 13 `cc` base. It removes unused curses/readline/dbm/sqlite/uuid
-extensions and copies only bz2/ffi/lzma libraries plus their exact package metadata for Trivy. This
-replacement still requires GitHub Trivy, image-contract, and full Production verifier evidence;
-until all three pass, 011F remains open and the prior scans are not reclassified as clean.
+extensions and copies only bz2/ffi/lzma libraries plus their exact package metadata for Trivy. GitHub
+run `32060954922` built this candidate and passed source security plus fixable Critical/High scanning;
+its complete SARIF contains 0 Critical, 0 High, 13 Medium, and 8 Low findings. The first image-contract
+run correctly failed because the clean bootstrap provenance probe implicitly selected SQLite after the
+production image intentionally removed that extension. Bootstrap module imports were made side-effect
+free until a real transaction starts, and the probe now carries the same non-connecting MySQL URL as
+production while preserving its hostile site-packages `PYTHONPATH`. The unchanged migration-head and
+package-root assertions then passed in the local clean image, and the complete Production verifier
+passed all deployment/recovery/readiness/browser stages. A GitHub rerun and scanned artifact identity
+verification remain required before 011E/F can close.
+
+The post-fix local regression is `550 passed, 19 skipped, 1 warning`; the exact skip guard accepted all
+19 reviewed environment-gated E2E skips. The production image contract passed Compose render,
+`/tmp` clean-container bootstrap import with hostile `PYTHONPATH`, `/app/commerce` and Alembic root/head
+assertions, and non-root/read-only production startup. The full Production verifier passed database
+role isolation, concurrent OWNER bootstrap and lock release, restart persistence, backup/restore plus
+negative controls, and HTTPS/browser. No production-smoke containers, volumes, or networks remained;
+the run's exact application image was removed without touching historical Compose service images.
+The first post-fix local pytest invocation requested coverage from an interpreter without
+`pytest-cov` and failed at argument parsing before collection; it is not counted as a test result.
+The complete no-coverage rerun produced the result above, while both locked GitHub quality jobs
+remain responsible for the XML coverage baseline.
 
 Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
 production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image

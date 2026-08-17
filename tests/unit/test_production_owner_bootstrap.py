@@ -107,6 +107,9 @@ def test_script_loads_project_commerce_from_arbitrary_cwd_with_hostile_pythonpat
     script = Path(__file__).resolve().parents[2] / "scripts" / "bootstrap_production_owner.py"
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(fake_site_packages)
+    environment["DATABASE_URL"] = (
+        "mysql+pymysql://commerce_app:unused@production-db.invalid:3306/commerce"
+    )
     probe = (
         "import runpy; "
         f"ns=runpy.run_path({str(script)!r}); "

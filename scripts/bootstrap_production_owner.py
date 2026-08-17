@@ -22,22 +22,11 @@ from sqlalchemy import func, select, text  # noqa: E402
 from sqlalchemy.engine import Connection  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from commerce.authentication import issue_access_token  # noqa: E402
 from commerce.config import Settings, get_settings  # noqa: E402
-from commerce.database import SessionLocal, engine  # noqa: E402
 from commerce.deployment_health import (  # noqa: E402
     PROJECT_ROOT as ALEMBIC_PROJECT_ROOT,
 )
 from commerce.deployment_health import assert_deployment_ready  # noqa: E402
-from commerce.models import (  # noqa: E402
-    MembershipRole,
-    MembershipStatus,
-    OperationLog,
-    Organization,
-    OrganizationMembership,
-    OrganizationStatus,
-    User,
-)
 
 if ALEMBIC_PROJECT_ROOT.resolve() != PROJECT_ROOT:
     raise RuntimeError("production owner bootstrap Alembic root is outside the project root")
@@ -103,6 +92,20 @@ def bootstrap_production_owner(
     token_ttl_seconds: int,
     now: datetime | None = None,
 ) -> str:
+    # Domain model import initializes the process-owned SQLAlchemy engine through
+    # commerce.models -> commerce.database.  Delay that side effect until this
+    # function is actually asked to transact against the configured database.
+    from commerce.authentication import issue_access_token
+    from commerce.models import (
+        MembershipRole,
+        MembershipStatus,
+        OperationLog,
+        Organization,
+        OrganizationMembership,
+        OrganizationStatus,
+        User,
+    )
+
     if not 60 <= token_ttl_seconds <= 3600:
         raise ValueError("bootstrap token TTL must be between 60 and 3600 seconds")
     slug, org_name, email, display_name = _normalize_inputs(
@@ -211,6 +214,12 @@ def bootstrap_production_owner(
 
 
 def main() -> None:
+    # Import the process-owned engine only for an actual bootstrap execution.  Keeping
+    # this out of module import lets the clean-container provenance probe verify the
+    # project and Alembic roots without initializing an ambient/default database URL.
+    from commerce.database import SessionLocal, engine
+    from commerce.models import Organization
+
     parser = argparse.ArgumentParser(
         description="Create the first production OWNER and emit one short-lived access token"
     )

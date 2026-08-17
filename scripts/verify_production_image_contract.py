@@ -127,6 +127,8 @@ def main() -> None:
                     "/tmp",
                     "--env",
                     "PYTHONPATH=/usr/local/lib/python3.12/site-packages",
+                    "--env",
+                    "DATABASE_URL",
                     image_tag,
                     "python",
                     "-c",
