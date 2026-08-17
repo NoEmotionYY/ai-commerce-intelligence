@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
 
 from commerce.config import get_settings
 from commerce.database import get_session
@@ -25,6 +28,18 @@ from commerce.schemas import InventoryRead, ProductRead, PurchaseExecute
 from commerce.services.business import advertising_summary, finance_summary, sku_sales
 
 app = FastAPI(title="Mock ERP", version="0.1.0")
+
+
+@app.middleware("http")
+async def reject_production_runtime(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    if get_settings().is_production:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "Mock ERP 仅允许在 development/test/demo 运行模式使用"},
+        )
+    return await call_next(request)
 
 
 @app.get("/health")

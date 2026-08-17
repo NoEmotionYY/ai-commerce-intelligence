@@ -27,6 +27,7 @@ services:
   init-db:
     build: .
     environment:
+      APP_ENV: demo
       DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
     depends_on:
       mysql:
@@ -37,6 +38,7 @@ services:
   agent-api:
     <<: *app
     environment:
+      APP_ENV: demo
       DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
       ERP_BASE_URL: http://mock-erp:8001
       CRAWLER_BASE_URL: http://crawler-service:8002
@@ -62,6 +64,7 @@ services:
   mock-erp:
     <<: *app
     environment:
+      APP_ENV: demo
       DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
       ERP_SERVICE_TOKEN: ${ERP_SERVICE_TOKEN:?必须设置 ERP_SERVICE_TOKEN}
     command: ["uvicorn", "commerce.erp_api:app", "--host", "0.0.0.0", "--port", "8001"]
@@ -74,7 +77,8 @@ services:
 
   mock-competitor-site:
     <<: *app
-    environment: {}
+    environment:
+      APP_ENV: demo
     command: ["uvicorn", "commerce.competitor_site:app", "--host", "0.0.0.0", "--port", "8003"]
     ports: ["127.0.0.1:8003:8003"]
     healthcheck:
@@ -86,6 +90,7 @@ services:
   crawler-service:
     <<: *app
     environment:
+      APP_ENV: demo
       DATABASE_URL: mysql+pymysql://commerce:commerce@mysql:3306/commerce
       COMPETITOR_BASE_URL: http://mock-competitor-site:8003
       ALLOWED_CRAWLER_HOSTS: mock-competitor-site
@@ -106,6 +111,7 @@ services:
   frontend:
     <<: *app
     environment:
+      APP_ENV: demo
       AGENT_API_URL: http://agent-api:8000
       PYTHONPATH: /app
       DEMO_OPERATOR_API_KEY: ${DEMO_OPERATOR_API_KEY:-}
@@ -119,6 +125,26 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  frontend-v2:
+    <<: *app
+    environment:
+      APP_ENV: demo
+      AGENT_API_URL: http://agent-api:8000
+      COMMERCE_ACCESS_TOKEN: ${COMMERCE_ACCESS_TOKEN:-}
+      COMMERCE_ORGANIZATION_ID: ${COMMERCE_ORGANIZATION_ID:-}
+      COMMERCE_SHOP_ID: ${COMMERCE_SHOP_ID:-}
+      PYTHONPATH: /app
+    command: ["streamlit", "run", "frontend/v2_streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8511", "--server.headless=true"]
+    ports: ["127.0.0.1:8511:8511"]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8511/_stcore/health')"]
       interval: 5s
       timeout: 5s
       retries: 20

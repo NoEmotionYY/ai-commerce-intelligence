@@ -181,7 +181,9 @@ def business_anomalies(session: Session, as_of: datetime) -> list[dict[str, obje
         if item["risk"] in {"WARNING", "CRITICAL"}
     ]
     previous_start, current_start, end = trailing_windows(as_of)
-    for sku in ("A102", "D102"):
+    known_skus = set(session.scalars(select(Inventory.sku)))
+    known_skus.update(session.scalars(select(OrderItem.sku).distinct()))
+    for sku in sorted(known_skus):
         current = sku_sales(session, sku, current_start, end)["units"]
         previous = sku_sales(session, sku, previous_start, current_start)["units"]
         if int(previous) > 0 and int(current) < int(previous) * 0.85:
@@ -193,11 +195,17 @@ def business_anomalies(session: Session, as_of: datetime) -> list[dict[str, obje
                     "message": f"近7天销量 {current}，前7天 {previous}",
                 }
             )
-    refund = sku_sales(session, "C301", as_of - timedelta(days=30), as_of + timedelta(seconds=1))
-    if int(refund["units"]) and Decimal(refund["refunds"]) / Decimal(
-        refund["gross_sales"]
-    ) > Decimal("0.2"):
-        anomalies.append(
-            {"type": "REFUND", "sku": "C301", "severity": "WARNING", "message": "退款率超过20%"}
-        )
+    for sku in sorted(known_skus):
+        refund = sku_sales(session, sku, as_of - timedelta(days=30), as_of + timedelta(seconds=1))
+        if int(refund["units"]) and Decimal(refund["gross_sales"]):
+            refund_rate = Decimal(refund["refunds"]) / Decimal(refund["gross_sales"])
+            if refund_rate > Decimal("0.2"):
+                anomalies.append(
+                    {
+                        "type": "REFUND",
+                        "sku": sku,
+                        "severity": "WARNING",
+                        "message": "退款率超过20%",
+                    }
+                )
     return anomalies

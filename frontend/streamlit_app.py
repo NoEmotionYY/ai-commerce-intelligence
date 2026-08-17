@@ -161,7 +161,7 @@ if page == "经营看板":
 
 elif page == "智能运营助手":
     st.caption("使用真实内部经营数据和外部市场数据进行联合分析。")
-    message = st.text_input("输入问题", "为什么我们的 A102 最近销量下降？")
+    message = st.text_input("输入问题", "今天经营情况如何？")
     if st.button("开始分析"):
         if not message.strip():
             st.error("请输入要分析的问题。")

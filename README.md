@@ -1,6 +1,6 @@
 # AI 电商运营与营销智能中枢
 
-这是一个可本地运行的电商 Agent Demo：以 Mock ERP 提供内部订单、库存、广告和采购能力，以 HTTPX/Playwright Crawler 采集模拟竞品站，再由单 Agent、LangChain Tools 和 LangGraph 人工审批工作流完成联合分析与业务执行。
+这是一个可本地运行的 V1/Demo 电商 Agent：以显式 Demo 模式的 Mock ERP 提供内部订单、库存、广告和采购能力，以 HTTPX/Playwright Crawler 采集模拟竞品站，再由单 Agent、LangChain Tools 和 LangGraph 人工审批工作流完成联合分析与业务执行。V2 正在迁移到真实多平台店铺经营助手，V1 Demo 验收不代表 V2 COMPLETE。
 
 ## 快速启动
 
@@ -22,7 +22,7 @@ docker compose up -d --build --wait
 - Crawler 文档：http://localhost:8002/docs
 - 模拟竞品站：http://localhost:8003/docs
 
-默认是离线确定性意图路由，所有指标仍来自真实数据库查询和 Python 计算，不依赖外部 LLM 密钥。生产式部署必须替换 `.env.example` 中的演示令牌，并限制服务端口。
+默认本地 Compose 使用显式 `APP_ENV=demo`。离线确定性意图路由的指标来自 Demo 数据库查询和 Python 计算，不依赖外部 LLM 密钥。生产必须设置 `APP_ENV=production` 并配置真实数据源；缺失配置时会返回受控未配置状态，不会 fallback 到 Mock ERP/Crawler 或自动加载 seed。
 
 如需使用 DeepSeek 官方云模型 Tool Calling，在被 Git 忽略的 `.env` 中设置：
 
@@ -65,7 +65,8 @@ docker run --rm --network ai-commerce-intelligence_default --env-file .env `
 
 ```bash
 alembic upgrade head
-python scripts/seed.py
+# 仅在本地显式 Demo 模式加载固定 fixtures；生产模式不会执行 seed。
+APP_ENV=demo python -m scripts.seed
 ```
 
 ## 安全边界
@@ -76,7 +77,12 @@ python scripts/seed.py
 - 工具日志只保存调用摘要，不保存模型私有思维过程或密钥。
 - 本项目不实现登录、验证码或访问控制绕过。
 
-详见 [系统架构](docs/ARCHITECTURE.md)、[架构决策](docs/DECISIONS.md) 和 [验收标准](docs/ACCEPTANCE.md)。
+详见 [系统架构](docs/ARCHITECTURE.md)、[生产部署](docs/DEPLOYMENT.md)、
+[RC CI](docs/CI.md)、[安全扫描](docs/SECURITY_SCANNING.md)、
+[架构决策](docs/DECISIONS.md) 和 [验收标准](docs/ACCEPTANCE.md)。
+
+生产部署、健康检查、TLS、备份/恢复和发布演练见 [生产部署指南](docs/DEPLOYMENT.md)。生产
+Compose 与上面的本地 Demo Compose 是两条独立路径，生产路径不启动任何 Mock/seed 服务。
 
 ## 许可证
 

@@ -1,163 +1,1954 @@
-# 项目进度
+# Development Progress
 
-## 当前状态
+## V2 Status
 
-- 当前阶段：Apache-2.0 开源许可证发布完成
-- 项目完成状态：COMPLETE
-- 最后更新：2026-08-16
+Phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`
+Current task: none; `COM-P1-011` — Production Deployment and Reliability Hardening (`DONE`)
+Next task: post-RC real-platform/operator rollout
+Last completed top-level task: `COM-P1-011` — Production Deployment and Reliability Hardening
+Current verification slice: `COM-P1-011H` Final Acceptance (`DONE`)
+Last verified checkpoint: `COM-P1-011H` (`RC READY`)
+V2 completion: `NOT_COMPLETE`
 
-## 已完成里程碑
+## 2026-08-18 — COM-P1-011 Final RC Checkpoint
 
-### 2026-08-16：Apache-2.0 开源许可证发布
+Status: `RC READY`; overall product remains `V2 NOT_COMPLETE` because no real Douyin/TikTok Shop
+execution is claimed.
 
-- 新增 Apache License 2.0 官方完整许可证文本，并在 Python 包元数据中声明 `LICENSE` 文件。
-- README 增加许可证说明和入口，GitHub 可识别仓库许可证。
-- 当前工作树验证：`93 passed, 18 skipped`；Ruff、格式检查、Mypy（28 个源文件）、许可证元数据检查和 `git diff --check` 全部通过。
+- Frozen commit: `fc20643332bc904310a8aee22d57f65777cab8a8`.
+- Local Production verifier: PASS for database roles, bootstrap concurrency, restart persistence,
+  backup/restore and negative controls, HTTPS/readiness, browser, and exact cleanup.
+- GitHub release run `32073448704`: Python 3.11/3.12 quality, MySQL 8.4 migration integrity,
+  production Compose/image contract, and isolated production release smoke all PASS.
+- GitHub security run `32073445904`: Gitleaks, Bandit, pip-audit, blocking Trivy, complete SARIF,
+  and exact scanned-image export all PASS. SARIF: `0 Critical / 0 High / 9 Medium / 7 Low`.
+- Artifact: GitHub digest
+  `sha256:29ee4a313fbc0f444ccb7dd40ddedca0048bcae54e5a84048495ebf6f278149d`;
+  archive SHA-256 `0693922f62583300a31c75a0dee9062f063147e7ea224cc613308be6aa22f674`;
+  config digest `sha256:4d134733b7729037df38e0c49c70aaf887171adbafe84d676f9d02a64a62fdeb`;
+  OCI manifest digest `sha256:e6f600b04bff0d7ddf03210f4d849744b5d8c8dd3da50cc6de8d27b923f2d350`.
+  The repository verifier loaded and verified the artifact without rebuilding.
+- Master protection: strict status checks and admin enforcement are enabled for both quality jobs,
+  MySQL migration integrity, production image contract, source security, and container scan.
+- Residual OS risks are explicitly accepted through 2026-09-17 in ADR-033; no unresolved
+  Critical/High finding remains.
 
-### 2026-08-14：DeepSeek 真实云 Tool Calling 完成
+## 2026-08-18 — COM-P1-011E/F Local CI and Security Execution
 
-- 新增 `offline` / `deepseek` Provider 抽象；DeepSeek 只从环境读取密钥，并限定官方 HTTPS 端点、已验证模型、超时与工具调用预算。离线确定性路径保持不变。
-- DeepSeek 使用真实 LangChain `bind_tools → tool_calls → ToolMessage`。A102 强制核验五类工具及实体参数，最终指标和证据由真实工具结果交给共享 Python 组合器生成，不信任模型自报数据。
-- B205 的云模型只能调用只读库存、商品与销量工具；采购数量、金额和草稿由确定性业务服务生成，状态停在 `PENDING`。只有独立审批员凭据可批准，ERP 执行保持唯一与幂等。
-- 本地完整套件：`93 passed, 18 skipped in 26.47s`。跳过项均是需要显式 Compose、云凭据、浏览器或故障注入开关的环境门控用例，已在对应真实环境单独执行。
-- 真实 DeepSeek 云套件：`7 passed in 59.37s`；使用模型 `deepseek-v4-pro`，没有 mock 云响应。
-- DeepSeek Compose 浏览器套件：`5 passed, 1 skipped in 48.50s`；跳过项仅为单独执行的故障注入场景。浏览器断言当前提供商与模型，不能在离线模式假通过。
-- 离线 Compose API：`5 passed in 21.61s`；离线浏览器：`5 passed, 1 skipped in 22.72s`。验证新增云路径没有削弱原确定性路径。
-- 无效密钥、极短超时和真实网络不可达分别得到受控中文 `502`、`504`、`502`；浏览器故障场景分别为 `1 passed in 4.37s` 与 `1 passed in 4.02s`，没有新增审批、前端 traceback 或凭据泄漏。
-- 最终无缓存构建和全栈重建成功，耗时 `265.2s`；六服务 healthy。干净数据卷迁移到 `0002_approval_idempotency`，16 张表、50 商品、10000 订单。
-- 安全边界收尾后再次从当前工作树重建全栈，耗时 `239.5s`；容器源码哈希与工作树一致。最终 Compose API `5 passed in 45.23s`，DeepSeek 浏览器 `5 passed, 1 skipped in 46.97s`。
-- Ruff、格式检查、Mypy（28 个源文件）和 `git diff --check` 全部通过。
-- 三方向独立复审发现的密钥 repr、工具参数校验、模型证据可信边界、确定性计算、云浏览器假通过与异常边界问题均已修复；最终 Critical 0、High 0。
+Status:
 
-### 2026-08-14：DeepSeek 云模型验收重新打开
+- `COM-P1-011E`: `IN_PROGRESS`; local parity passes and GitHub-hosted execution is evidenced for
+  frozen commit `ad36dd8`, but the current pip-removal worktree still needs a new frozen run.
+- `COM-P1-011F`: `TODO / LOCAL_SCANS_EXECUTED`; the `ad36dd8` GitHub scan is recorded below, but
+  the changed image requires a new scan and explicit residual-risk disposition.
+- RC remains `NOT_READY`.
 
-- 用户提供本地 `.env` DeepSeek 配置；审计仅确认配置项存在且非空，没有输出或记录密钥值。
-- 现有离线确定性路径保持不变；现有云代码只支持 OpenAI 特判，尚未执行 DeepSeek。
-- 官方文档当前标准端点为 `https://api.deepseek.com`，当前 Tool Calling 模型为 `deepseek-v4-pro` / `deepseek-v4-flash`；旧 `deepseek-chat` 已退役。
-- 现有云返回位于 B205 确定性草稿分支之前，必须增加安全的云意图后处理，确保模型只选择/调用只读工具，正式采购单仍只能经人工审批创建。
-- 本轮旧 FINAL_REPORT 暂停生效；DeepSeek 云连接、真实工具调用、A102、B205 和故障处理必须分别给出新证据。
+Evidence:
 
-### 2026-08-14：第二次人工 UI 验证重新打开
+| Check | Exact result | Boundary |
+|---|---|---|
+| Actionlint 1.7.7 | both workflow files PASS after quoting image references and grouping summary output | local workflow syntax/shell evidence |
+| CI/security contracts | `11 passed` | local contract evidence |
+| full regression + skip guard | `550 passed, 19 skipped, 1 warning`; exactly 19 reviewed skips | L2 local |
+| Ruff / format / strict MyPy / release head / diff | PASS; 178 files, 70 production/hardening sources, `0016_agent_workflow` | L2 local |
+| Gitleaks 8.30.1 history | 28 commits, no leaks | local committed-history scan |
+| Gitleaks worktree | only the same 14 reviewed test false positives after excluding ignored local `.env` and scanner output | local uncommitted-tree review |
+| Bandit 1.9.4 blocking/full | blocking 0; High 0, Medium 10, Low 54 | local SAST |
+| pip-audit 2.10.1 exact production lock | 93 dependencies, 0 known vulnerabilities | local dependency scan |
+| Trivy 0.69.3 original production image | fixable High 9, Critical 0 | real blocking finding; failed as intended |
+| Trivy remediated image `sha256:fb4be3de...` | fixable Critical/High 0; complete SARIF has 14 unfixed findings | local image scan; not a GitHub artifact |
+| scanned-image export/load | gzip archive hash recorded; loaded image ID exactly matched `sha256:fb4be3de...` | local artifact-identity rehearsal |
+| post-remediation Production verifier | role isolation, bootstrap concurrency, restart/readiness, backup/restore negative controls, HTTPS/browser PASS | current-tree L2 |
 
-- 人工验证发现审批角色仍不清晰，Approval Center 可收到“审批凭据无效”；导航、表格字段、状态、风险、操作类型和原始 JSON 仍暴露英文后端表示。
-- 运行态追踪确认两种凭据有意分离：聊天、审批列表、执行记录、采集代理使用 `X-Operator-Key`；批准/拒绝使用 `X-Approver-Key`。不能用有效 operator 代替 approver。
-- Streamlit 旧实现把 approver 控件放在审批页条件分支，切出该页后控件状态会被清理；操作员控件始终在侧栏，因此表现为只有审批员凭据丢失。加上无角色说明和验证状态，用户容易把 operator 值当 approver 值。
-- 五页大量把 Pydantic 模型直接 `model_dump()` 到 dataframe / JSON，导致 `id`、`action_type`、`CREATE_PURCHASE_ORDER`、`HIGH`、`SUCCESS`、Crawler task type、tool name 等内部稳定值直接进入用户界面。
-- 原 `FINAL_REPORT` 再次暂停生效；本轮所有 PASS 必须重新执行并记录。
+The first independent clean-host walkthrough cloned frozen commit `70b2119`, created a fresh
+Python 3.12.13 environment, resolved the dev/runtime graph under the production lock, passed the
+release-head gate, passed the official MySQL migration verifier, and passed the production image
+contract. Its full verifier reached the browser step after all database/recovery checks but failed
+because the runbook installed the Playwright package without downloading Chromium. Runtime
+containers, volumes, and networks were all absent after the failure. The runbook now explicitly
+installs Chromium (and Linux OS dependencies) before the release exercise; the unchanged verifier
+must be rerun from the updated frozen commit before 011G can advance.
 
-### 2026-08-14：第二次 UI / 认证加固实现与验证
+The corrected walkthrough fast-forwarded the clean clone to frozen commit `17b8323`, installed the
+matching Chromium runtime, and reran the unchanged Production verifier. It passed database role
+isolation, bootstrap concurrency, restart persistence, backup/restore plus negative controls, and
+HTTPS/browser. Post-run production-smoke container, volume, and network counts were all zero. This
+is an 011G local operator-path checkpoint, not a registry-promotion or GitHub-hosted PASS.
 
-- 操作员和审批员凭据控件固定在侧栏，使用独立会话状态与密码模式；角色说明和四种验证状态均为中文。
-- 新增无副作用认证验证端点；操作员、审批员请求头继续严格分离，不能互相授权。
-- 本地生成脚本通过被 Git 忽略的 `.env` 向掩码控件加载随机演示凭据，源码没有固定秘密。
-- 新增集中式中文展示层，统一导航、字段、状态、风险、操作、采集类型、工具、来源和未知值降级；五页移除正常视图中的原始 JSON。
-- Streamlit 工具栏最小化并关闭详细错误；浏览器测试检查无 `Deploy`、无异常组件、无指定英文内部术语，页面可见文本不含凭据。
+The Trivy blocking failure was not waived. The upgraded Debian image passed the fixable
+Critical/High gate, but its authoritative GitHub SARIF still records 14 Debian Trixie findings
+without an available fixed package (4 Critical, 10 High). Reachability review is not being used as
+an exception. An official Python Alpine 3.24 candidate was rejected by two GitHub builds because
+production Playwright has no musllinux distribution. An upgraded Bookworm slim candidate built and
+passed the fixable gate but retained 6 Critical and 18 High findings, so it was also rejected. The
+current candidate builds on the reviewed Python 3.12 glibc image, then copies the Python/app runtime
+onto a digest-pinned Distroless Debian 13 `cc` base. It removes unused curses/readline/dbm/sqlite/uuid
+extensions and copies only bz2/ffi/lzma libraries plus their exact package metadata for Trivy. GitHub
+run `32060954922` built this candidate and passed source security plus fixable Critical/High scanning;
+its complete SARIF contains 0 Critical, 0 High, 13 Medium, and 8 Low findings. The first image-contract
+run correctly failed because the clean bootstrap provenance probe implicitly selected SQLite after the
+production image intentionally removed that extension. Bootstrap module imports were made side-effect
+free until a real transaction starts, and the probe now carries the same non-connecting MySQL URL as
+production while preserving its hostile site-packages `PYTHONPATH`. The unchanged migration-head and
+package-root assertions then passed in the local clean image, and the complete Production verifier
+passed all deployment/recovery/readiness/browser stages. A GitHub rerun and scanned artifact identity
+verification remain required before 011E/F can close.
 
-本轮重新执行的当前证据：
+The post-fix local regression is `550 passed, 19 skipped, 1 warning`; the exact skip guard accepted all
+19 reviewed environment-gated E2E skips. The production image contract passed Compose render,
+`/tmp` clean-container bootstrap import with hostile `PYTHONPATH`, `/app/commerce` and Alembic root/head
+assertions, and non-root/read-only production startup. The full Production verifier passed database
+role isolation, concurrent OWNER bootstrap and lock release, restart persistence, backup/restore plus
+negative controls, and HTTPS/browser. No production-smoke containers, volumes, or networks remained;
+the run's exact application image was removed without touching historical Compose service images.
+The first post-fix local pytest invocation requested coverage from an interpreter without
+`pytest-cov` and failed at argument parsing before collection; it is not counted as a test result.
+The complete no-coverage rerun produced the result above, while both locked GitHub quality jobs
+remain responsible for the XML coverage baseline.
 
-- 本地完整套件（最终嵌套契约修复后重跑）：`71 passed, 10 skipped in 18.18s`；10 项仅为显式环境门控的 5 项 Compose API 与 5 项浏览器验收，不计为普通套件通过项。
-- 前端展示、AppTest、认证契约定向套件：`44 passed in 10.74s`。
-- 干净 Compose API E2E：`5 passed in 24.32s`。
-- 干净 Compose Streamlit Playwright E2E：嵌套响应契约最终修复后重跑 `5 passed in 25.88s`，覆盖五页中文与凭据保持、认证矩阵、A102/经营日报、B205 和四类采集。
-- Ruff、格式检查、Mypy（27 个源文件）、`git diff --check` 均通过。
-- 删除数据卷后迁移到 `0002_approval_idempotency`；MySQL 有 16 张业务表，种子为 50 商品、10000 订单。
-- 六个运行服务全部 healthy；六服务最近日志未检出 Traceback、KeyError、TypeError、Exception 或 ERROR。
-- 并发六目标无缓存导出曾使 Docker Desktop RPC 断开；引擎恢复后对六服务共用的唯一 Dockerfile 串行执行完整 `--no-cache` 构建，生成同一镜像内容并在干净卷成功启动。首次失败未记作 PASS，最终串行构建和启动记为 PASS。
-- 第四位总体审查者发现市场日报嵌套 `new_features=null` 会触发 TypeError；改为严格嵌套模型并补客户端/AppTest 后复现为受控中文错误。最终复核 Critical 0、High 0。
+GitHub PR run `32062779729` on frozen commit `ad36dd8` subsequently passed Python 3.11 and 3.12
+quality, MySQL 8.4 migration integrity, and the production Compose/image contract; its isolated
+release-smoke job was skipped by the documented PR-only condition. Security PR run `32062779646`
+passed source security and the image scan. Manual security run `32063279908` also passed both jobs
+and exported the single-build image artifact. GitHub recorded the 227 MB artifact digest as
+`sha256:79a8845126541d2a2b03758b9edcbb3303a8046ede3558db41d9771d3d03ae1a`.
+The downloaded artifact passed the repository verifier without loading: archive SHA-256
+`680436604e78862c38976fe248617597d007d61514a1398a4cf2660ba78cc022`, source revision
+`ad36dd8a7c041daeda351ebb3807cb51038fd248`, config digest
+`sha256:cbaa8b72e24cb436e556d39d99f952bac7f64985d840c611e95aac53588a9ab8`, and OCI manifest digest
+`sha256:9f1855d09fb2f2af68364c14f2553b9e5026edc7ec484030eddb861674327d66` all matched the archive.
+The final Docker load check is unavailable in the current restricted Codex process, but the same
+verifier's classic/containerd load path was proven on the earlier `1abeea0` artifact.
 
-### 2026-08-14：人工 UI 验收重新打开
+Formal SARIF review of `ad36dd8` found 0 Critical, 0 High, 13 Medium, and 8 Low package findings.
+Five findings (four Medium and one Low) belonged to `pip 25.0.1`, which is not needed at runtime.
+The later `fc20643` image removed pip and superseded this historical artifact; its final scan and
+risk disposition are recorded in the current checkpoint above.
 
-- 人工 Streamlit 验证复现 Copilot `KeyError`、Approval Center `TypeError` 与受保护 Crawler 操作错误渲染。
-- 确认根因是前端没有 HTTP 状态/JSON/响应 shape 契约，旧 E2E 又绕过了 Streamlit。
-- 旧 `FINAL_REPORT` 的完成结论暂停生效，详见 `POST_ACCEPTANCE_REGRESSION.md`。
+The previously listed 011E/F evidence is now complete on `fc20643`: GitHub-hosted quality, MySQL,
+production-image, Gitleaks/Bandit/pip-audit/Trivy, artifact export/load, release smoke, residual-risk
+disposition, and direct branch-protection verification all passed.
 
-### 2026-08-14：后验收 UI 回归修复与实际验证
+The first GitHub PR run on Draft PR `#1` provided real fail-closed evidence. Source security and
+container security both passed; MySQL 8.4 migration integrity and the production image contract
+passed. Both quality matrix jobs failed before pytest because the development toolchain was not
+locked: Python 3.12 installed NumPy 2.5.2/Mypy 1.20.2 while Mypy targeted 3.11, and Python 3.11
+exposed the same new dependency/stub diagnostics. This was not waived. A new exact
+`requirements.ci.lock` constrains Mypy/pytest/coverage/Ruff, strict typing now runs once on the
+release Python against production packages and the production-hardening scripts, and both Python
+versions still run the full pytest suite. Six real current-dependency production typing findings
+were fixed; the revised 69-source type gate passes both locally and in a Linux production-lock
+container. A new GitHub run is required before 011E can advance.
 
-- 建立 `FrontendApiClient`，统一校验 HTTP 401/403/404/422/500、超时、网络、非法 JSON、缺失字段和错误对象/列表类型。
-- 五个 Streamlit 页面全部只消费已验证 Pydantic 模型；受控错误显示中文提示，未知错误写日志且不向用户泄漏 traceback。
-- 修复 Copilot 缺失 `answer`、Approval 错误字典迭代、Crawler 鉴权错误误当成功，以及 Dashboard/Market 同类契约风险。
-- 操作员凭据贯穿 Copilot、Approval 列表/日志和 Crawler 代理；审批凭据独立传给批准/拒绝端点；空、错误和正确凭据均有 AppTest 与浏览器证据。
-- 采购增加请求级幂等键和 `0002_approval_idempotency` 迁移；顺序/并发同键请求复用草稿，同一审批重放复用 ERP 采购单，相反决定返回 409。
-- 新增 Streamlit AppTest、前端客户端负面测试、Agent 契约测试、Crawler RUNNING 持久化测试和真实 8501 Playwright E2E。
+After those fixes, the unchanged Production verifier passed again from the current working tree:
+database role isolation, concurrent bootstrap and lock release, restart persistence, backup/restore
+and its negative controls, HTTPS/readiness, and authenticated browser smoke all passed. The exact
+`commerce-prod-smoke-34552501` containers, volume, and network were absent after the run; its three
+image tags were inspected by exact ID and removed explicitly. Historical production-smoke image
+tags remain outside this run's cleanup scope. This is renewed L2 evidence, not RC acceptance.
 
-本轮实际验证：
+## 2026-08-18 — COM-P1-011C/D Production Recovery and Readiness Checkpoints
 
-- 普通本地套件：`56 passed, 9 skipped`；9 项均为显式环境门控的 5 项 Compose 与 4 项浏览器 E2E。
-- 干净 Compose API E2E：`5 passed in 24.62s`，含真实 MySQL 并发采购幂等。
-- 干净 Compose 浏览器 E2E：`4 passed in 25.68s`，覆盖五页、A102、B205、凭据和四类 Crawler。
-- `ruff check`、`ruff format --check`、`mypy commerce frontend` 全部通过。
-- `docker compose down -v` 后 `docker compose build --pull --no-cache` 成功；全栈 6 个运行服务均 healthy。
-- 干净 MySQL 迁移版本 `0002_approval_idempotency`，seed 后 50 商品、10000 订单；E2E 后审批/采购数据真实持久化。
-- Frontend 日志未发现 `Traceback`、`KeyError`、`TypeError` 或 `streamlit_unexpected_error`。
-- Reviewer 1/2/3/4 最终均报告 Critical 0、High 0；总体审查确认可恢复 `COMPLETE`。
+Status:
 
-### 2026-08-13：权威文档读取与初始审计
+- `COM-P1-011C`: `DONE / L2 VERIFIED_LOCAL`.
+- `COM-P1-011D`: `DONE / L2 VERIFIED_LOCAL`.
+- Parent `COM-P1-011` remains `IN_PROGRESS`; current task advances to 011E.
 
-- 完整读取 `AGENTS.md`、`docs/PROJECT_SPEC.md`、`docs/ACCEPTANCE.md`。
-- 确认仓库最初仅包含上述三份文档，无现有实现可迁移。
-- 创建架构、任务、进度和决策记录。
-- 启动独立的规格、仓库和测试基础只读审查。
+Fixes validated before the checkpoint:
 
-实际验证：
+- `bootstrap_production_owner.py` now derives the project root from its own absolute path, inserts
+  it at `sys.path[0]` before application imports, fails closed unless `commerce.__file__` resolves
+  to that project, and requires the imported Alembic root to be identical. The production image
+  also declares `WORKDIR /app` and `PYTHONPATH=/app` as defense in depth.
+- A hostile same-name site-packages package plus arbitrary cwd subprocess test resolves the project
+  package/head. The clean production image contract runs from `/tmp` while forcing site-packages in
+  `PYTHONPATH` and proves `/app/commerce`, `/app`, and `0016_agent_workflow`.
+- Restore authenticates the original out-of-band manifest digest before normalizing only standard
+  CRLF line endings in private staging; strict two-line/hash/exact-basename validation and checksum
+  verification remain unchanged.
 
-- Git 根目录：`D:\Github\ai-commerce-intelligence`
-- 初始分支：`master`
-- 初始工作区：干净
-- Docker CLI/Engine：29.5.3
-- Docker Compose：v5.1.4
-- Python：3.11.7
-- Git：2.45.1.windows.1
+Dynamic evidence:
 
-## Phase 0 规格审计结论
+| Check | Exact result | Level |
+|---|---|---|
+| exact cleanup of `commerce-prod-smoke-9e67c041` | containers 0, volumes 0, networks 0, images 0 | L2 environment evidence |
+| production image contract | Compose config, hostile import/root, non-root/read-only runtime PASS | L2 |
+| unchanged full Production verifier | role isolation, restart persistence, backup/restore, negative controls, HTTPS/browser all PASS | L2 |
+| verifier cleanup | production-smoke containers 0, volumes 0, networks 0 | L2 |
+| full pytest + exact skip gate | `550 passed, 19 skipped, 1 warning`; 19 reviewed skips | L2 local regression |
+| Ruff / format / strict MyPy / single head / diff | PASS; 175 files, 141 typed sources, `0016_agent_workflow` | L2 |
 
-### 矛盾与缺失
+Review:
 
-- 规格要求分析竞品历史价格，但建议表结构只有当前商品快照；增加独立价格历史表。
-- 规格一处把“创建采购单”视为审批后动作，另一处列出“采购草稿”；统一为草稿可在本系统创建，ERP 正式采购单只能在批准后创建。
-- “100% 可运行”无法作为工程保证；改为本地确定性数据源、自动健康检查和 E2E 验证。
-- 未定义日期窗口、时区、金额精度、零销量和零广告消耗行为；实现中统一 UTC、`Decimal` 和显式零值规则。
-- 未提供 LLM 凭据与模型可用性；采用可选真实模型和默认离线路由，共用真实工具与数据。
-- 未定义公开网站允许范围；采用配置允许列表，默认只启用本地模拟站。
-- 未定义审批并发、重复提交、过期和身份可信边界；使用事务、状态机、幂等键和服务端再校验。
+- No migration/readiness check was disabled and no verifier assertion/step was removed. The first
+  rerun exposed the real import-root defect; the next exposed that Windows CRLF prevented the
+  intended partial-restore scenario from reaching destructive SQL. Both root causes were fixed in
+  production hardening code, and the original verifier then passed end to end.
+- 011C proves backup/delete/restore, exact row/head recovery, source authentication, partial failure
+  marker, clean retry, and negative controls. 011D proves process-only liveness, sanitized database
+  outage readiness failure, restart recovery, and restore-marker behavior.
 
-### 简化项
+## 2026-08-17 — COM-P1-011G Operability Hardening Implemented, Final Dynamic Gates Pending
 
-- 不引入 Redis/Celery、Kafka、复杂多 Agent 或 React。
-- 共享领域包减少重复代码，同时保留三个可独立部署服务。
-- 测试用 SQLite 提速，最终必须用 MySQL Docker 实测。
+Status:
 
-### 安全关注
+- `COM-P1-011G`: `TODO / IMPLEMENTED_UNVERIFIED` behind open 011C-F checkpoints.
+- This section records implementation/review progress only; it is not a documentation checkpoint
+  or an RC Ready claim.
 
-- 禁止 Agent/LLM 获取任意 SQL 写能力。
-- 采购执行不能仅依赖 UI 或提示词。
-- Crawler 需要防 SSRF、禁止凭据 URL 和非 HTTP(S) scheme，并校验重定向目标。
-- Tool 日志只记录调用信息，不记录模型私有推理或敏感配置。
+Implemented:
 
-## 外部阻塞与未执行项
+- Security CI builds once, scans the same image, labels it with the frozen revision, and exports it
+  only after source-security and blocking Trivy gates succeed. The promotion runbook loads that
+  archive, checks its image ID/revision, pushes without rebuilding, captures an immutable registry
+  manifest digest, and requires the registry config digest to equal the scanned Docker image ID.
+- Backup now emits a checksum-manifest digest for an audited out-of-band deployment record.
+  Production restore and the isolated verifier require that digest; restore snapshots exactly the
+  three selected files into private staging before authentication/import, closing host-replacement
+  TOCTOU. The isolated verifier uses a digest-pinned no-network MySQL container, mounts only the
+  selected package files, validates a tenant marker/head/charset/collation, removes only its exact
+  container/anonymous volume, and makes cleanup uncertainty a visible failure.
+- Added an audited production OWNER bootstrap. It validates readiness in a separate Session, then
+  holds a MySQL named lock on one dedicated physical Connection across identity/audit commit and
+  verified lock release. It atomically creates only the empty-store first OWNER or reissues a
+  bounded token to an exact active OWNER; the production verifier now contains two-identity
+  concurrent fail-closed and `IS_FREE_LOCK` checks.
+- Deployment instructions now cover Python/POSIX prerequisites, secret-file ACLs, bounded Docker
+  logs, isolated production-backup exercises, authenticated smoke, token lifecycle limitations,
+  `--no-build` restart/rollback, Docker staging capacity, and exact artifact evidence.
 
-- 当前没有真实外部阻塞。
-- DeepSeek 真实云模型联网 Tool Calling 已执行并通过；OpenAI 未配置、未执行，也不报告为 PASS。
+Local evidence:
 
-## 2026-08-14：Phase 1 至 Phase 8 实现里程碑
+| Check | Result | Meaning |
+|---|---|---|
+| full pytest | `550 passed, 19 skipped, 1 warning` | local regression; all 19 skips accepted by exact module+reason verifier |
+| focused owner/backup/docs/CI/security/deployment contracts | `55 passed, 1 warning` | local contract evidence |
+| strict MyPy for new operational scripts | PASS | local type evidence |
+| workflow YAML parse | PASS | syntax parse only; not GitHub-hosted execution |
+| production Compose maintenance config | PASS with explicit placeholder secrets/image digest | static rendered-contract evidence |
 
-已实现：
+Review and remaining evidence:
 
-- SQLAlchemy 数据模型、Alembic 初始迁移、幂等 seed。
-- Mock ERP 商品、订单、库存、广告与受保护采购 API。
-- 财务、库存、补货、异常、竞品价格、内容趋势和评论主题确定性分析。
-- HTTPX JSON/HTML 与 Playwright 动态采集、任务状态、重试、限速、校验、去重和允许列表。
-- LangChain Tools 真实连续调用与操作日志。
-- LangGraph `interrupt/resume` 采购工作流及持久审批记录。
-- Agent API、日报、Dashboard、五页面 Streamlit UI。
-- 六服务 Docker Compose 与健康检查。
+- Independent reviewers found and drove fixes for identity bootstrap snapshot/connection-lock races,
+  backup cleanup visibility/source authentication/TOCTOU, runbook clean-host prerequisites, scanned
+  artifact cross-job gating, and registry digest-to-image binding. Final code-level architecture
+  and security re-reviews report `GO`, Critical `0`, High `0`.
+- Docker Desktop storage was repaired; current-lock image/import, concurrent bootstrap,
+  private-staging restore, C/D recovery, browser path, and exact cleanup now have L2 PASS evidence.
+- GitHub-hosted quality/security jobs, Gitleaks Action, Trivy, scanned-image artifact, immutable
+  registry promotion, branch ruleset, and clean-operator walkthrough remain unexecuted.
+- Superseded by the newer 2026-08-18 section: post-change Actionlint, local scanners, current-image
+  Trivy, artifact export/load, and the full Production verifier have now executed. GitHub-hosted and
+  clean-operator evidence remain open.
 
-实际验证：
+## 2026-08-17 — COM-P1-011C Recovery Hardening, Historical Dynamic Failure
 
-- `python -m pytest -q`：21 passed，4 个 Compose 用例按设计在普通测试中跳过。
-- `python -m ruff check .`：通过；`python -m ruff format --check .`：通过。
-- `python -m mypy commerce`：23 个源文件无问题。
-- `docker compose build --no-cache`：通过；随后稳定源码增量重建通过。
-- `docker compose down -v` 后全新 MySQL 卷启动，6 个运行服务均 healthy。
-- MySQL：16 张业务表，50 商品、10000 订单、30 广告；`workflow_checkpoints` 存在并被实际写入。
-- 显式 `RUN_COMPOSE_E2E=1`：4 passed，覆盖 HTTPX、HTML 分页、Playwright、A102 五工具联合分析和 B205 审批执行。
-- 独立规格、安全、财务/Crawler/测试和最终验收审查已执行；所有 Critical/High 已修复并复测。
+Status:
+
+- Task: `COM-P1-011C`
+- Result: `HISTORICAL FAILURE / SUPERSEDED BY 2026-08-18 PASS`
+- Highest new evidence: local contract/API tests and independent code review; the post-fix
+  production Compose recovery exercise has not passed.
+
+Implemented and reviewed:
+
+- Backup packages bind the dump to exact database/head/charset/collation metadata and a strict
+  two-entry checksum manifest. Backup refuses a restore-in-progress database and requires the
+  head, charset, and collation snapshots to be unchanged before and after the dump.
+- Restore validates path, confirmation, package shape, both hashes, database, exact head, charset,
+  and collation before destructive SQL. It rebuilds a clean target database, preserves a
+  `deployment_restore_state` marker after any import/head failure, and clears it only after exact
+  head verification.
+- Readiness rejects the restore marker. The verifier separately covers truncated manifests,
+  structurally valid bad hashes, unsafe paths/confirmation/metadata, partial import, valid retry,
+  business-row/head recovery, and partial-table cleanup.
+- Earlier recovery review reached code-level `GO`; subsequent operability/security review found
+  additional source-authentication, TOCTOU, and cleanup issues. They are fixed, and the final static
+  re-review reports Critical `0`, High `0`; dynamic MySQL evidence is still mandatory.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| focused deployment/health tests | `24 passed, 1 warning` | local SQLite/static contracts | L2 for contracts only |
+| Ruff / format / strict MyPy / `git diff --check` | PASS | local | L2 |
+| `python scripts/verify_production_deployment.py` | INFRASTRUCTURE FAILURE while exporting image: containerd layer write `input/output error` | Docker Desktop | no PASS |
+
+Dynamic verification blocker:
+
+- The Docker failure occurred before the new restore path ran. Docker Desktop then reported it
+  was unable to start; C: had about 584 MiB free while D: had about 13.9 GiB free.
+- After C: temporarily recovered to about 1.83 GiB, Docker Desktop restarted and a current-tree
+  retry successfully completed the production dependency install and image layer export. It then
+  failed before the first MySQL container was created: containerd/overlay/network metadata writes
+  returned `input/output error`. Cleanup hit the same storage error. The exact project network is
+  now absent, but exact volume `commerce-prod-smoke-9e67c041_mysql-data` and application image
+  cleanup could not be verified/finished. Docker Desktop was stopped after C: reached effectively
+  0 GiB free; D: remained about 14.0 GiB free.
+- Initial normal restart/start attempts did not restore the engine. No Docker factory reset, broad prune,
+  or user/system-file deletion was attempted. The older project `commerce-prod-smoke-2834197b`
+  had no container/volume; its three exact unused generated image tags were removed after verifying
+  that no container referenced them. After storage recovery, exact checks confirmed that
+  `commerce-prod-smoke-9e67c041` had no remaining container, volume, network, or image resource.
+- This historical failure was not counted as PASS. It is superseded by the 2026-08-18 current-tree
+  Production verifier and exact-cleanup PASS recorded above.
+
+Health/readiness work prepared behind 011C:
+
+- Readiness now emits only bounded safe reason codes in logs and a generic public 503 body.
+- Local tests prove process-only liveness, database-failure sanitization, restore-marker refusal,
+  stale-head refusal, and return to 200 after recovery.
+- The production verifier now stops MySQL, requires live=200 and ready=503 with the exact sanitized
+  body, starts MySQL, and requires readiness recovery. This remains unverified in Compose until the
+  engine is restored.
+
+## 2026-08-17 — COM-P1-011E/F CI And Security Gates Implemented, Dynamic Gates Pending
+
+Status:
+
+- `COM-P1-011E`: `TODO / IMPLEMENTED_UNVERIFIED` behind open C/D checkpoints.
+- `COM-P1-011F`: `TODO / IMPLEMENTED_PARTIAL` behind E and unavailable Docker scan execution.
+- No later checkpoint is promoted by this implementation evidence.
+
+Implemented:
+
+- Added read-only, SHA-pinned GitHub workflows for Python 3.11/3.12 quality, official MySQL 8.4
+  migration integrity, production Compose/image contract, main/tag production smoke, Gitleaks,
+  Bandit, `pip-audit`, and two-pass Trivy scanning.
+- Python 3.12 full regression is constrained by the production lock; 3.11 separately verifies the
+  declared compatibility floor. An exact module+reason JUnit allowlist now makes every unreviewed
+  skip fail closed.
+- Added bounded timeouts, non-persisted checkout credentials, read-only permissions, isolated test
+  database/image tags, baseline coverage artifacts, and explicit no-PASS treatment for skips or
+  infrastructure failures.
+- Added `docs/CI.md` and `docs/SECURITY_SCANNING.md`; there is no reviewed vulnerability exception.
+  `.gitleaksignore` contains 14 exact historical fingerprints classified as test false positives,
+  not a broad path/rule suppression.
+
+Security findings and fixes:
+
+- Removed the Settings repr exposure path for password-bearing `database_url`.
+- Production startup now rejects configured Douyin/TikTok webhook secrets shorter than 32
+  characters or recognized placeholders.
+- Local `pip-audit` found 9 advisories against locked `cryptography==45.0.7`. The supported range
+  and lock were upgraded to `cryptography==50.0.0`; re-audit reported no known vulnerabilities.
+- An isolated `PYTHONPATH` load proved version 50.0.0 was active while 43 authentication,
+  credential encryption/service, readiness, and deployment-contract tests passed.
+
+Evidence:
+
+| Check | Result | Classification |
+|---|---|---|
+| full default pytest | `543 passed, 19 skipped, 1 warning`; all 19 exact-reviewed E2E skips | local L2 regression |
+| full Ruff / format / strict MyPy / single Alembic head / diff | PASS; 169 formatted files, 136 typed source files, head `0016_agent_workflow` | local L2 |
+| Bandit 1.9.4 `-lll -iii` | 0 findings | local scanner PASS |
+| pip-audit 2.10.1 after remediation | 0 known vulnerabilities | local scanner PASS |
+| workflow YAML parse and focused CI/security contracts | PASS | implementation/contract evidence |
+| Gitleaks Action / Trivy image scan / GitHub-hosted jobs | not executed | no PASS |
+
+Independent CI review initially reported Critical 0 and two High evidence-integrity gaps. Both were
+fixed (production-lock parity and fail-closed skip policy), and the focused CI re-review confirmed
+those fixes. Later artifact-promotion review findings are tracked in the 011G section. Production
+lock hashes remain a supply-chain hardening opportunity and are not represented as implemented.
+
+## 2026-08-17 — COM-P1-011B Production Migration Checkpoint
+
+Status:
+
+- Task: `COM-P1-011B`
+- Result: `DONE`
+- Verification level: `L2 VERIFIED_LOCAL`
+- Environment: local migration tests plus a digest-pinned official MySQL 8.4.11 disposable
+  container on a random loopback port and an empty random `test` database.
+
+Scope boundary:
+
+- Verified the existing additive Alembic chain and database behavior; added no migration, table,
+  business entity, connector, or application feature.
+- This checkpoint does not claim backup/restore, readiness failure injection, sandbox, or real-
+  platform evidence.
+
+Implemented:
+
+- Added `scripts/verify_production_migrations.py` as a repeatable local/CI wrapper around the
+  existing comprehensive MySQL verifier.
+- The wrapper pins MySQL by digest, generates container/database/password/port isolation, and the
+  inner verifier refuses non-MySQL, non-test, or non-empty targets.
+- Cleanup saves the returned container ID, removes only that ID with its anonymous volumes, and
+  confirms the recorded data volume no longer exists. Name collision cannot delete another
+  container.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| `python -m pytest -q tests/migration/test_migrations.py` | `17 passed` | SQLite/local migration harness | L2 |
+| `python -m alembic heads` | `0016_agent_workflow (head)` | local source tree | L2 |
+| `python scripts/verify_production_migrations.py` | full MySQL migration/integrity/data/concurrency contract PASS | disposable MySQL 8.4.11 | L2 |
+| focused deployment contract / Ruff / format / strict MyPy | PASS | local | L2 |
+
+Negative and cleanup evidence:
+
+- An initial socket-path race was corrected by verifying TCP readiness at `127.0.0.1`, matching
+  the application connection path.
+- Review found that plain container removal leaked the image-declared anonymous volume. Two
+  precisely time-attributed test volumes were removed; unrelated volumes were not touched.
+- Final verifier container: `commerce-rc-migration-9c7802e4`. Post-run container lookup was empty,
+  and no dangling volume created during the final run remained.
+
+Review:
+
+- Independent migration/architecture review: `GO`; Critical `0`, High `0`.
+
+Checkpoint: `COM-P1-011B` — `PASS / L2 VERIFIED_LOCAL`. Parent `COM-P1-011` remains
+`IN_PROGRESS`; `COM-P1-011C` is active; `BLOCKED_EXTERNAL` remains `0`.
+
+## 2026-08-17 — COM-P1-011A Production Docker/Compose Checkpoint
+
+Status:
+
+- Task: `COM-P1-011A`
+- Result: `DONE`
+- Verification level: `L2 VERIFIED_LOCAL`
+- Environment: Windows Docker Desktop, isolated production Compose, official MySQL 8.4.11,
+  digest-pinned Nginx, self-signed TLS, authenticated local test tenant.
+
+Scope boundary:
+
+- Hardened and verified only the existing V2 release image and production Compose topology.
+- Added no business entity, Agent tool, platform capability, alert type, or frontend module.
+- Self-signed TLS is local transport evidence, not real CA/DNS evidence. No cloud LLM or real
+  Douyin/TikTok seller environment was called.
+
+Implemented:
+
+- Digest-pinned Python, MySQL, and Nginx images plus an exact Linux production dependency lock.
+- Non-root/read-only application services, owned bounded tmpfs mounts, Host-bound TLS proxy,
+  internal-only API/frontend/database ports, and explicit migration ordering.
+- Distinct runtime, migration, backup, and restore database identities. Runtime is DML-only;
+  restore alone receives the audited trigger-definer permission required by MySQL 8.4 dumps.
+- Build-context exclusions for environment files, backups, SQL, certificates, and private keys;
+  LF checkout enforcement for container shell scripts.
+- Release verifier isolation from ambient Compose/database/secret variables and an authenticated
+  tenant Dashboard browser smoke using a generated User, Membership, Shop, and short-lived token.
+
+Evidence:
+
+| Command/check | Exact result | Environment | Level |
+|---|---|---|---|
+| `python -m pytest -q tests/unit/test_deployment_health.py tests/unit/test_production_deployment_contract.py` | `22 passed, 1 warning` | local | L2 |
+| focused Ruff / format / strict MyPy | PASS | local | L2 |
+| `python scripts/verify_production_deployment.py` | deployment, role isolation, restart persistence, backup/restore, HTTPS/browser all PASS | isolated production Compose | L2 |
+| `git diff --check` | PASS | working tree | L2 |
+
+Negative and recovery evidence:
+
+- Runtime database identity successfully performed required DML and was denied a test `CREATE
+  TABLE`; migration, backup, and restore used separate credentials.
+- First review/run found and fixed proxy Host mismatch, ambient environment override, backup
+  privileges, read-only Nginx tmpfs ownership, MySQL startup race, trigger definer restore rights,
+  and Windows Docker output decoding. Each fix was retested by the final full verifier.
+- Final application image ID:
+  `sha256:ded71001e2a0c144ad9732e41222aeba30c94a1c0a3929fb7bd4184fcb604e3c`.
+- Isolated project `commerce-prod-smoke-3d1877af` left no containers or MySQL volume.
+
+Review:
+
+- Independent architecture/deployment review: `GO`; Critical `0`, High `0`.
+- Production dependency resolution is frozen by `requirements.production.lock`; changing the lock
+  or an image digest requires rerunning the release gates.
+
+Checkpoint: `COM-P1-011A` — `PASS / L2 VERIFIED_LOCAL`. Parent `COM-P1-011` remains
+`IN_PROGRESS`; `COM-P1-011B` is now active; `BLOCKED_EXTERNAL` remains `0`.
+
+## 2026-08-17 — COM-P1-011 RC0 Feature-Freeze and Task-Decomposition Checkpoint
+
+Decision:
+
+- Entered V2 Release Candidate mode. Business capability is frozen; `COM-P1-011` is limited to
+  deployability, recoverability, verifiability, maintainability, and operability.
+- Split the remaining P1 into ordered subtasks `COM-P1-011A` through `COM-P1-011H`: production
+  Docker/Compose, migration, backup/restore, health/readiness, CI, security scanning, deployment
+  documentation, and final acceptance.
+- Each subtask requires implementation, tests or a reproducible exercise, independent review,
+  documentation, and a checkpoint before completion.
+
+Baseline evidence:
+
+- Branch: `v2/commerce-operations-copilot`; HEAD at checkpoint start: `4e91097`.
+- Existing worktree contains in-progress production deployment files and modifications. They are
+  preserved and remain `IMPLEMENTED_UNVERIFIED` until their ordered checkpoint passes.
+- Docker Engine `29.5.3` and Docker Compose `v5.1.4` are available for isolated release exercises.
+- Last completed product checkpoint remains `COM-P1-010`: `488 passed, 19 skipped, 1 warning`;
+  the 19 environment-gated skips are not PASS evidence.
+- Active external blockers: `0`. Real Douyin/TikTok Shop verification remains
+  `IMPLEMENTED_UNVERIFIED` and is not silently promoted by RC work.
+
+Review:
+
+- Scope review confirms that React/Next.js, Worker/Redis, optional alert types, new platform
+  connectors, and other business expansion are prohibited during the RC hardening sequence.
+- Current task is `COM-P1-011A`; all later subtasks remain gated by the declared dependencies.
+
+Checkpoint: `COM-P1-011-RC0` — `PASS` for scope freeze and task decomposition only. No deployment,
+migration, recovery, CI, security, or final acceptance PASS is claimed by this checkpoint.
+
+## 2026-08-16 — V2 Alignment Baseline
+
+Implemented:
+
+- Audited Git status/log, repository layout, configuration, Docker Compose, Alembic,
+  commerce services, frontend, tests, Agent/Tools/Workflow/ERP/Crawler paths.
+- Confirmed current code is a legacy/Demo implementation and identified fixed A102/B205/
+  COMP-B, DemoMall/MockMarket, Mock ERP, and seed-time dependencies.
+- Generated the V2 roadmap and 8 P0/10 P1 task ledger.
+
+Tests:
+
+- command: `python -m pytest -q`
+- pre-COM-P0-001 baseline result: `93 passed, 18 skipped, 1 warning`
+- skipped: Compose, browser, and DeepSeek cloud-gated scenarios; not counted as V2 PASS.
+- command: `ruff check .`
+- result: PASS
+- command: `mypy commerce frontend`
+- result: PASS
+
+Review:
+
+- Product: real data and merchant workflow remain primary; Demo scenarios are test-only.
+- Architecture: CURRENT/TARGET and production/demo paths are separated in documentation.
+- Security: unprotected business reads, static API keys, missing tenant scope, missing
+  credential model, and audit limitations remain future P0/P1 work.
+- Testing: migration, duplicate event, tenant isolation, permission, credential leakage,
+  connector contract, API, workflow, browser, and Compose gates are recorded as future work.
+
+Verification level: `L0` for documentation; legacy code baseline `VERIFIED_LOCAL` only.
+
+Remaining:
+
+- COM-P0-001 implementation and verification completed below.
+- COM-P0-002 is complete; COM-P0-003 is the next highest-priority unblocked task.
+
+## 2026-08-16 — COM-P0-001
+
+Implemented:
+
+- Added explicit `production`, `development`, `test`, and `demo` runtime semantics.
+- Production rejects localhost/mock ERP or Crawler data sources and missing service credentials.
+- Seed data now requires test/demo or explicitly enabled fixture mode.
+- Agent API uses runtime UTC time instead of importing the fixed seed clock.
+- Fixed A102/B205/COMP-B paths and competitor analysis defaults are restricted to fixture modes;
+  production market reports expose an explicit unavailable state.
+- Business anomaly scanning now derives SKUs from stored data rather than fixed identifiers.
+- Local Compose and `.env.example` explicitly declare demo mode.
+- Added `tests/unit/test_runtime_boundary.py` covering seed isolation, mock URL rejection,
+  no Mock fallback, production market unavailable state, and explicit demo fixtures.
+
+Tests:
+
+- command: `python -m pytest tests/unit/test_runtime_boundary.py -q`
+- result: `7 passed`
+- command: `python -m pytest -q`
+- result: `100 passed, 18 skipped, 1 warning`
+- command: `ruff check .`
+- result: PASS
+- command: `mypy commerce frontend`
+- result: PASS
+- command: `mypy .`
+- result: FAIL due to pre-existing strict typing errors in test/e2e modules; no new source
+  package errors. This is recorded as a verification gap, not an external blocker.
+
+Review:
+
+- Product: no new V2 domain scope was implemented; Demo fixtures remain available explicitly.
+- Architecture: production and Demo/Test paths are documented separately.
+- Security: this task blocks implicit Mock fallback but does not implement tenant/RBAC or
+  credential encryption; those remain COM-P0-002/003.
+- Testing: skips remain Compose/browser/cloud environment gates and are not PASS evidence.
+
+Verification level: `L2 VERIFIED_LOCAL` for COM-P0-001.
+
+Status at this checkpoint: `COM-P0-001 DONE`; `COM-P0-002` was then the next recommended task
+and had not yet been started. Subsequent entries below record its later completion.
+
+## 2026-08-16 — Phase 0 Exit / Status Consistency
+
+Historical Phase 0 exit snapshot: `COM-P0-001` satisfied the Phase 0 exit evidence and moved
+the repository to `PHASE_1_TENANT_SECURITY_MIGRATION`; `COM-P0-002` was the next
+highest-priority executable task at that checkpoint. Subsequent entries below supersede that
+task-position snapshot and record `COM-P0-002` and `COM-P0-003` as complete.
+
+Completion-checkpoint verification evidence for `COM-P0-001`:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `7 passed`.
+- `python -m pytest -q`: `100 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `mypy commerce frontend`: PASS.
+- `mypy .`: pre-existing test/e2e typing errors; verification gap, not an external blocker.
+
+## 2026-08-16 — COM-P0-002A Tenant Identity Model and Scope Kernel
+
+Implemented:
+
+- Added Organization, User, OrganizationMembership, and Shop models with explicit status,
+  role, foreign-key, and uniqueness semantics.
+- Added centralized `Permission`, `Principal`, membership resolution, permission checks, and
+  organization-bound shop resolution in `commerce.authorization`.
+- Added explicit Alembic revision `0003_tenant_foundation`; legacy `0001` now creates/downgrades
+  only its historical tables so V2 tables are not pulled into the legacy revision.
+- Corrected the SQLite incompatibility in legacy `0002` idempotency backfill without changing
+  its MySQL behavior.
+
+Verification:
+
+- `python -m pytest tests/unit/test_tenant_scope.py -q`: `5 passed`.
+- `python -m pytest -q`: `105 passed, 18 skipped, 1 warning`.
+- Migration smoke: fresh install, `0002` upgrade, rollback/re-upgrade, and legacy data
+  preservation all PASS on SQLite.
+- `ruff check .`: PASS.
+- `mypy commerce frontend`: PASS.
+- `git diff --check`: PASS.
+
+Review limitation:
+
+- The scope kernel is implemented and tested, but current legacy business APIs are not yet
+  bound to an authenticated production identity. That remains COM-P0-002B and later slices;
+  the parent task stays `IN_PROGRESS`.
+
+## 2026-08-16 — COM-P0-002B Authenticated Identity Integration
+
+Implemented:
+
+- Added signed V2 bearer tokens using an environment-provided HMAC signing key and expiry.
+- Added V2 API dependency resolution that authenticates the user first, then validates the
+  requested organization membership and permission; organization headers are scope selectors,
+  not identity authorities.
+- Added tenant-scoped `/api/v2/shops` and `/api/v2/shops/{shop_id}` read contracts. Legacy
+  role-key routes remain explicitly outside this slice until they are migrated.
+
+Verification:
+
+- `tests/unit/test_authentication.py`: 4 passed.
+- `tests/integration/test_tenant_api.py`: 4 passed.
+- Forged token, cross-tenant scope, missing identity, and missing server configuration cases
+  are covered.
+
+Verification level: `L2 VERIFIED_LOCAL` for the V2 identity/scope contract. Functional V2
+commerce-domain APIs remain future tasks and unscoped legacy routes are disabled in production.
+
+## 2026-08-16 — COM-P0-002C through COM-P0-002F / Parent Exit
+
+Implemented:
+
+- Production rejects every unscoped legacy `/api/*` route and preserves those routes only in
+  explicit non-production modes. Tenant-aware `/api/v2/*` routes remain available.
+- Added OWNER-only shop status writes with centralized permission checks, cross-tenant denial,
+  disabled-shop recovery, and actor/organization/shop operation evidence.
+- Production `CommerceTools` requires a server-resolved TenantContext; organization/shop fields
+  are absent from LLM tool schemas and are injected into internal service headers and logs.
+
+Review:
+
+- Product: the foundation supports multi-organization users and multi-shop tenants without
+  claiming unavailable unified catalog/order/inventory behavior.
+- Architecture: legacy unscoped data remains non-production; current V2 routes use the scope
+  kernel, while future domain APIs must use the same boundary.
+- Security: forged/missing/expired identity, weak server configuration, inactive membership,
+  role denial, cross-tenant access, and tenant argument injection are covered.
+- Testing: migration, unit, API integration, permission denial, audit, and Agent context tests
+  pass. The 18 Compose/browser/cloud skips remain uncounted and are not external blockers.
+
+Verification:
+
+- Focused COM-P0-002 suite: `41 passed` before final security hardening; final identity/scope
+  subset: `19 passed`.
+- `python -m pytest -q`: `119 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `mypy commerce frontend`: PASS (`30 source files`).
+- SQLite `0002 -> head -> 0002 -> head` with legacy row preservation: PASS.
+- `git diff --check`: PASS.
+
+Status: `COM-P0-002 DONE`. Next: `COM-P0-003`, not yet implemented in this entry.
+
+## 2026-08-16 — COM-P0-003 Credential Security
+
+Implemented:
+
+- Added declared `cryptography` dependency and AES-256-GCM credential encryption with AAD bound
+  to shop and credential type.
+- Added multi-key keyring configuration, active key selection, authenticated decryption,
+  tamper detection, rotation, revocation, expiry, and invalid states.
+- Added encrypted ShopCredential model and explicit `0004_shop_credentials` migration; no
+  plaintext access/refresh/app secret columns exist.
+- Added OWNER-only V2 credential metadata/create/rotate/revoke APIs. Request parsing returns
+  fixed errors and responses omit ciphertext, nonce, key id, and credential payload.
+- Added safe operation evidence and a production-installed structured logging redaction filter.
+
+Review:
+
+- Product: credentials support Shop connection lifecycle without claiming a real platform
+  authorization has occurred.
+- Architecture: plaintext is available only inside the lifecycle/platform service boundary;
+  persistence and API contracts are encrypted/metadata-only.
+- Security: weak/missing keyring, tamper, cross-tenant, role denial, response/error/log leakage,
+  rotation, revocation, and expiry paths are covered.
+- Testing: no real platform verification was attempted or claimed.
+
+Verification:
+
+- Credential crypto/service/API/logging focused suite: `15 passed` plus logging startup tests.
+- `python -m pytest -q`: `131 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `mypy commerce frontend`: PASS (`31 source files`).
+- SQLite `0003 -> 0004 -> 0003 -> 0004` with Shop preservation: PASS.
+- `git diff --check`: PASS.
+
+Status: `COM-P0-003 DONE`. Next: `COM-P0-004`.
+
+## 2026-08-16 — COM-P0-004 Local Migration Verification
+
+Implemented and verified locally:
+
+- Added repeatable Alembic tests using an injected connection rather than `.env` or a shared DB.
+- Covered fresh install, single head, expected table set, existing `0002` upgrade, rollback,
+  re-upgrade, and legacy Product data preservation on SQLite (`2 passed`).
+- Added a guarded MySQL verifier that refuses non-MySQL URLs, database names without `test`, and
+  non-empty databases before running migration integrity checks.
+- Bounded credential plaintext to 32 KiB so AES-GCM ciphertext remains portable to MySQL BLOB.
+
+Environment evidence:
+
+- `docker compose config`: PASS.
+- Docker Desktop processes exist, but Docker service is stopped and cannot be started with the
+  current process permissions; Docker CLI does not connect.
+- Local `127.0.0.1:3306`: unavailable; no MySQL client/service is present.
+
+Status: `COM-P0-004 IN_PROGRESS`. MySQL smoke is missing evidence, not a code blocker and not
+`BLOCKED_EXTERNAL`. Work continues on dependency-satisfied COM-P0-008.
+
+## 2026-08-16 — Historical State Consistency Review Before COM-P0-008
+
+Current state:
+
+- Phase: `PHASE_1_TENANT_SECURITY_MIGRATION`.
+- Current task: `COM-P0-008`; next executable slice: `COM-P0-008A`.
+- `COM-P0-004` remains `IN_PROGRESS` pending MySQL migration/integrity smoke evidence.
+- P0 remaining: 5; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+COM-P0-001 evidence reconciliation:
+
+- Its completion-checkpoint full-suite evidence remains `100 passed, 18 skipped, 1 warning`.
+- `python -m pytest tests/unit/test_runtime_boundary.py -q` was rerun: `7 passed in 0.80s`.
+- The skipped Compose/browser/cloud checks are not counted as PASS and are not classified as
+  `BLOCKED_EXTERNAL`.
+
+Review result: ROADMAP, TASKS, PROGRESS, DECISIONS, ARCHITECTURE, and BLOCKERS now use the
+same current Phase, executable slice, COM-P0-001 evidence, and external-blocker semantics.
+No product implementation was performed during this consistency review.
+
+## 2026-08-16 — COM-P0-008 API and Agent Write Boundary
+
+Implemented:
+
+- Added dynamic production route inventories for all unversioned Agent APIs and unauthenticated
+  inventories for all V2 business routes.
+- Made Mock ERP, legacy Crawler, mock competitor site, and legacy purchase workflow fail closed
+  in production, including direct service calls that bypass HTTP middleware.
+- Centralized current V2 shop and credential writes in permissioned services; idempotent shop
+  status changes and credential state transitions are audited.
+- Added strict bounded Agent Tool schemas with unknown fields forbidden. Tenant IDs, arbitrary
+  URLs, and SQL cannot be supplied by the LLM; the model does not receive the crawler side-effect
+  tool.
+- Kept production Agent commerce tools unavailable until a tenant-aware V2 business service
+  exists; tenant header propagation alone is not treated as isolation evidence.
+- Buffered Tool audits outside the business Session transaction. At the request boundary,
+  business state is committed or rolled back first and the complete audit buffer is persisted in
+  a new transaction; a failed Tool preserves both earlier successes and its FAILED audit without
+  committing ambient business writes.
+- Added credential access/expiry/invalidation audit evidence without storing secret material.
+
+Review findings fixed:
+
+- Tool audit previously committed unrelated pending business writes.
+- Removing that commit initially made successful request audit records non-durable.
+- Legacy workflow functions could initially be called directly in production with arbitrary
+  actor strings.
+- Standalone legacy services could initially expose Demo/global data when misconfigured as
+  production.
+- Agent scope documentation initially overstated header propagation as end-to-end isolation.
+- Tenant tests used brittle numeric shop IDs and lacked dynamic route coverage.
+
+Verification:
+
+- Focused API/Agent/security/workflow suite: `80 passed, 1 warning`.
+- `python -m pytest -q`: `162 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `mypy commerce frontend`: PASS (`32 source files`).
+- `git diff --check`: PASS.
+- The 18 Compose/browser/cloud skips are not counted as PASS and are not external blockers.
+
+Independent review:
+
+- Product: production does not present legacy Agent/ERP/Crawler behavior as merchant capability.
+- Architecture: current V2 shop/credential paths are separated from TARGET unified commerce and
+  Agent services.
+- Security: route, service, permission, transaction, side-effect, credential, and audit findings
+  were reproduced and fixed.
+- Testing: route inventories, invalid Tool inputs, permission denial, ambient transactions,
+  audit durability, and direct workflow bypass have regression coverage.
+
+Status: `COM-P0-008 DONE`. Phase 1 remains active because COM-P0-004 still lacks MySQL smoke
+evidence. P0 remaining: 4; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+## 2026-08-16 — Final State Consistency Recheck
+
+Scope: documentation/status correction only; no COM-P0-002 or other product implementation.
+
+Current state:
+
+- Phase: `PHASE_1_TENANT_SECURITY_MIGRATION`.
+- Current and next highest-priority task: `COM-P0-004` — Additive V2 Migration Foundation.
+- If the local disposable MySQL verification environment remains unavailable,
+  dependency-satisfied `COM-P1-001` may proceed without misclassifying the environment gap as
+  `BLOCKED_EXTERNAL`.
+- P0 remaining: 4; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+Verification evidence reconciliation:
+
+- COM-P0-001 completion checkpoint remains `7 passed` boundary tests and `100 passed,
+  18 skipped, 1 warning` full pytest.
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `10 passed, 1 warning` on the
+  current checkout after later boundary tests were added.
+- `python -m pytest -q`: `162 passed, 18 skipped, 1 warning` on the current checkout.
+- The 18 Compose/browser/cloud skips are not counted as PASS and are not active external
+  blockers.
+
+Review result: ROADMAP, TASKS, PROGRESS, DECISIONS, ARCHITECTURE, and BLOCKERS consistently
+separate CURRENT from TARGET, identify Phase 1 and COM-P0-004, and record no confirmed external
+blocker. COM-P0-002 is already DONE in the current repository and therefore cannot truthfully be
+restored as the next task.
+
+## 2026-08-16 — COM-P0-004 Completion and Phase 1 Exit
+
+Implemented and fixed:
+
+- Ran the guarded migration verifier against a disposable official MySQL Community Server 8.4.6
+  instance instead of treating Docker unavailability as an external blocker.
+- Made the verifier directly runnable from the documented repository-root command and added a
+  distinct test-database-name guard plus empty-database refusal.
+- Added current-head, expected-table, key foreign-key, key unique-constraint, V2 rollback, and
+  legacy Product preservation checks.
+- Fixed `0003`/`0004` MySQL downgrade behavior: tables are dropped child-first and MySQL removes
+  their foreign-key-backed indexes with the table instead of rejecting premature index drops.
+- Added CLI safety regression tests and made verifier failures explicit even under `python -O`.
+- Added `scripts/__init__.py` and completed strict typing for the full source-and-test tree rather
+  than excluding tests from MyPy.
+
+Verification:
+
+- `python -m pytest tests/migration/test_migrations.py -q`: `5 passed`.
+- MySQL 8.4.6 `python scripts/verify_mysql_migrations.py`: fresh/upgrade/rollback/re-upgrade,
+  constraints, single head, expected tables, and data preservation PASS.
+- Phase 1 runtime/tenant/security/migration focused suite: `49 passed, 1 warning`.
+- `python -m pytest -q`: `166 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `ruff format --check .`: PASS (`83 files already formatted`).
+- `mypy .`: PASS (`64 source files`).
+- `alembic heads`: one head, `0004_shop_credentials`.
+- `git diff --check`: PASS; line-ending warnings only.
+
+Review:
+
+- Product: Phase 1 adds tenant/security/migration foundations without claiming unified commerce
+  features that remain TARGET.
+- Architecture: V2 revisions are explicit and additive; the legacy metadata migration is bounded
+  to its historical table list. Reviewer review found and removed a separate `scripts.seed`
+  metadata `create_all` bypass; production CLI regression proves it cannot create schema.
+- Security: the verifier refuses non-MySQL, ambiguously named, or non-empty targets; no credential
+  value was introduced.
+- Testing: SQLite and real MySQL dialect paths cover fresh install, legacy upgrade, rollback,
+  re-upgrade, constraints, and data preservation. The 18 environment-gated skips are not PASS
+  and are not external blockers.
+
+Status: `COM-P0-004 DONE`. Phase 1 exit is satisfied. Current phase is
+`PHASE_2_UNIFIED_CATALOG_AND_ORDERS`; next task is `COM-P0-005`. P0 remaining: 3; P1 remaining:
+10; active `BLOCKED_EXTERNAL`: 0.
+
+## 2026-08-16 — COM-P0-005 Unified Catalog Identity
+
+Implemented:
+
+- Added organization-scoped MasterProduct, MasterSKU, and PlatformSKU models plus explicit
+  `0005_unified_catalog_identity` migration.
+- Added composite tenant foreign keys: MasterSKU must reference a MasterProduct in the same
+  organization; PlatformSKU must reference both a Shop and MasterSKU in the same organization.
+- Added canonical merchant product/SKU code normalization and exact external SKU identity using
+  a preserved raw ID plus deterministic SHA-256 key, avoiding MySQL/SQLite collation divergence.
+- Added permissioned CatalogService create/list/map/remap operations with idempotent replay,
+  conflict handling, and actor/organization/shop/previous/new mapping audit evidence.
+- Added authenticated V2 catalog APIs with strict extra-field rejection and server-owned tenant
+  scope; APPROVER writes and all cross-tenant resource combinations are denied.
+
+Verification:
+
+- Catalog service/API/tenant/migration focused suite: `24 passed, 1 warning`.
+- SQLite migration suite: `6 passed`.
+- Official MySQL Community Server 8.4.6 verifier: `0002 -> head -> 0002 -> head`, `0005 -> 0004
+  -> 0005`, single head, expected tables, unique constraints/indexes, composite foreign keys,
+  legacy Product preservation, and tenant Shop preservation PASS.
+- `python -m pytest -q`: `174 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `ruff format --check .`: PASS (`87 files already formatted`).
+- `mypy .`: PASS (`67 source files`).
+- `alembic heads`: one head, `0005_unified_catalog_identity`.
+- `git diff --check`: PASS; line-ending warnings only.
+
+Review:
+
+- Product: canonical catalog identity is merchant-owned and no Demo SKU is embedded.
+- Architecture: platform identity shares domain semantics without introducing a universal
+  connector abstraction; raw ingestion remains the next separate boundary.
+- Security: client bodies cannot select organization, all reads/writes are organization-scoped,
+  and composite FKs prevent cross-tenant persistence even below the service layer.
+- Testing: multi-shop mapping, case-exact source identity, duplicate/conflict behavior,
+  permission denial, cross-tenant reads/writes/remap targets, rollback, and two database dialects
+  are covered.
+
+Status: `COM-P0-005 DONE`. Current task: `COM-P0-006`. P0 remaining: 2; P1 remaining: 10;
+active `BLOCKED_EXTERNAL`: 0.
+
+## 2026-08-16 — Final Documentation State Consistency Before Long-Running Goal
+
+Scope: documentation/status reconciliation only; no product task implementation.
+
+Current state:
+
+- Phase: `PHASE_2_UNIFIED_CATALOG_AND_ORDERS`; Phase 0 and Phase 1 exits are satisfied.
+- Current and next executable task: `COM-P0-006` — Raw Event and Sync Foundation.
+- `COM-P0-002` is already `DONE`; restoring it as the next task would contradict the task ledger,
+  migrations, implementation, and verification history.
+- P0 remaining: 2 (`COM-P0-006`, `COM-P0-007`); P1 remaining: 10; active
+  `BLOCKED_EXTERNAL`: 0.
+
+COM-P0-001 evidence reconciliation:
+
+- Completion checkpoint remains `7 passed` runtime-boundary tests and `100 passed, 18 skipped,
+  1 warning` full pytest.
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning` on the
+  current checkout.
+- `python -m pytest -q`: `188 passed, 18 skipped, 1 warning` on the current checkout.
+- The 18 environment-gated Compose/browser/cloud tests remain skipped, are not counted as PASS,
+  and are not classified as active external blockers.
+
+Review result: ROADMAP, TASKS, PROGRESS, DECISIONS, ARCHITECTURE, and BLOCKERS now identify the
+same phase, current task, remaining task counts, COM-P0-001 historical/current evidence, and
+external-blocker count. COM-P0-006 implementation exists but remains `IN_PROGRESS` pending its
+final MySQL migration verification and exit review; no planned unified-order capability is
+described as CURRENT.
+
+## 2026-08-16 — COM-P0-006 Raw Event and Sync Foundation
+
+Implemented:
+
+- Added organization/shop-scoped PlatformRawEvent, SyncJob, and SyncJobRawEvent models plus the
+  explicit `0006_raw_event_sync_foundation` migration.
+- Separated immutable raw source identity/payload evidence from per-job observations. A repeated
+  source event may be observed by multiple jobs without duplication; per-job processed snapshots
+  preserve historical SUCCESS results across later replay.
+- Added canonical payload hashing, sensitive-key rejection including case/separator bypasses,
+  1 MiB payload and depth limits, UTC-normalized timestamps, ORM mutation denial, and pre-process
+  integrity verification.
+- Added deterministic job/event state machines with client-generated claim tokens stored only as
+  hashes, CAS-exclusive claims, bounded leases, heartbeat, expired-work recovery, retry, replay,
+  checkpoints, bounded error codes, and visible terminal state.
+- Added separate `OPERATE_SYNC` permission. Current processing endpoints are OWNER-only; OPERATOR
+  can create/read/retry jobs but cannot declare raw processing or synchronization completion.
+- Added bounded cursor list APIs, pre-parse Content-Length rejection for oversized sync requests,
+  sanitized FastAPI validation errors, payload-free list responses, permissioned/audited payload
+  detail reads, and non-cascading Shop evidence retention.
+
+Reviewer findings and fixes:
+
+- Product/Architecture: replaced the incorrect single-Job RawEvent ownership with observation
+  records and completion snapshots; prevented terminal Job/replay contradictions; clarified that
+  raw `PROCESSED` is not normalized Order evidence.
+- Security: added evidence immutability/integrity checks, exclusive claim ownership, restricted
+  processing permission, secret-key bypass coverage, validation-response redaction, and bounded
+  request/list surfaces.
+- Testing: added dual-Session stale-state CAS, lease expiry/recovery, cross-job deduplication,
+  terminal replay, UTC round-trip, direct evidence tamper, pagination token, sensitive payload,
+  Pydantic secret echo, and transport-size regression coverage.
+
+Verification:
+
+- Focused ingestion/API/tenant/migration suite: `42 passed, 1 warning`.
+- `python -m pytest -q`: `199 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `ruff format --check .`: PASS (`91 files already formatted`).
+- `mypy .`: PASS (`70 source files`).
+- SQLite migration suite: PASS, including `0006 -> 0005 -> 0006` and catalog preservation.
+- Disposable official MySQL Community Server 8.4.6 verifier: fresh/legacy upgrade, current head,
+  unique/check/composite-FK inspection, `0002 -> head -> 0002 -> head`, `0006 -> 0005 -> 0006`,
+  and legacy/tenant/catalog preservation PASS.
+- `alembic heads`: one head, `0006_raw_event_sync_foundation`.
+- `git diff --check`: PASS; line-ending warnings only.
+- The 18 Compose/browser/cloud-gated skips are not counted as PASS and are not external blockers.
+
+Status: `COM-P0-006 DONE` at `L2 VERIFIED_LOCAL`. Current/next task: `COM-P0-007`. P0 remaining:
+1; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+## 2026-08-16 — COM-P0-007 Unified Order Import and Phase 2 Exit
+
+Implemented:
+
+- Added CommerceOrder, CommerceOrderItem, and CommerceOrderSourceEvent in separate additive
+  `commerce_*` tables plus explicit `0007_unified_orders`; legacy Demo orders remain unchanged.
+- Added exact shop/order/item identity hashes, composite organization/shop/catalog/source FKs,
+  Numeric(18,4) money, currency, all required commerce timestamps, internal statuses, status
+  transition rules, and `ORDER_SNAPSHOT_V1` normalizer lineage.
+- Added strict frozen adapter snapshot DTOs and an internal OrderImportService that requires a
+  claimed immutable RawEvent, validates active PlatformSKU mappings, applies newer complete
+  snapshots, records stale events without regressing state, handles race retries, and atomically
+  completes raw processing with source audit.
+- Added authenticated read-only V2 order list/detail APIs with tenant, shop, platform, date,
+  status, cursor, and limit enforcement. Removed the draft public snapshot-write endpoint because
+  no trusted connector service identity exists yet; platform adapters and future file importers
+  must call the service after contract validation.
+
+Review:
+
+- Product: normalized merchant orders are independent of Demo data and retain source/SKU identity;
+  real platform parsing remains explicitly unverified.
+- Architecture: raw evidence, adapter DTO, unified domain, and read API are separate; no universal
+  platform parser or speculative connector abstraction was introduced.
+- Security: all models are tenant constrained, public order APIs are read-only, cross-tenant reads
+  fail, raw payload/claims are not returned, and arbitrary authenticated users cannot submit an
+  authoritative normalized snapshot.
+- Testing: same-event idempotency, multi-event update, stale ordering, regression denial, exact
+  case identity, Decimal/UTC, mapping failures, event type, tenant reads, filters, migration
+  columns/constraints, rollback, and two database dialects are covered.
+
+Verification:
+
+- Order/API/migration focused suite: `15 passed, 1 warning`.
+- `python -m pytest -q`: `207 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `ruff format --check .`: PASS (`95 files already formatted`).
+- `mypy .`: PASS (`73 source files`).
+- SQLite migration suite: PASS, including `0007 -> 0006 -> 0007` and RawEvent preservation.
+- Disposable official MySQL Community Server 8.4.6: all expected columns/tables, unique/check/
+  composite-FK constraints, fresh/legacy upgrade, rollback/re-upgrade, and legacy/tenant/catalog/
+  raw-event preservation PASS.
+- `alembic heads`: one head, `0007_unified_orders`.
+- `git diff --check`: PASS; line-ending warnings only.
+- The 18 environment-gated Compose/browser/cloud skips are not counted as PASS or external blockers.
+
+Status: `COM-P0-007 DONE`, Phase 2 exit PASS at `L2 VERIFIED_LOCAL`. All eight P0 tasks are DONE.
+Current/next task: `COM-P1-001`. P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+## 2026-08-16 — Historical Phase 3 Entry Consistency Checkpoint
+
+Scope at this checkpoint: documentation and state consistency only; `COM-P1-001` implementation
+had not started yet. The later entry below supersedes this execution-position snapshot.
+
+Reconciled state:
+
+- Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`; Phase 0, Phase 1, and
+  Phase 2 exits are satisfied.
+- No task is currently `IN_PROGRESS`; the next highest-priority executable task is
+  `COM-P1-001` — Shop Connections and Capabilities, which remains `TODO`.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+- COM-P0-001 completion-checkpoint evidence remains `7 passed` runtime-boundary tests and
+  `100 passed, 18 skipped, 1 warning`; later suite growth does not rewrite that checkpoint.
+
+Verification rerun on the current checkout:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning`.
+- `python -m pytest -q`: `207 passed, 18 skipped, 1 warning`.
+- The 18 skips remain environment-gated Compose/browser/cloud checks, are not counted as PASS,
+  and do not create a confirmed external blocker.
+
+## 2026-08-16 — Current State Consistency Reconciliation
+
+Scope: documentation/status reconciliation and test evidence only; no product implementation was
+performed in this entry.
+
+Reconciled state:
+
+- Current phase remains `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- `COM-P1-001` implementation now exists across its migration, model, service, API, credential/
+  synchronization gate, and tests, so the parent and A-D slices are truthfully `IN_PROGRESS`.
+- `COM-P1-001` is not `DONE`: the `0008` MySQL migration/integrity evidence and final independent
+  Product/Architecture/Security/Testing exit review are not yet recorded.
+- The next highest-priority executable work remains completion of `COM-P1-001`; `COM-P1-002`
+  remains the task after the parent completes.
+- `COM-P0-002` is already `DONE`; naming it as the next executable task would contradict the
+  implemented migrations, services, APIs, tests, and task ledger.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+
+COM-P0-001 evidence reconciliation:
+
+- Completion-checkpoint evidence remains `7 passed` runtime-boundary tests and `100 passed,
+  18 skipped, 1 warning` full pytest.
+- At this checkpoint, `python -m pytest tests/unit/test_runtime_boundary.py -q` produced
+  `11 passed, 1 warning`.
+- At this checkpoint, `python -m pytest -q` produced `215 passed, 18 skipped, 1 warning`.
+- `alembic heads`: one head, `0008_shop_connections`.
+- `git diff --check`: PASS; line-ending warnings only.
+- The 18 environment-gated Compose/browser/cloud tests are not counted as PASS and do not create
+  a confirmed external blocker.
+
+## 2026-08-16 — Final State Consistency Correction
+
+Scope: documentation and status evidence only. No `COM-P1-001` remediation, `COM-P1-002`, or
+other product implementation was performed in this entry.
+
+Reconciled state:
+
+- Current phase remains `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Current and next executable task remains completion of `COM-P1-001` (`IN_PROGRESS`).
+  `COM-P1-002` remains the task after the parent completes.
+- All eight P0 tasks are `DONE`; P0 remaining: 0; P1 remaining: 10; active
+  `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` is already `DONE` and cannot truthfully be restored as the next task.
+- The `COM-P0-001` completion checkpoint remains `7 passed` runtime-boundary tests and
+  `100 passed, 18 skipped, 1 warning`; the `11 passed` / `215 passed` state rerun recorded at
+  this checkpoint is separate evidence and does not rewrite task completion history.
+
+Latest recorded `COM-P1-001` verification after shortening the Alembic revision identifier:
+
+- Focused shop-connection/credential/ingestion/shop/API/migration suite: `55 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `10 passed`.
+- Relevant `ruff check`: PASS; relevant `ruff format --check`: PASS (`10 files already formatted`).
+- Relevant source `mypy`: PASS.
+- `alembic heads`: one head, `0008_shop_connections`.
+- Disposable official MySQL Community Server 8.4.6 fresh/upgrade/rollback/re-upgrade/constraints/
+  legacy-and-V2-data-preservation verifier: PASS.
+- The full-suite checkpoint recorded in this entry was `215 passed, 18 skipped, 1 warning`; the
+  18 environment-gated skips were not counted as PASS or confirmed external blockers.
+
+Status rationale: the MySQL gate is no longer missing, but `COM-P1-001` remains `IN_PROGRESS`.
+Independent Product/Architecture/Security/Testing review found internal credential-policy,
+synchronization-race, trusted-ingress, safe-error-code, legacy-state, sync-health, concurrency,
+and test-matrix work. None qualifies as `BLOCKED_EXTERNAL`.
+
+## 2026-08-16 — Final Test Evidence Refresh
+
+Scope: documentation and status consistency only. No `COM-P1-001` remediation, `COM-P1-002`,
+or other product implementation was performed.
+
+State verification:
+
+- Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Current and next executable task: complete `COM-P1-001` (`IN_PROGRESS`).
+- Task after the parent completes: `COM-P1-002`.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` is already `DONE` and cannot truthfully be restored as the next task.
+
+Commands executed on the current checkout:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning`.
+- `python -m pytest -q`: `216 passed, 18 skipped, 1 warning`.
+
+The `COM-P0-001` completion checkpoint remains `7 passed` boundary tests and `100 passed,
+18 skipped, 1 warning` full pytest. The current `11` / `216` counts are later repository-state
+evidence and do not rewrite that historical completion checkpoint. The 18 Compose/browser/cloud
+tests remain environment-gated, are not counted as PASS, and do not establish a confirmed
+external blocker.
+
+## 2026-08-16 — Pre-Goal State Consistency Verification
+
+Scope: documentation and status consistency only. No product code was changed, no
+`COM-P1-001` remediation was implemented, and `COM-P1-002` was not started.
+
+Reconciled state:
+
+- Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Current and next executable task: complete `COM-P1-001` (`IN_PROGRESS`).
+- Task after the parent completes: `COM-P1-002`.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` is already `DONE`; restoring it as the next task would contradict the current
+  migrations, services, APIs, tests, and task ledger.
+
+Commands executed on the current checkout:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning`.
+- `python -m pytest -q`: `208 passed, 8 failed, 18 skipped, 1 warning`.
+
+Evidence interpretation:
+
+- The `COM-P0-001` completion checkpoint remains `7 passed` boundary tests and `100 passed,
+  18 skipped, 1 warning` full pytest. The current boundary rerun confirms that boundary coverage
+  remains green.
+- The last passing whole-repository checkpoint was `216 passed, 18 skipped, 1 warning` before the
+  current `COM-P1-001` review-remediation edits. It is historical evidence, not the current result.
+- The current full-suite failures are concentrated in ingestion, shop-connection, and related API
+  fixtures/policy integration under `COM-P1-001`. They are internal engineering
+  work, not `BLOCKED_EXTERNAL`.
+
+## 2026-08-16 — Pre-Goal State Consistency Refresh
+
+Scope: documentation and status consistency only. No product code was changed and
+`COM-P1-002` was not started. This entry supersedes the current-state result in the preceding
+checkpoint after the in-progress `COM-P1-001` remediation restored the full suite.
+
+Reconciled state:
+
+- Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Current and next executable task: complete `COM-P1-001` (`IN_PROGRESS`).
+- Task after the parent completes: `COM-P1-002`.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` is already `DONE` and cannot truthfully be restored as the next task.
+
+Commands executed on the current checkout:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning`.
+- `python -m pytest tests/unit/test_shop_connection_service.py tests/unit/test_credentials_service.py tests/unit/test_ingestion_service.py tests/unit/test_shop_service.py tests/integration/test_tenant_api.py tests/integration/test_ingestion_api.py tests/integration/test_order_api.py tests/unit/test_order_import_service.py tests/migration/test_migrations.py -q`: `82 passed, 1 warning`.
+- `python -m pytest -q`: `235 passed, 18 skipped, 1 warning`.
+
+Evidence interpretation:
+
+- The `COM-P0-001` completion checkpoint remains `7 passed` runtime-boundary tests and
+  `100 passed, 18 skipped, 1 warning` full pytest. Current `11` / `235` results are later
+  repository-state evidence and do not rewrite that historical checkpoint.
+- The 18 Compose/browser/cloud tests remain environment-gated, are not counted as PASS, and do
+  not establish an active external blocker.
+- Green current suites do not complete `COM-P1-001`; remaining review remediation, regression
+  coverage, and the final independent exit review are internal work still required by its ledger.
+
+## 2026-08-16 — Final State Consistency Correction
+
+Scope: documentation and status consistency only. No product code was changed and
+`COM-P1-002` was not started.
+
+Reconciled state:
+
+- Current phase: `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Current and next executable parent task: complete `COM-P1-001` (`IN_PROGRESS`).
+- `COM-P1-001A` through `COM-P1-001C` are `DONE`; `COM-P1-001D` remains `IN_PROGRESS` for the
+  final independent exit review and documentation gate.
+- Task after the parent completes: `COM-P1-002` — Warehouse and Channel Inventory.
+- P0 remaining: 0; P1 remaining: 10; active `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` is already `DONE`; restoring it as the next task would contradict the current
+  migrations, services, APIs, tests, and task ledger.
+
+Commands executed on the current checkout:
+
+- `python -m pytest tests/unit/test_runtime_boundary.py -q`: `11 passed, 1 warning`.
+- COM-P1-001 focused service/API/migration suite: `89 passed, 1 warning`.
+- `python -m pytest -q`: `242 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS.
+- `ruff format --check .`: PASS (`99 files already formatted`).
+- `mypy .`: PASS (`76 source files`).
+- `alembic heads`: one head, `0008_shop_connections`.
+- `git diff --check`: PASS; only existing CRLF-to-LF warnings for three documentation files.
+
+Latest existing database evidence reviewed for this correction:
+
+- SQLite migration suite: `10 passed`.
+- Disposable official MySQL Community Server 8.4.11 fresh/upgrade/rollback/re-upgrade,
+  integrity, legacy/V2 data preservation, and six-scenario row-lock race verifier: PASS.
+- The six races cover Shop disable, credential revoke, and capability disable in both start-first
+  and mutation-first order. They verify actual MySQL lock waits and final failed-job semantics.
+
+Evidence interpretation:
+
+- The `COM-P0-001` completion checkpoint remains `7 passed` runtime-boundary tests and
+  `100 passed, 18 skipped, 1 warning`; later full-suite counts do not rewrite historical evidence.
+- The 18 Compose/browser/cloud skips remain environment-gated, are not counted as PASS, and do
+  not establish an active external blocker.
+- `COM-P1-001` remains `IN_PROGRESS` because its final independent exit review has not yet been
+  recorded. This is internal work, not `BLOCKED_EXTERNAL`.
+
+## 2026-08-16 — COM-P1-001 Exit and Final State Consistency
+
+Scope: documentation and status consistency only. No product code was changed, and
+`COM-P1-002` was not implemented.
+
+Reconciled state:
+
+- Current phase remains `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- `COM-P1-001A` through `COM-P1-001D` and parent `COM-P1-001` are `DONE`.
+- The independent Product, Architecture, Security, and Testing exit review found no Critical,
+  High, Medium, or blocking Low issue.
+- Current and next task: `COM-P1-002` — Warehouse and Channel Inventory (`TODO`).
+- P0 remaining: 0; P1 remaining: 9; active `BLOCKED_EXTERNAL`: 0.
+- `COM-P0-002` was completed earlier and cannot truthfully be restored as the next task.
+
+Evidence reconciliation:
+
+- The `COM-P0-001` completion checkpoint remains `7 passed` runtime-boundary tests and
+  `100 passed, 18 skipped, 1 warning` full pytest.
+- The `COM-P1-001` exit-review checkpoint remains `89 passed, 1 warning` focused and
+  `242 passed, 18 skipped, 1 warning` full pytest, with SQLite migration and disposable MySQL
+  8.4.11 migration/integrity/data-preservation/row-lock race verification PASS.
+- State-only rerun on the current checkout:
+  `python -m pytest tests/unit/test_runtime_boundary.py -q` -> `11 passed, 1 warning`;
+  `python -m pytest -q` -> `243 passed, 18 skipped, 1 warning`.
+- The 18 Compose/browser/DeepSeek cloud environment-gated skips are not counted as PASS and do
+  not qualify as `BLOCKED_EXTERNAL`.
+
+## 2026-08-16 — COM-P1-002 Warehouse and Channel Inventory Exit
+
+Implemented:
+
+- Added organization-owned Warehouse, tenant/catalog-constrained WarehouseInventory and
+  ChannelInventory, plus RawEvent lineage tables through additive `0009_inventory`.
+- Added strict normalized warehouse/channel snapshot DTOs and a trusted InventoryService path
+  requiring `OPERATE_SYNC`, claimed immutable RawEvent evidence, active Shop authorization,
+  `INVENTORY_READ`, and a usable OAUTH credential.
+- Added idempotent replay, stale-event preservation, differing equal-time conflict denial, atomic
+  RawEvent completion, audit evidence, and one controlled retry for MySQL 1205/1213 races.
+- Added authenticated tenant-scoped warehouse/physical/channel/risk read APIs. No public
+  authoritative snapshot write route exists; responses omit source references, hashes, claims,
+  and raw payloads.
+- Added deterministic current and incoming-aware coverage using unified CommerceOrder demand and
+  unrounded Decimal velocity. Physical inventory is explicitly labelled organization-shared;
+  channel exposure may be organization- or shop-scoped. Incoming is not ETA-bounded yet.
+
+Formal Exit Review:
+
+- Product: physical and channel meanings are distinct; arbitrary SKUs and empty state work; no
+  fixed Demo identifiers or connector claims were introduced.
+- Architecture: RawEvent remains separate from normalized inventory; legacy Inventory is retained
+  only for Demo/Test; no universal connector abstraction or public normalized write path exists.
+- Security: tenant/shop/catalog constraints, READ/WRITE/OPERATE_SYNC permissions, connection
+  readiness, sensitive response redaction, and audit inputs were reviewed. A service regression
+  proves non-OPERATE_SYNC users cannot apply a claimed snapshot.
+- Testing/data integrity: duplicate, stale, equal-time conflict, tenant isolation, quantity
+  semantics, deterministic risk, API bounds, SQLite migration, MySQL integrity, and an actual
+  different-shop shared-warehouse first-write/newer-versus-stale race pass. The race initially
+  exposed unhandled MySQL deadlock 1213; the service was fixed and the verifier passed on rerun.
+- Delegated reviewer attempts could not execute because their independent execution quota was
+  exhausted. This was treated as an internal review-process limitation, not `BLOCKED_EXTERNAL`;
+  the primary agent completed the same Product/Architecture/Security/Testing checklist and fixed
+  the MySQL concurrency and low-velocity precision findings before exit.
+
+Commands and evidence:
+
+- Inventory/analytics/API/SQLite migration suite: `25 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `11 passed`.
+- `python -m pytest -q`: `253 passed, 18 skipped, 1 warning`.
+- `RUN_COMPOSE_E2E=1 python -m pytest tests/e2e/test_compose.py -q`: `5 passed` against the
+  existing healthy local Compose stack.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`103 files already formatted`).
+- `mypy .`: PASS (`79 source files`).
+- `alembic heads`: one head, `0009_inventory`.
+- `git diff --check`: PASS with existing CRLF-to-LF warnings on three documentation files.
+- Disposable official `mysql:8.4` container, guarded empty `commerce_inventory_test` database:
+  fresh/upgrade/rollback/re-upgrade/schema constraints/legacy and V2 preservation/sync races/
+  inventory concurrency race PASS. Temporary container removed; existing Compose data untouched.
+
+Status:
+
+- `COM-P1-002A` through `COM-P1-002D` and parent `COM-P1-002`: `DONE`.
+- Current phase remains `PHASE_3_SHOP_CONNECTIONS_INVENTORY_AND_FINANCE`.
+- Next highest-priority dependency-satisfied task: `COM-P1-003` — Costs, Refunds, Settlements,
+  and Profit.
+- P0 remaining: 0; P1 remaining: 8; active `BLOCKED_EXTERNAL`: 0.
+- The 18 skipped Compose/browser/cloud cases are not counted as PASS. Five Compose tests were run
+  explicitly and passed; browser and DeepSeek cloud cases remain environment-gated for their
+  relevant later phases and do not block COM-P1-002.
+
+## 2026-08-16 — Verified V2 Local Checkpoint
+
+- Reviewed the complete tracked and untracked working tree after the COM-P1-002 exit gate. All 39
+  previously untracked files were project migrations, V2 services, verification scripts, or tests;
+  no temporary database, log, cache, or test-artifact file was included.
+- Scanned changed and untracked files for common credential, token, password, and private-key
+  patterns. Matches were limited to explicit non-secret test values; no production secret was
+  found or committed.
+- Re-ran the checkpoint gates: `python -m pytest -q` -> `253 passed, 18 skipped, 1 warning`;
+  `ruff check .`, `ruff format --check .`, `mypy .`, `alembic heads`, and
+  `git diff --check` -> PASS. The 18 environment-gated skips remain excluded from PASS.
+- Created local commit `a9b3915` (`feat: establish verified v2 commerce foundations`) covering
+  the verified Phase 1/Phase 2 foundations, shop connections, inventory, migrations, tests, and
+  aligned project documentation. No remote was changed and nothing was pushed.
+- The next implementation task is `COM-P1-003`; the checkpoint does not claim costs, refunds,
+  settlements, or profit are implemented.
+
+## 2026-08-16 — COM-P1-003 Costs, Refunds, Settlements, and Profit Exit
+
+Implemented:
+
+- Added additive `0010_finance` models for immutable effective SKU cost history, Refund/RefundItem,
+  Settlement, FinanceTransaction, RawEvent lineage, ProfitSnapshot, and persisted cost/refund/
+  settlement/transaction calculation inputs. Legacy Demo tables remain unchanged.
+- Added trusted RawEvent-bound refund, settlement, and finance transaction ingestion with strict
+  validation, tenant/permission enforcement, same-event idempotency, stale-event lineage, and
+  differing equal-time conflict denial.
+- Added deterministic Decimal estimated and settled profit calculations. Snapshots preserve order
+  revenue FX, cost composition/FX, refunds, platform/logistics/advertising fees, adjustments, and
+  settlement evidence so later source changes do not rewrite history.
+- Added authenticated bounded V2 APIs for cost history, refunds and metrics, finance transactions,
+  settlements, and profit snapshots. Only permissioned cost creation and deterministic profit
+  calculation are public writes; authoritative platform finance imports remain internal services.
+
+Formal Exit Review:
+
+- Product: arbitrary organization/shop/order/SKU data is supported; estimated and settled profit
+  are distinct; refund rates and spike rules are deterministic; no Demo identifier is required.
+- Architecture: raw evidence remains separate from normalized finance models; stable business
+  semantics are shared without inventing platform adapters; legacy data is preserved.
+- Security: all reads are tenant scoped, writes require centralized permissions, authoritative
+  platform records require claimed RawEvents, and API responses exclude raw payloads, claim
+  tokens, hashes, credentials, and unrestricted normalized write endpoints.
+- Testing/data integrity: Decimal calculation, historical replay, cost interval conflict and
+  immutability, duplicate/stale/equal-time events, tenant/permission denial, API bounds/empty state,
+  SQLite/MySQL migrations, rollback/re-upgrade, and data preservation pass. MySQL initially exposed
+  an order-item foreign-key index downgrade dependency; `0010` now installs a stable support index
+  before dropping its finance-specific unique index, and the clean rerun passed.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_finance_service.py tests/integration/test_finance_api.py -q`:
+  `5 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `12 passed`.
+- `python -m pytest -q`: `259 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`107 files already formatted`).
+- `mypy .`: PASS (`82 source files`). A missing test-helper return annotation found by the first
+  run was fixed before the passing rerun.
+- `alembic heads`: one head, `0010_finance`; `git diff --check`: PASS.
+- Disposable official `mysql:8.4.11`, guarded empty `commerce_finance_test`: fresh install,
+  `0002 -> head -> 0002 -> head`, schema/behavior constraints, legacy/V2 data preservation, and
+  existing synchronization/inventory race checks PASS. The initial connection attempt occurred
+  before container initialization and was rerun only after MySQL reported ready.
+
+Status:
+
+- `COM-P1-003A` through `COM-P1-003D` and parent `COM-P1-003`: `DONE` at `L2 VERIFIED_LOCAL`.
+- Phase 3 exit is satisfied; current phase is `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`.
+- Current highest-priority dependency-satisfied task: `COM-P1-004` — Suppliers and Purchasing.
+- P0 remaining: 0; P1 remaining: 7; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS and do not
+  represent finance implementation failures or external platform verification.
+
+## 2026-08-16 — COM-P1-004 Suppliers and Purchasing Exit
+
+Implemented:
+
+- Added additive `0011_purchasing` models for organization-scoped Supplier, SupplierProduct,
+  CommercePurchaseOrder/Item, and InboundShipment/Item while preserving legacy Demo purchase
+  tables and data.
+- Added Decimal commercial terms and purchase snapshots, MOQ/package-size validation, lead time,
+  complete purchase lifecycle, creator/approver separation, tenant-scoped permissions, and
+  operation audit records.
+- Added tenant-scoped supplier, purchase-order, inbound-shipment, receipt, and replenishment APIs.
+  API responses omit idempotency/request hashes and no unrestricted normalized inventory write is
+  exposed.
+- Added deterministic replenishment from unified order velocity, warehouse availability,
+  ETA-bounded open inbound quantities, lead time, safety-stock days, MOQ, and package size.
+- Made purchase creation and lifecycle retries idempotent. Shipment number retries return the
+  existing batch only when content is identical; cumulative receipt retries do not double count,
+  and older cumulative snapshots cannot reduce received stock.
+
+Formal Exit Review:
+
+- Product: arbitrary tenant/supplier/SKU/warehouse data is supported; purchase costs and quantities
+  are deterministic and no Demo identifier or Mock ERP is required.
+- Architecture: new production tables remain separate from legacy purchase fixtures; purchasing
+  planning does not mutate authoritative WarehouseInventory, which remains RawEvent-bound; no
+  universal connector abstraction or real-platform claim was introduced.
+- Security: reads and writes derive organization scope from the authenticated membership;
+  centralized permissions enforce commerce writes and approval; creators cannot approve their own
+  purchase orders; internal hashes, raw payloads, claims, and credentials are not serialized.
+- Testing/data integrity: tenant isolation, Decimal values, MOQ/package validation, request replay
+  and conflict, approval denial, state retries, partial/full and stale cumulative receipt,
+  deterministic replenishment, SQLite migration, and MySQL constraints/rollback/data preservation
+  pass. No unresolved Critical/High finding remains.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_purchasing_service.py tests/integration/test_purchasing_api.py
+  -q`: `5 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `13 passed`.
+- `python -m pytest -q`: `265 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`111 files already formatted`).
+- `mypy .`: PASS (`85 source files`).
+- `alembic heads`: one head, `0011_purchasing`; `git diff --check`: PASS.
+- Disposable official `mysql:8.4.11`, guarded empty `commerce_purchasing_test`: fresh install,
+  `0002 -> head`, `0011 -> 0010 -> 0011`, `head -> 0009 -> head`, full rollback/re-upgrade,
+  schema/behavior constraints, legacy/V2 data preservation, and existing synchronization/inventory
+  race checks PASS. Temporary container `ai-commerce-purchasing-mysql-test` was removed.
+
+Status:
+
+- `COM-P1-004A` through `COM-P1-004D` and parent `COM-P1-004`: `DONE` at
+  `L2 VERIFIED_LOCAL`.
+- Current phase remains `PHASE_4_SUPPLIERS_PURCHASING_AND_APPROVAL`; current task is
+  `COM-P1-005` — Replenishment and Approval Execution.
+- P0 remaining: 0; P1 remaining: 6; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not counted as PASS. They do not
+  represent purchasing implementation failures and will be rerun in their relevant later phases.
+
+## 2026-08-16 — COM-P1-005 Replenishment and Approval Execution Exit
+
+Scope completed:
+
+- Added a V2 replenishment-draft schema and API that accept only warehouse, supplier-product, and
+  idempotency identity. Quantity, calculation window, safety policy, and approval/execution fields
+  are forbidden client input.
+- Added `PurchasingAgentTools` with exactly two operations: deterministic recommendation read and
+  DRAFT creation. No approval or execution operation is exposed to an LLM. The tool is locally
+  verified but is not registered into the production chat runtime; that remains COM-P1-010.
+- Draft quantity is calculated by the existing deterministic Python/SQL service and snapshotted
+  with Decimal commercial terms. Unapproved orders cannot enter `ORDERED`.
+- Added a stable logical request identity for replenishment retries. The Exit Review found and
+  fixed a defect where changed inventory/time inputs could turn the same client retry into a
+  conflict. Replays now preserve the original draft and explicitly distinguish the current
+  recommendation from the persisted draft quantity.
+- The security review found and fixed a service-layer replay path that could resolve an existing
+  draft before enforcing `WRITE_COMMERCE`. Permission is now checked at the service entry, including
+  direct Agent-tool invocation.
+- Extended the disposable MySQL verification with a real two-thread `APPROVED -> ORDERED` race.
+  Both callers receive `ORDERED`, while persistence records one transition timestamp and exactly
+  one `purchasing.order.ordered` audit.
+- No model or schema migration was added. Alembic remains at the already verified single
+  `0011_purchasing` head; COM-P1-005 operates on the COM-P1-004 purchase model.
+
+Formal Exit Review:
+
+- Product: authoritative quantity remains deterministic and server-owned; a recommendation can
+  become a reviewable DRAFT without claiming real supplier placement.
+- Architecture: Agent -> validated tool -> PurchasingService -> tenant-scoped persistence is
+  preserved. Approval/execution are absent from the tool list, and no connector abstraction or
+  external execution claim was introduced.
+- Security: API authentication, organization scope, centralized write/approve permissions,
+  creator/approver separation, replay permission, internal-hash redaction, and cross-tenant denial
+  pass. No Critical/High security finding remains.
+- Testing/data integrity: quantity/policy injection denial, zero-recommendation denial, changed-input
+  replay, write-permission replay denial, unapproved execution denial, deterministic calculation,
+  API success/error/scope, sequential retry, MySQL concurrent execution, and exactly-once audit pass.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_purchasing_service.py tests/integration/test_purchasing_api.py
+  -q`: `7 passed, 1 warning`.
+- `python -m pytest -q`: `267 passed, 18 skipped, 1 warning` after the final permission fix.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`112 files already formatted`).
+- `mypy .`: PASS (`86 source files`).
+- `alembic heads`: one head, `0011_purchasing`; `git diff --check`: PASS.
+- With `TEST_MYSQL_URL` targeting a guarded disposable official `mysql:8.4.11` database,
+  `python scripts/verify_mysql_migrations.py`: migration/integrity checks and
+  `sync-and-inventory-and-purchase-execution-races: PASS`. Temporary container
+  `ai-commerce-execution-mysql-test` was removed.
+
+Status:
+
+- `COM-P1-005`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 4 exit is satisfied.
+- Current phase: `PHASE_5_ALERTS_AND_BUSINESS_TASKS`; current task: `COM-P1-006` (`IN_PROGRESS`).
+- P0 remaining: 0; P1 remaining: 5; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS and do not verify this
+  task. They are environment-gated later-phase checks, not COM-P1-005 implementation gaps or
+  external blockers.
+
+## 2026-08-16 — COM-P1-006 Alerts and Business Tasks Exit
+
+Scope completed:
+
+- Added additive `0012_alert_tasks` models for tenant-scoped CommerceAlert, BusinessTask, and
+  immutable BusinessTaskHistory while preserving legacy tables and data.
+- Implemented deterministic SALES_DROP, SALES_SPIKE, REFUND_SPIKE, MARGIN_DROP, and STOCKOUT_RISK
+  rules. Sales uses equal adjacent windows, refunds include only completed source-currency values,
+  margin uses each order's latest immutable snapshot available at the window end, and stockout risk
+  reuses InventoryService.
+- Added mixed-currency fail-closed behavior, tenant-scoped deduplication, Alert lifecycle, Alert-to-
+  BusinessTask creation, active-member assignee validation, task idempotency/key-content conflict,
+  permissioned lifecycle, immutable history, and OperationLog evidence.
+- Added authenticated, bounded V2 evaluation/list/lifecycle/task APIs. Responses omit internal
+  deduplication, idempotency, and request hashes.
+- Exit Review found and fixed a MySQL `REPEATABLE READ` race risk: after a unique-key conflict the
+  loser now uses a locking read to observe the committed winner. A real two-thread MySQL verifier
+  confirms one Alert, one BusinessTask, one history row, and one audit per logical operation.
+
+Formal Exit Review:
+
+- Product: rules operate on arbitrary tenant Shop/SKU commerce data and deterministic metrics; no
+  Demo identifier, Mock ERP, fixed competitor, or LLM-authored number is required.
+- Architecture: Alert/BusinessTask are unified-domain consumers downstream of normalized data;
+  optional platform-specific detectors and adapters were not prematurely generalized. Effect
+  measurement remains a Phase 9 complete-loop responsibility, not a falsely claimed current feature.
+- Security: API authentication, tenant-scoped reads/writes, centralized write/approve permissions,
+  cross-tenant resource/assignee denial, replay permission checks, hash redaction, and audit pass.
+  `WAITING_APPROVAL -> DONE` cannot be completed by an operator.
+- Testing/data integrity: rule thresholds, currency rejection, latest-as-of profit selection,
+  duplicate evaluation, task retry/conflict, lifecycle including dismissal and invalid transitions,
+  tenant isolation, history/audit, API validation, SQLite migration, MySQL constraints/rollback/
+  re-upgrade/data preservation, and real MySQL concurrency pass. No unresolved Critical/High issue
+  remains in COM-P1-006 scope.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_alert_task_service.py tests/integration/test_alert_task_api.py
+  tests/migration/test_migrations.py -q`: `21 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `14 passed`.
+- `python -m pytest -q`: `275 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`116 files already formatted`).
+- `mypy .`: PASS (`89 source files`).
+- `alembic heads`: one head, `0012_alert_tasks`; `git diff --check`: PASS.
+- Guarded disposable official `mysql:8.4` database `commerce_test_alert_0012_race`:
+  `python scripts/verify_mysql_migrations.py` fresh/upgrade/rollback/re-upgrade/schema/integrity/
+  preservation, existing sync/inventory/purchase races, and Alert/BusinessTask idempotency races
+  PASS. Final temporary container `codex-commerce-alert-mysql-0012-final` was removed.
+
+Status:
+
+- `COM-P1-006`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 5 exit is satisfied.
+- Current phase: `PHASE_6_PRODUCTION_SYNC_OPERATIONS_AND_IMPORTS`; current task:
+  `COM-P1-007` — CSV/XLSX Import (`IN_PROGRESS`); next task: `COM-P1-008`.
+- P0 remaining: 0; P1 remaining: 4; active `BLOCKED_EXTERNAL`: 0.
+- Optional PRICE_ANOMALY, ORDER_ANOMALY, and FINANCE_ANOMALY detectors, production Agent
+  registration, and effect measurement remain internal `MISSING` work. They are not
+  `BLOCKED_EXTERNAL` and are not represented as COM-P1-006 PASS.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not block this
+  backend task and will be reevaluated in the corresponding integration/productization phases.
+
+## 2026-08-16 — COM-P1-007 CSV/XLSX Import Exit
+
+Scope completed:
+
+- Added additive `0013_data_imports` with tenant-scoped DataImportJob/DataImportRecord staging,
+  count/status/file-format constraints, exact request/source/idempotency identity, and RawEvent FK.
+- Added bounded CSV/XLSX parsing, explicit/default mapping, row-level preview errors, active-content
+  rejection, and a separate explicit execute operation for catalog, order, warehouse/channel
+  inventory, and cost imports.
+- File imports create `PlatformRawEvent` evidence but cannot masquerade as SyncJob/platform data.
+  They reuse the existing Catalog, OrderImport, Inventory, and Finance services and can operate for
+  an active Shop without platform credentials.
+- Added tenant-scoped `WRITE_COMMERCE` APIs for preview/execute and bounded read APIs. Responses
+  omit raw rows/payloads, claim tokens, request/idempotency hashes, and credentials.
+- Added live execution conflict, lease expiry recovery, failed-event retry, crash-after-domain-
+  commit result reconstruction, preview-stage fail-closed behavior, exact channel SKU identity,
+  and stale inventory lineage.
+
+Formal Exit Review:
+
+- Product: arbitrary merchant catalog/order/inventory/cost files work without fixed Demo IDs or a
+  platform credential; preview remains separate from authoritative execution.
+- Architecture: External file -> RawEvent -> validate/normalize/deduplicate -> existing unified
+  service/model is preserved; a file import is not a SyncJob and no universal connector was added.
+- Security: authenticated tenant scope, `WRITE_COMMERCE`, cross-tenant denial, bounded multipart/
+  parser/ZIP inputs, active-content rejection, exact IDs, response redaction, and audit metadata pass.
+- Testing/data integrity: CSV/XLSX limits, mapping, malformed/duplicate/partial data, permissions,
+  RawEvent lineage, retry/recovery, stale inventory, API boundaries, SQLite migration, and MySQL
+  constraints/rollback/data preservation pass. No unresolved Critical/High finding remains.
+- Independent parser/security, tenant/idempotency, and migration reviews found bounded-upload,
+  parser-amplification, preview-staging, retry/recovery, and terminal-count integrity gaps. The
+  primary agent reconciled and fixed those findings, then reran the formal Product/Architecture/
+  Security/Testing checklist; no unresolved Critical/High finding remains.
+
+Commands and evidence:
+
+- `python -m pytest tests/unit/test_data_import_service.py -q`: `12 passed`.
+- `python -m pytest tests/unit/test_order_import_service.py -q`: `5 passed`.
+- `python -m pytest tests/integration/test_data_import_api.py -q`: `2 passed, 1 warning`.
+- `python -m pytest tests/migration/test_migrations.py -q`: `15 passed`.
+- `python -m pytest -q`: `290 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`120 files already formatted`).
+- `mypy .`: PASS (`92 source files`); `alembic heads`: one head, `0013_data_imports`;
+  `git diff --check`: PASS.
+- Existing official `mysql:8.4` service with guarded disposable empty database
+  `codex_import_test_0013`: fresh install,
+  `0012 -> 0013 -> 0012 -> 0013`, schema/unique/FK/CHECK constraints, prior Shop/RawEvent data
+  preservation, and existing sync/inventory/purchase/alert concurrency gates PASS. The temporary
+  database was dropped after verification; the existing application database was not touched.
+
+Status:
+
+- `COM-P1-007`: `DONE` at `L2 VERIFIED_LOCAL`; Phase 6 connector-independent exit is satisfied.
+- Current phase: `PHASE_7_DOUYIN_CONNECTOR`; current task: `COM-P1-008` (`IN_PROGRESS`); next task:
+  `COM-P1-009`.
+- P0 remaining: 0; P1 remaining: 3; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips are not PASS. They do not prove or block
+  file-import behavior and will be executed at the corresponding productization/release phases.
+
+## 2026-08-16 — COM-P1-008 Douyin Connector Initial Exit Evidence
+
+Scope completed:
+
+- Added a Douyin-specific official Open Platform client for product, order, after-sale, inventory,
+  and token-refresh endpoints with canonical HMAC-SHA256 signing, official HTTPS-origin pinning,
+  bounded timeout/retry/Retry-After handling, response limits, and credential-safe errors.
+- Added platform-specific normalization into the existing Catalog, CommerceOrder, ChannelInventory,
+  and Refund services through `SyncJob -> PlatformRawEvent -> normalized domain service`.
+- Pull requests bind their idempotency key to shop/type/window/page parameters, enforce per-shop and
+  process admission limits, a 20-second total deadline, and at most 100 inventory API calls per
+  chunk. Checkpoints persist next cursor/page/SKU position; an unfinished bounded chunk returns
+  `PENDING` with explicit continuation and does not consume failure retry budget. High-water advances
+  only after a complete successful window.
+- Authentication failure locks the credential row, reuses a concurrently rotated access token or
+  refreshes once, encrypts the rotated token, and preserves `AUTHORIZED` connection state. Added an
+  explicit bounded deployment backfill for legacy webhook app-key lookup hashes.
+- Webhook ingress verifies the exact raw body HMAC, bounds body/batch/depth/candidates/concurrency,
+  rejects nested credential fields, deduplicates `msg_id`, and persists only immutable `RECEIVED`
+  RawEvents. Callback processing remains asynchronous TARGET work; no Worker is claimed.
+- Added `0014_douyin_webhook_lookup` for the non-reversible credential lookup and
+  PlatformSKUSourceEvent lineage. Complete product snapshots atomically update platform metadata,
+  deactivate missing SKUs, preserve manual MasterSKU mappings, ignore older snapshots, and fail
+  closed on differing same-time snapshots.
+
+Formal Exit Review:
+
+- Product: product/SKU/order/inventory/refund pulls operate on arbitrary tenant shops and data;
+  no fixed Demo identity or Mock ERP participates. Real seller verification remains separate.
+- Architecture: the connector remains Douyin-specific, uses RawEvent before unified models, and
+  does not introduce a speculative universal adapter. Request-time chunking is explicit; scheduler,
+  queue/worker, and webhook domain consumer remain TARGET.
+- Security: official-origin pinning, encrypted credentials, row-locked single refresh, request
+  fingerprint, tenant/permission checks, deadline/admission/candidate bounds, sensitive-payload
+  rejection, response/error redaction, and audit metadata pass. Independent review findings were
+  fixed; no unresolved Critical/High issue remains in COM-P1-008 scope.
+- Testing/data integrity: official signing vectors and endpoint shapes, normalization, continuation,
+  failure resume, high-water, stale/equal-time product snapshots, atomic rollback, duplicate webhook,
+  credential backfill, tenant/permission denial, API limits, SQLite migration, and MySQL migration/
+  webhook/token concurrency pass.
+
+Commands and evidence:
+
+- Initial focused/full evidence in this section was superseded by the final re-run below.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`132 files already formatted`).
+- `mypy .`: PASS (`103 source files`).
+- `alembic heads`: one head, `0014_douyin_webhook_lookup`; `git diff --check`: PASS.
+- Guarded disposable official MySQL 8.4 database `commerce_connector_test`: fresh install,
+  `0013 -> 0014 -> 0013 -> 0014`, schema/FK/index/constraint integrity, legacy/tenant data
+  preservation, existing concurrency gates, one-row webhook deduplication race, and cross-job-type
+  single token-refresh race PASS. The explicitly named temporary container was removed after final
+  verification.
+
+Status:
+
+- `COM-P1-008`: `DONE`. Implementation `PASS`; contract/mock verification `PASS`;
+  real platform `IMPLEMENTED_UNVERIFIED` (not `VERIFIED_REAL`).
+- Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`; current task: `COM-P1-009` (`TODO`); next task:
+  `COM-P1-010`.
+- P0 remaining: 0; P1 remaining: 2; active `BLOCKED_EXTERNAL`: 0.
+- The 18 Compose/browser/DeepSeek environment-gated skips remain not PASS and will be reevaluated in
+  their corresponding productization/release phases.
+
+## 2026-08-17 — COM-P1-008 Final Exit Review and State Reconciliation
+
+Exit review scope:
+
+- Product: Douyin product/SKU/order/inventory/refund pulls operate on arbitrary tenant shops and
+  real-shaped payloads; no fixed Demo identity or Mock ERP participates. Real seller verification is
+  intentionally separate.
+- Architecture: `SyncJob -> PlatformRawEvent -> normalization -> trusted domain service` remains
+  the production data path. Douyin remains a platform-specific adapter; scheduler/Worker and
+  webhook domain consumer remain TARGET. Alembic has one head at `0014_douyin_webhook_lookup`.
+- Security: credentials are encrypted and redacted; tenant/shop routing is server-owned; disabled,
+  revoked, invalid, and cross-tenant routes fail closed; only authorized or token-expiry reauth
+  connections accept callbacks; no unresolved Critical/High finding remains.
+- Reliability: expired-token refresh is performed after a `SyncJob` is created and started. Shop,
+  credential, connection, and refresh audits commit atomically, while refresh failures leave a
+  visible `FAILED` job. Pulls use bounded per-request deadline budgets and reject late responses;
+  synchronous HTTP is not claimed to have Worker-level hard cancellation. Duplicate/retry/stale
+  event behavior, high-water/checkpoint continuation, and webhook replay are covered.
+- Testing: inventory/order/refund/catalog normalization, API/tenant/permission boundaries,
+  credential leakage, stale/idempotent events, migration, webhook, and concurrency evidence all
+  pass. Product, Architecture, Security, and Testing reviews found no unresolved Critical/High.
+
+Commands and final evidence:
+
+```powershell
+python -m pytest -q tests/unit/test_douyin_client.py tests/unit/test_douyin_sync_service.py tests/integration/test_douyin_connector_api.py tests/integration/test_tenant_api.py
+```
+
+- Focused result: `52 passed, 1 warning`.
+- Broader connector-adjacent SQLite slice (catalog/order/inventory/finance/ingestion/credentials/
+  migration plus Douyin/API suites): `180 passed, 1 warning`.
+- `python -m pytest -q`: `338 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`132 files already formatted`); `mypy .`:
+  PASS (`103 source files`); `alembic heads`: one head, `0014_douyin_webhook_lookup`;
+  `git diff --check`: PASS.
+- Disposable MySQL 8.4 root verifier: PASS for fresh install, `0013 -> 0014 -> 0013 -> 0014`,
+  constraints, data preservation, webhook idempotency race, and cross-job-type single-refresh
+  race. An initial least-privileged test-user attempt was rejected by MySQL because the verifier
+  reads `performance_schema.data_lock_waits`; the isolated rerun used only the temporary instance
+  root account and passed. Both temporary containers were removed; the existing Compose database
+  was not touched.
+
+Status:
+
+- `COM-P1-008`: `DONE`; Implementation `PASS`; Contract/Mock `PASS` / `VERIFIED_MOCK`; Real
+  Platform `IMPLEMENTED_UNVERIFIED`.
+- Current phase: `PHASE_8_TIKTOK_SHOP_CONNECTOR`; current task: `COM-P1-009` (`TODO`); next task:
+  `COM-P1-010`.
+- P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.
+- The 18 Compose/browser/DeepSeek skips are not PASS and do not block Douyin local/mock exit; they
+  will be reevaluated at their corresponding productization/release phases.
+
+## 2026-08-17 — COM-P1-009B TikTok Shop Client and Normalization
+
+Implemented:
+
+- Added a TikTok Shop-specific client pinned to the official API and token HTTPS origins. Requests
+  use the documented `x-tts-access-token` header, exact-body HMAC-SHA256 signature, bounded retries,
+  deadline-aware timeouts, page-token limits, and an explicit endpoint allowlist. Refresh parses
+  `access_token_expire_in` as an absolute Unix timestamp rather than a duration.
+- Added fail-closed product/SKU, order, channel-inventory, aftersales/refund, and statement-
+  transaction normalization. Unknown statuses, mixed currencies, multi-order aftersales payloads,
+  duplicate identities, and incomplete refund amounts are rejected.
+- Finance normalization emits only explicit revenue, logistics, fee/tax aggregate, and adjustment
+  components as `FinanceTransactionSnapshotInput`. It does not fabricate a Settlement or infer a
+  refund amount from incomplete statement data.
+
+Verification:
+
+- Official documentation contracts were rechecked from TikTok Shop Partner Center for signing,
+  product `202502`, inventory/order `202309`, aftersales `202603`, finance `202309/202501`,
+  authorized shops, refresh, and webhook semantics. This is contract evidence, not a live API run.
+- `python -m pytest -q tests/unit/test_tiktok_shop_client.py tests/unit/test_tiktok_shop_normalization.py`:
+  `27 passed`.
+- Focused `ruff check`: PASS; focused `ruff format --check`: PASS; focused `mypy`: PASS;
+  `git diff --check`: PASS.
+- Verification level for this slice: `L2 VERIFIED_LOCAL` / contract fixtures only. No sandbox or
+  real seller/platform claim is made.
+
+Status:
+
+- `COM-P1-009` remains `IN_PROGRESS`; the next verification slice is SyncJob/RawEvent/domain/API
+  integration. P0 remaining: `0`; P1 remaining: `2`; active `BLOCKED_EXTERNAL`: `0`.
+
+## 2026-08-17 — COM-P1-009 Final Exit Review and Verified Checkpoint
+
+Implemented and hardened:
+
+- Added tenant/permission-scoped TikTok Shop product/SKU, order, inventory, aftersales/refund, and
+  finance pulls through `SyncJob -> PlatformRawEvent -> normalization -> existing domain service`.
+  Finance persists the source statement transaction before deriving linked normalized components.
+- Added encrypted, row-locked token refresh with refresh-token expiry checks, complete response
+  validation, atomic connection recovery, and unique authorized-shop ID plus shop-cipher binding
+  before any RawEvent or domain write.
+- Added request fingerprinting, bounded deadline/retry/admission, compact persisted cursor history,
+  cross-continuation cycle detection, a 2048-page total job limit, stable `total_count` reconciliation,
+  and finance statement currency/time/count reconciliation. Stalled, incomplete, or conflicting
+  platform pagination fails closed before domain writes.
+- Added an exact-body TikTok webhook using the deployment-owned application/route registry,
+  one HMAC per request, active organization/shop/credential/connection checks, sensitive-payload
+  rejection, notification idempotency/conflict handling, immutable RawEvent ingress, and audit
+  metadata. Webhook domain consumption, scheduler, and Worker remain TARGET.
+- Removed connector checkpoint/cursor/request-fingerprint payloads from public API responses and
+  extended structured/text logging redaction to shop cipher material. The tenant route inventory
+  explicitly treats only the signed Douyin and TikTok webhooks as anonymous platform routes.
+
+Exit Review:
+
+- Product/Architecture: platform-specific behavior remains separate; normalized business meaning
+  is shared through existing services. RawEvent precedes normalized writes. Reviewer findings for
+  cross-request cursor loops, checkpoint-size conflict, finance page cardinality/time consistency,
+  and terminal total-count completeness were fixed. No unresolved Critical/High/Medium finding.
+- Security: deployment-owned O(1) webhook routing, exact-body HMAC, tenant/shop/credential state,
+  encrypted refresh, checkpoint redaction, sensitive logging, anonymous route inventory, and
+  MySQL webhook/token races pass. No unresolved Critical/High/Medium finding.
+- Testing/Reliability: duplicate/conflicting webhook delivery, stale/equal-time records, arbitrary
+  SKU/shop identities, retry/idempotency, invalid refresh, binding mismatch, continuation, cursor
+  cycles, total-count mismatch, finance raw lineage, tenant denial, and credential leakage are
+  covered. A full-suite route-inventory failure exposed the missing signed-webhook exception and
+  was fixed before the final clean rerun.
+
+Commands and final evidence:
+
+- TikTok sync-service regression after final hardening: `33 passed`.
+- TikTok/tenant/runtime/logging/client/API slice:
+  `python -m pytest -q tests/unit/test_tiktok_shop_client.py
+  tests/unit/test_tiktok_shop_sync_service.py tests/integration/test_tiktok_shop_connector_api.py
+  tests/integration/test_tenant_api.py tests/unit/test_logging_security.py
+  tests/unit/test_runtime_boundary.py`: `93 passed, 1 warning`.
+- `python -m pytest -q`: `416 passed, 18 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`140 files already formatted`).
+- `mypy .`: PASS (`111 source files`); `alembic heads`: one head,
+  `0014_douyin_webhook_lookup`; `git diff --check`: PASS.
+- Final guarded disposable official `mysql:8.4` verifier, run serially on the final tree: PASS for
+  fresh install, legacy `0002 -> head`, rollback/re-upgrade, schema/integrity/data preservation,
+  existing sync/inventory/purchase/alert races, and Douyin/TikTok webhook idempotency plus
+  cross-job token-refresh races. The explicitly named temporary container was removed; the
+  existing Compose MySQL was not touched. Additional isolated serial reruns also passed. One prior
+  verifier run overlapping a full pytest load failed internally without credential corruption;
+  repeated isolated runs did not reproduce it, so it is retained as non-blocking reliability
+  history rather than hidden or labelled `BLOCKED_EXTERNAL`.
+- The 18 Compose/browser/DeepSeek environment-gated skips were not counted as PASS. They do not
+  automatically block this connector-local Exit and remain for their productization/release phases.
+
+Status:
+
+- `COM-P1-009`: `DONE`; Implementation `PASS`; Contract/Mock `PASS` / `VERIFIED_MOCK` at
+  `L2 VERIFIED_LOCAL`; Real Platform `IMPLEMENTED_UNVERIFIED`.
+- Current phase: `PHASE_9_DASHBOARD_AND_AGENT_PRODUCTIZATION`; current task:
+  `COM-P1-010` (`IN_PROGRESS`). Next task selection is deferred to its Exit Review.
+- P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.
+
+## 2026-08-17 — COM-P1-010 Final Exit Review and Phase 10 Selection
+
+Implemented and hardened:
+
+- Added the tenant-scoped normalized operations dashboard and `/api/v2/dashboard` contract for
+  currency-separated sales/refund/profit, platform/shop comparison, trend, inventory risk, alerts,
+  and pending tasks. The dashboard remains useful without an LLM.
+- Added immutable task-effect measurements and execution purchase-order linkage so an auditable
+  BusinessTask can compare deterministic baseline/current state after execution.
+- Registered the production V2 Agent over server-owned principal/Shop scope. Read tools cover the
+  dashboard, Master SKU comparison, alert evidence, pending tasks, and deterministic replenishment;
+  write tools create only BusinessTask or purchase DRAFT records and cannot approve or execute.
+- Replaced untrusted LLM read narrative with server-owned deterministic renderers. Canonical
+  evidence preserves all sources for a normal dashboard + two-SKU + alert request. Wider evidence
+  combinations fail explicitly rather than silently truncating a tool source. Active-alert and
+  pending-task tools now return `{count, items}` so empty results render as normal grounded states.
+- Added an authenticated V2 API client and Streamlit internal/admin interface. It renders normalized
+  dashboard data and Agent evidence, accepts tokens through a password input, and does not read the
+  database or legacy Demo endpoints. Compose passes optional token/organization/shop configuration
+  without embedding credentials.
+- Added API client, AppTest, Agent-loop, tenant/permission, cross-shop purchase-link, evidence-
+  completeness, empty-state, and Playwright browser regression coverage. The browser success API is
+  a deterministic local contract fixture and therefore `VERIFIED_MOCK`, not cloud-LLM, sandbox, or
+  real-platform evidence.
+
+Exit Review:
+
+- Product: the normalized dashboard works without AI; the Agent operates on arbitrary tenant data,
+  not A102/B205/COMP-B or Demo services. Empty operational states are useful responses rather than
+  502 errors.
+- Architecture: `authenticated scope -> validated tool -> business service -> persistence` is
+  preserved. Agent tools cannot choose tenant scope. Server-owned evidence is complete or fails
+  closed. V2 Streamlit is CURRENT only as an internal/admin client; React/Next.js remains TARGET.
+- Security: no arbitrary SQL, unrestricted URL, credential, approve, or execute tool exists. Token
+  text is password-masked and absent from browser content; controlled frontend errors do not echo
+  backend detail. Cross-tenant and permission denial tests pass. Changed/untracked files contain no
+  private-key or token-shaped secret; fixture tokens are explicit test-only constants.
+- Testing: Product/Architecture independent review found no unresolved Critical/High/P1 issue after
+  evidence-capacity and empty-state fixes. Full regression, static checks, Compose build/health,
+  migration head, API/workflow, and explicit browser success pass. Default gated skips remain not
+  PASS and do not become `BLOCKED_EXTERNAL`.
+
+Commands and evidence:
+
+- `python -m pytest -q tests/unit/test_v2_agent.py tests/unit/test_v2_frontend_api_client.py
+  tests/ui/test_v2_streamlit_app.py`: `54 passed`.
+- Explicit browser success stack: `uvicorn v2_frontend_stub_api:app --app-dir tests/support --host
+  127.0.0.1 --port 8012`; `python -m streamlit run frontend/v2_streamlit_app.py ...`; then
+  `RUN_V2_UI_E2E=1`, `V2_E2E_AGENT_MODE=success` and
+  `python -m pytest -q tests/e2e/test_v2_streamlit_browser.py`: `1 passed`.
+- The first fixture command using module path `tests.support.v2_frontend_stub_api:app` failed because
+  `tests` is not a package; `--app-dir tests/support` fixed the launch. The installed `streamlit`
+  console shim also referenced the removed `streamlit.cli`; `python -m streamlit` used the verified
+  installed module entry point. Neither failure affected application code or final evidence.
+- `python -m pytest -q`: `488 passed, 19 skipped, 1 warning`.
+- `ruff check .`: PASS; `ruff format --check .`: PASS (`157 files already formatted`).
+- `mypy .`: PASS (`126 source files`); `alembic heads`: `0016_agent_workflow (head)`;
+  `git diff --check`: PASS; `docker compose config --quiet`: PASS.
+- `docker compose up -d --build agent-api frontend-v2`: PASS. Rebuilt `agent-api` and
+  `frontend-v2` are healthy; existing MySQL remains healthy; `init-db` exits successfully;
+  container `alembic current` is `0016_agent_workflow (head)`. Existing long-running legacy/demo
+  services were not stopped or recreated.
+- The 19 default skips comprise environment-gated Compose, legacy browser, DeepSeek cloud, and V2
+  browser tests. They were not counted as PASS. The relevant V2 build/Compose health and browser
+  success were executed separately; cloud DeepSeek and real-platform verification were not run.
+
+Status:
+
+- `COM-P1-010`: `DONE`; local implementation/API/workflow/browser-contract evidence PASS.
+- Current phase: `PHASE_10_FRONTEND_AND_PRODUCTION_HARDENING`; current/next task:
+  `COM-P1-011` (`IN_PROGRESS`).
+- P0 remaining: `0`; P1 remaining: `1`; active `BLOCKED_EXTERNAL`: `0`.
+- V2 remains `NOT_COMPLETE`: restart/backup/restore, production-oriented deployment/configuration,
+  HTTPS/release gates, and the production frontend decision remain internal Phase 10 work.

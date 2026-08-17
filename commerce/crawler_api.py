@@ -1,8 +1,11 @@
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
 
 from commerce.crawler import CrawlerManager
 from commerce.database import get_session
@@ -11,6 +14,20 @@ from commerce.schemas import CrawlerTaskCreate
 from commerce.services.marketing import competitor_price_change, content_trend
 
 app = FastAPI(title="Crawler Service", version="0.1.0")
+
+
+@app.middleware("http")
+async def reject_production_runtime(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    from commerce.config import get_settings
+
+    if get_settings().is_production:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "Legacy Crawler 仅允许在 development/test/demo 运行模式使用"},
+        )
+    return await call_next(request)
 
 
 def require_crawler_token(x_crawler_token: str) -> None:

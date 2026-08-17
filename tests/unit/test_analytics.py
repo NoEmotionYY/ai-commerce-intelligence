@@ -3,6 +3,7 @@ from decimal import Decimal
 from commerce.analytics import (
     InventoryRisk,
     calculate_finance_metrics,
+    calculate_inventory_coverage,
     calculate_inventory_metrics,
     classify_inventory_risk,
     recommend_reorder_quantity,
@@ -77,3 +78,15 @@ def test_inventory_classifies_before_display_rounding_and_reorder_rounds_up() ->
         )
         == 300
     )
+
+
+def test_inventory_coverage_uses_unrounded_velocity_for_low_frequency_sales() -> None:
+    metrics = calculate_inventory_coverage(
+        available_stock=1,
+        incoming_stock=1,
+        sales_units=1,
+        window_days=90,
+    )
+    assert metrics.daily_sales == Decimal("0.01")
+    assert metrics.days_of_stock == Decimal("90.0")
+    assert metrics.projected_days_of_stock == Decimal("180.0")

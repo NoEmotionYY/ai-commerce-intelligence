@@ -58,13 +58,14 @@ def final(intent: str = "combined_analysis") -> AIMessage:
 
 
 def a102_arguments(name: str) -> dict[str, object]:
-    return {
+    arguments: dict[str, dict[str, object]] = {
         "get_sku_sales": {"sku": "A102", "days": 14},
         "get_advertising_data": {"sku": "A102", "days": 14},
         "get_product": {"sku": "A102"},
         "compare_competitor_prices": {"external_id": "COMP-B"},
         "analyze_market_trends": {"keyword": "竞品B"},
-    }[name]
+    }
+    return arguments[name]
 
 
 def test_a102_cloud_loop_executes_all_required_tools_before_answer() -> None:
@@ -151,7 +152,7 @@ def test_missing_required_tools_causes_model_to_be_asked_again() -> None:
 def test_duplicate_cloud_tool_call_reuses_result_and_forces_final_answer() -> None:
     calls: list[str] = []
     tools = [recording_tool("get_sales_summary", calls)]
-    repeated = {"days": 1}
+    repeated: dict[str, object] = {"days": 1}
     provider = FakeProvider(
         [
             AIMessage(

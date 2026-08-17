@@ -1,213 +1,763 @@
-# Repository Instructions
+# AI Commerce Operations Copilot
+# Autonomous Engineering Protocol
 
-## Mission
+## 1. Mission
 
-Build the complete AI Commerce Operations & Marketing Intelligence Agent.
+This repository is evolving from an AI e-commerce demonstration system into a real-world multi-platform commerce operations application.
 
-Always read before planning or implementation:
+Target product:
+
+AI Commerce Operations Copilot
+AI 多平台电商店铺经营助手
+
+The system should support real merchant workflows across domestic and cross-border e-commerce platforms.
+
+Initial target platforms:
+
+- Douyin
+- TikTok Shop
+
+Future platforms may include:
+
+- Taobao / Tmall
+- Shopify
+- Amazon
+- Shopee
+- Lazada
+- Pinduoduo
+
+Do not optimize for artificial demos, fixed acceptance examples, or hard-coded showcase behavior.
+
+Optimize for:
+
+- real commerce data;
+- real merchant workflows;
+- deterministic business calculations;
+- operational reliability;
+- security;
+- auditability;
+- maintainability;
+- verifiable end-to-end behavior.
+
+---
+
+## 2. Sources of Truth
+
+Before substantial planning or implementation, read in this order:
 
 1. docs/PROJECT_SPEC.md
 2. docs/ACCEPTANCE.md
-3. docs/ARCHITECTURE.md if present
-4. docs/TASKS.md if present
-5. docs/PROGRESS.md if present
-6. docs/DECISIONS.md if present
+3. docs/ARCHITECTURE.md
+4. docs/ROADMAP.md
+5. docs/TASKS.md
+6. docs/PROGRESS.md
+7. docs/DECISIONS.md
+8. docs/BLOCKERS.md
 
-PROJECT_SPEC defines WHAT the product must achieve.
+PROJECT_SPEC.md defines WHAT the product must become.
 
-ACCEPTANCE defines WHEN the project is complete.
+ACCEPTANCE.md defines WHEN the project may be considered complete.
 
-Do not blindly copy implementation suggestions from PROJECT_SPEC if a safer,
-simpler, more testable architecture satisfies the same requirement.
+ARCHITECTURE.md describes the actual current architecture.
 
+ROADMAP.md describes implementation phases and dependencies.
 
-## Autonomous Workflow
+TASKS.md is the active task ledger.
 
-Do not stop after planning.
+PROGRESS.md records implementation and verification evidence.
 
-Do not stop after scaffolding.
+DECISIONS.md records significant engineering decisions.
 
-For each task:
+BLOCKERS.md contains genuine external blockers only.
 
-inspect
-→ implement
-→ test
-→ diagnose failures
-→ fix
-→ retest
-→ review
-→ document
-→ continue
+If documentation and implementation disagree:
 
-Continue to the next incomplete task unless there is a genuine external blocker.
+1. inspect the actual repository;
+2. determine which side is outdated or incorrect;
+3. make the safest technically sound decision;
+4. record important reasoning in DECISIONS.md;
+5. update documentation;
+6. continue implementation.
 
+Do not blindly implement a flawed specification.
 
-## Project State
+Do not silently weaken the product goal.
 
-Maintain:
+---
 
-- docs/ARCHITECTURE.md
-- docs/TASKS.md
-- docs/PROGRESS.md
-- docs/DECISIONS.md
+## 3. Autonomous Responsibility
 
-Update TASKS and PROGRESS after meaningful milestones.
+Act as:
 
-Important architecture decisions must be recorded in DECISIONS.md.
+- Principal Engineer;
+- Software Architect;
+- Technical Project Lead;
+- Test Lead;
+- Reviewer.
 
+At the beginning of a major run:
 
-## Architecture
+1. inspect git status;
+2. inspect recent commits;
+3. read project state documents;
+4. inspect relevant implementation and tests;
+5. compare repository state against PROJECT_SPEC and ACCEPTANCE;
+6. identify:
+   - completed work;
+   - partial work;
+   - missing work;
+   - obsolete demo behavior;
+   - architectural debt;
+   - security issues;
+   - test gaps;
+   - external blockers;
+7. update ROADMAP or TASKS when reality has changed;
+8. choose the highest-priority unblocked task;
+9. implement it.
 
-Keep these layers separated:
+Do not stop after planning unless implementation is genuinely impossible.
 
-- API
-- Agent orchestration
-- business logic
-- ERP integration
-- crawler
-- database/persistence
-- UI
+---
 
-LLMs must never directly perform production-style database writes.
+## 4. Continuous Execution Loop
 
-Write operations must use:
+Use this loop:
+
+INSPECT
+→ PLAN
+→ IMPLEMENT
+→ TEST
+→ REVIEW
+→ DIAGNOSE
+→ FIX
+→ RETEST
+→ DOCUMENT
+→ SELECT NEXT TASK
+→ CONTINUE
+
+After completing one task, automatically select the next highest-priority unblocked task.
+
+Do not stop merely because:
+
+- one feature is complete;
+- one phase is complete;
+- one test suite passes;
+- one milestone is reached;
+- documentation has been updated.
+
+Stop only when:
+
+1. ACCEPTANCE.md is fully satisfied; or
+2. every remaining mandatory item is a genuine external blocker.
+
+---
+
+## 5. Self-Review
+
+Never treat the first implementation as final.
+
+For every substantial feature:
+
+1. implement;
+2. run relevant tests;
+3. inspect the diff as an independent reviewer;
+4. look for:
+   - correctness bugs;
+   - security issues;
+   - data integrity issues;
+   - concurrency problems;
+   - idempotency problems;
+   - incorrect migrations;
+   - weak API contracts;
+   - missing validation;
+   - missing error handling;
+   - missing observability;
+   - missing edge cases;
+   - missing tests;
+   - demo-specific hard coding;
+5. fix findings;
+6. rerun verification.
+
+Use subagents for independent review where valuable.
+
+The main agent remains responsible for verifying subagent findings.
+
+---
+
+## 6. Product Architecture Principle
+
+The product is a real commerce application, not a generic commerce framework.
+
+Unify business meaning, not every platform implementation.
+
+Preferred pattern:
+
+Platform-specific integration
+→ raw platform data
+→ validation
+→ normalization
+→ unified commerce model
+→ business services
+→ analytics / alerts / agent
+
+Do not create abstractions only because a hypothetical future platform may need them.
+
+Implement real use cases first.
+
+Abstract repeated patterns only after they are proven.
+
+---
+
+## 7. Core Product Model
+
+The target business domain includes, where justified:
+
+- Organization
+- User
+- Shop
+- ShopCredential
+- ShopCapability
+- MasterProduct
+- MasterSKU
+- PlatformListing
+- PlatformSKU
+- Order
+- OrderItem
+- Refund
+- RefundItem
+- Warehouse
+- WarehouseInventory
+- ChannelInventory
+- SKUCost
+- FinanceTransaction
+- Settlement
+- Supplier
+- SupplierProduct
+- PurchaseOrder
+- PurchaseOrderItem
+- InboundShipment
+- Alert
+- BusinessTask
+- SyncJob
+- PlatformRawEvent
+- OperationLog
+- AuditLog
+
+Do not add unused entities solely to satisfy architecture diagrams.
+
+---
+
+## 8. Remove Demo Dependence
+
+Production behavior must not depend on fixed identifiers or artificial scenarios such as:
+
+- A102
+- B205
+- COMP-B
+- fixed competitor mappings
+- fixed answers created for acceptance tests
+
+The existing Mock ERP and deterministic fake competitor site may remain for:
+
+- automated tests;
+- local development;
+- demos;
+- integration testing.
+
+They must not be required production data sources.
+
+Production workflows must operate on real synchronized or imported commerce data.
+
+---
+
+## 9. Real Data First
+
+Prioritize:
+
+1. store connections;
+2. product / SKU synchronization;
+3. orders;
+4. inventory;
+5. refunds;
+6. costs;
+7. finance;
+8. suppliers;
+9. purchasing;
+10. metrics;
+11. alerts;
+12. business tasks;
+13. AI analysis.
+
+Do not prioritize additional AI sophistication while core real-data workflows remain incomplete.
+
+---
+
+## 10. Platform Integrations
+
+Initial production integration priorities:
+
+1. Douyin
+2. TikTok Shop
+
+Platform integrations should use:
+
+Platform API / Webhook
+→ raw event storage
+→ platform validation
+→ normalization
+→ unified business model
+
+Requirements include where applicable:
+
+- authentication;
+- token refresh;
+- signature validation;
+- pagination;
+- retries;
+- timeouts;
+- rate-limit handling;
+- idempotency;
+- cursor/checkpoint management;
+- reconciliation;
+- error visibility;
+- contract tests.
+
+Never fabricate successful real-platform tests.
+
+If credentials or platform approval are unavailable:
+
+1. implement all code that can be implemented safely;
+2. add fixtures, contract tests, mocks or sandbox tests;
+3. document exact missing external requirement;
+4. mark only real verification as BLOCKED_EXTERNAL;
+5. continue other work.
+
+---
+
+## 11. Deterministic Business Calculations
+
+Authoritative metrics must use Python or SQL.
+
+This includes:
+
+- GMV
+- revenue
+- costs
+- gross profit
+- contribution profit
+- profit margin
+- refund rate
+- sales growth
+- inventory days of cover
+- stock turnover
+- safety stock
+- reorder quantity
+- platform comparison
+- ROI
+- ROAS
+- anomaly thresholds
+
+LLMs must not invent or estimate authoritative numbers when deterministic inputs exist.
+
+LLMs may:
+
+- interpret intent;
+- select tools;
+- orchestrate workflows;
+- explain results;
+- summarize;
+- perform qualitative reasoning.
+
+---
+
+## 12. Agent Boundary
+
+Required write path:
 
 Agent
 → validated Tool
-→ business service/API
-→ persistence
+→ Business Service
+→ Repository or Platform Client
+→ Database / External Platform
 
+The LLM must never:
 
-## Deterministic Logic
+- run arbitrary production SQL;
+- directly manipulate persistence;
+- directly call unrestricted write APIs;
+- bypass business validation;
+- bypass approvals;
+- fabricate Tool results.
 
-Use Python rather than the LLM for deterministic calculations including:
+---
 
-- revenue
-- profit
-- margin
-- ROI
-- ROAS
-- refund rate
-- inventory days
-- anomaly thresholds
+## 13. High-Impact Operations
 
-Use the LLM for:
+High-impact actions require approval where appropriate.
 
-- intent understanding
-- tool selection
-- orchestration
-- explanation
-- qualitative analysis
+Examples:
 
+- purchase orders;
+- large inventory changes;
+- price changes;
+- refunds;
+- destructive actions;
+- financially consequential writes.
 
-## Agent Design
+Preferred lifecycle:
 
-Prefer:
+Recommendation
+→ Draft
+→ PENDING_APPROVAL
+→ APPROVED / REJECTED
+→ Execution
+→ Audit record
 
-single Agent + Tools + LangGraph
+Execution must be idempotent.
 
-unless real requirements justify multi-agent architecture.
+Retries must not duplicate financial or inventory actions.
 
-Use LangGraph for stateful workflows and Human-in-the-loop.
+---
 
+## 14. Commerce First, AI Second
 
-## High-Risk Operations
+The following must work without the LLM:
 
-Read operations may be automatic.
+- dashboard;
+- products;
+- orders;
+- inventory;
+- refunds;
+- costs;
+- finance;
+- profit calculations;
+- purchasing;
+- alerts;
+- task management;
+- synchronization.
 
-High-impact write operations require approval.
+AI is a layer above reliable business services.
 
-A purchase order must never execute before approval.
+Do not convert deterministic workflows into prompts.
 
+---
 
-## Crawler
+## 15. Required Product Loop
 
-Support both:
+The intended application loop is:
 
-- HTTPX
-- Playwright
+REAL DATA
+→ METRICS
+→ ANOMALY
+→ ANALYSIS
+→ BUSINESS TASK
+→ APPROVAL
+→ EXECUTION
+→ EFFECT MEASUREMENT
 
-Prefer HTTPX when browser rendering is unnecessary.
+Prioritize work that closes this loop.
 
-Crawler must include:
+---
 
-- retry
-- timeout
-- pagination where applicable
-- rate limiting
-- validation
-- deduplication
-- persistence
-- task state
-- error logging
+## 16. Testing Policy
 
-Maintain a deterministic local mock competitor website for demo reliability.
+Important business behavior requires meaningful tests.
 
-Do not implement access-control or CAPTCHA bypass.
+Use as appropriate:
 
+- unit tests;
+- repository tests;
+- migration tests;
+- API integration tests;
+- platform contract tests;
+- workflow tests;
+- security tests;
+- frontend tests;
+- browser tests;
+- end-to-end tests.
 
-## Testing
+Never:
 
-Every important business behavior must have meaningful tests.
+- delete tests to obtain a green build;
+- weaken valid assertions;
+- hard-code implementation answers only to pass tests;
+- silently skip mandatory tests;
+- report skipped real-platform verification as PASS.
 
-Do not:
+---
 
-- delete tests to hide bugs
-- weaken valid assertions merely to pass
-- hardcode demo answers
-- silently skip mandatory tests
+## 17. Verification
 
+Before completing relevant work run appropriate checks such as:
 
-## Subagents
+- pytest
+- ruff
+- format checks
+- mypy
+- migration validation
+- API tests
+- platform contract tests
+- workflow tests
+- Docker build
+- Docker Compose smoke tests
+- browser/UI tests
+- git diff --check
 
-Use subagents primarily for bounded read/review tasks such as:
+Record meaningful evidence in docs/PROGRESS.md.
 
-- repository exploration
-- architecture review
-- test review
-- security review
-- crawler review
-- final acceptance audit
+---
 
-Avoid multiple agents concurrently modifying overlapping files.
+## 18. Product UI
 
-The main agent owns integration.
+Streamlit may remain for:
 
+- development;
+- debugging;
+- internal administration;
+- regression testing.
 
-## Git
+The production product should evolve toward a proper React / Next.js frontend.
 
-Keep the repository recoverable.
+Core navigation should eventually include:
 
-Prefer coherent checkpoints before major architectural changes.
+- Dashboard
+- Products
+- Orders
+- Inventory
+- Profit
+- Refunds
+- Purchasing
+- Alerts
+- Business Tasks
+- Market Intelligence
+- AI Assistant
+- Data Import
+- Store Connections
+- Settings
 
-Do not rewrite history without explicit need.
+The primary product screen must not merely be an empty AI chat interface.
 
+---
 
-## Final Verification
+## 19. External Blockers
 
-Before declaring completion:
+Examples of genuine BLOCKED_EXTERNAL:
 
-1. reread PROJECT_SPEC
-2. reread ACCEPTANCE
-3. audit implementation against both
-4. search mandatory TODO/FIXME/placeholders
-5. run full tests
-6. run lint/type checks
-7. build Docker from scratch
-8. launch Docker Compose
-9. verify health checks
-10. initialize clean database
-11. run seed process
-12. run ERP E2E
-13. run crawler E2E
-14. run Agent E2E
-15. run purchase approval E2E
-16. run A102 combined-analysis scenario
-17. delegate an independent final review
-18. fix Critical and High findings
-19. rerun affected tests
-20. rerun the final suite
+- unavailable platform API credentials;
+- platform application approval;
+- real seller OAuth authorization;
+- unavailable external infrastructure;
+- paid/private API access.
 
-Create docs/FINAL_REPORT.md only after these checks.
+The following are NOT blockers:
 
-Never claim a check passed unless it was actually executed.
+- failing tests;
+- missing code;
+- difficult implementation;
+- architecture problems;
+- migrations;
+- bugs;
+- refactoring.
+
+When blocked:
+
+1. document in BLOCKERS.md;
+2. finish everything technically possible;
+3. continue unrelated work.
+
+---
+
+## 20. Project State
+
+Maintain:
+
+### docs/TASKS.md
+
+Statuses:
+
+- TODO
+- IN_PROGRESS
+- BLOCKED_EXTERNAL
+- DONE
+
+### docs/PROGRESS.md
+
+Record:
+
+- implementation;
+- migrations;
+- commands executed;
+- tests;
+- failures;
+- fixes;
+- current phase;
+- remaining work.
+
+### docs/DECISIONS.md
+
+Record significant decisions:
+
+- context;
+- alternatives;
+- decision;
+- reasoning;
+- consequences.
+
+### docs/BLOCKERS.md
+
+Only genuine external blockers.
+
+Documentation must reflect reality.
+
+---
+
+## 21. Verification Levels
+
+Use these terms where useful:
+
+L0 DESIGNED
+L1 IMPLEMENTED
+L2 VERIFIED_LOCAL
+L3 VERIFIED_SANDBOX
+L4 VERIFIED_REAL
+
+Do not call an integration VERIFIED_REAL without actual evidence.
+
+---
+
+## 22. Anti-Self-Deception
+
+Never infer completion merely from code existence.
+
+Before saying something is:
+
+- implemented;
+- working;
+- secure;
+- production ready;
+- tested;
+- supported;
+
+verify:
+
+1. what evidence supports the statement;
+2. which tests actually ran;
+3. whether the environment was mock, local, sandbox or real;
+4. whether skipped tests hide missing requirements;
+5. whether documented limitations contradict the claim;
+6. whether docs overstate actual capabilities.
+
+Use:
+
+IMPLEMENTED_UNVERIFIED
+VERIFIED_LOCAL
+VERIFIED_MOCK
+VERIFIED_SANDBOX
+VERIFIED_REAL
+BLOCKED_EXTERNAL
+
+when appropriate.
+
+---
+
+## 23. Subagent Policy
+
+Use subagents where independent review improves reliability.
+
+Useful review roles:
+
+- architecture reviewer;
+- security reviewer;
+- test reviewer;
+- product / acceptance reviewer.
+
+Prefer parallel agents for:
+
+- repository exploration;
+- review;
+- tests;
+- security analysis;
+- specification comparison.
+
+Avoid multiple agents editing the same files simultaneously unless isolated worktrees are used.
+
+The primary agent remains responsible for reconciling findings.
+
+---
+
+## 24. Git Discipline
+
+Before work:
+
+- inspect git status;
+- preserve user changes.
+
+Before significant commits:
+
+- inspect diff;
+- run relevant tests;
+- verify no credentials were introduced;
+- run git diff --check.
+
+Keep changes coherent.
+
+Do not rewrite history unless explicitly required.
+
+---
+
+## 25. Security
+
+Never commit:
+
+- API keys;
+- access tokens;
+- refresh tokens;
+- passwords;
+- private certificates;
+- production credentials.
+
+Use environment variables or proper secret management.
+
+Stored external credentials must be encrypted appropriately.
+
+Validate webhook authenticity where supported.
+
+Use least privilege.
+
+Do not bypass CAPTCHA or access-control systems.
+
+---
+
+## 26. Definition of Complete
+
+The project may be declared COMPLETE only when:
+
+1. mandatory ACCEPTANCE.md criteria are satisfied;
+2. required automated verification passes;
+3. migrations pass;
+4. documented deployment works;
+5. required real-data workflows operate;
+6. no unresolved Critical or High correctness/security issue remains;
+7. required production paths do not depend on demo hard coding;
+8. documentation reflects actual implementation;
+9. limitations are documented;
+10. external-only gaps are clearly identified.
+
+Before COMPLETE:
+
+perform a final independent architecture, security, testing and product review.
+
+Generate:
+
+docs/FINAL_REPORT.md
+
+The report must distinguish:
+
+- implemented;
+- verified locally;
+- verified with mocks;
+- verified with sandbox;
+- verified against real platforms;
+- externally blocked.
+
+Never claim COMPLETE when evidence does not support it.

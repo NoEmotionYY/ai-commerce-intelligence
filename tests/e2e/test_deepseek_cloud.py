@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import TypedDict, cast
 from uuid import uuid4
 
 import httpx
@@ -27,7 +28,25 @@ if os.getenv("RUN_DEEPSEEK_E2E") == "1" and not all((OPERATOR_KEY, APPROVER_KEY,
     raise RuntimeError("DeepSeek 真实云验收需要显式配置双角色凭据与云模型凭据")
 
 
-def _chat(message: str, **extra: str) -> dict[str, object]:
+class ToolCall(TypedDict):
+    tool: str
+    arguments: dict[str, object]
+
+
+class Evidence(TypedDict):
+    source: str
+
+
+class ChatResult(TypedDict):
+    llm_provider: str
+    llm_model: str
+    tool_calls: list[ToolCall]
+    evidence: list[Evidence]
+    answer: str
+    approval_id: int | None
+
+
+def _chat(message: str, **extra: str) -> ChatResult:
     payload = {"message": message, "session_id": f"deepseek-e2e-{uuid4().hex}", **extra}
     response = httpx.post(
         f"{AGENT}/api/chat",
@@ -36,7 +55,7 @@ def _chat(message: str, **extra: str) -> dict[str, object]:
         timeout=300,
     )
     response.raise_for_status()
-    data = response.json()
+    data = cast(ChatResult, response.json())
     assert data["llm_provider"] == "deepseek"
     assert data["llm_model"] == DEEPSEEK_MODEL
     return data

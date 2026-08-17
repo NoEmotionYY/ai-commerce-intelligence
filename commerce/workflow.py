@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from commerce.analytics import recommend_reorder_quantity
-from commerce.config import get_settings
+from commerce.config import RuntimeConfigurationError, get_settings
 from commerce.models import (
     ApprovalStatus,
     ApprovalTask,
@@ -65,6 +65,13 @@ def build_purchase_graph() -> object:
 purchase_graph = build_purchase_graph()
 
 
+def _require_legacy_workflow_runtime() -> None:
+    if not get_settings().allows_fixtures:
+        raise RuntimeConfigurationError(
+            "Legacy 采购工作流仅允许在显式 development/test/demo fixture 模式使用"
+        )
+
+
 def begin_purchase_graph(approval: ApprovalTask) -> PurchaseState:
     data = approval.action_data
     return purchase_graph.invoke(  # type: ignore[attr-defined,no-any-return]
@@ -97,6 +104,7 @@ def create_purchase_draft(
     created_by: str,
     idempotency_key: str,
 ) -> ApprovalTask:
+    _require_legacy_workflow_runtime()
     existing = session.scalar(
         select(ApprovalTask).where(ApprovalTask.idempotency_key == idempotency_key)
     )
@@ -165,6 +173,7 @@ def create_purchase_draft(
 def decide_approval(
     session: Session, approval_id: int, decision: str, actor: str, reason: str | None = None
 ) -> ApprovalTask:
+    _require_legacy_workflow_runtime()
     approval = session.scalar(
         select(ApprovalTask).where(ApprovalTask.id == approval_id).with_for_update()
     )
@@ -225,6 +234,7 @@ def decide_approval(
 
 
 def execute_approved_purchase(session: Session, approval: ApprovalTask) -> dict[str, object]:
+    _require_legacy_workflow_runtime()
     existing = session.scalar(select(PurchaseOrder).where(PurchaseOrder.approval_id == approval.id))
     if existing:
         return {

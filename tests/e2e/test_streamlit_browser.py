@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections.abc import Generator
+from typing import cast
 
 import httpx
 import pytest
@@ -64,7 +66,7 @@ if (
 
 
 @pytest.fixture
-def page() -> Page:
+def page() -> Generator[Page, None, None]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -86,8 +88,8 @@ def page() -> Page:
         browser.close()
 
 
-def api_get(path: str, **kwargs: object) -> object:
-    response = httpx.get(f"{AGENT}{path}", timeout=30, **kwargs)
+def api_get(path: str, headers: dict[str, str] | None = None) -> object:
+    response = httpx.get(f"{AGENT}{path}", timeout=30, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -156,7 +158,8 @@ def wait_for_new_task(prior_ids: set[int], timeout_seconds: int = 120) -> dict[s
     while time.monotonic() < deadline:
         tasks = api_get("/api/crawler/tasks")
         assert isinstance(tasks, list)
-        new_tasks = [item for item in tasks if item["id"] not in prior_ids]
+        typed_tasks = cast(list[dict[str, object]], tasks)
+        new_tasks = [item for item in typed_tasks if item["id"] not in prior_ids]
         if new_tasks and new_tasks[0]["status"] == "FAILED":
             raise AssertionError("采集任务执行失败")
         if new_tasks and new_tasks[0]["status"] == "SUCCESS":
@@ -294,7 +297,9 @@ def test_all_four_crawlers_have_chinese_ui(page: Page) -> None:
         page.get_by_role("button", name=button).click()
         task = wait_for_new_task(prior_ids)
         expect(page.get_by_text(re.compile("采集完成"))).to_be_visible(timeout=120_000)
-        assert task["records"] > 0
+        records = task["records"]
+        assert isinstance(records, int)
+        assert records > 0
         page_text = page.locator("body").inner_text()
         assert expected_type in page_text
         assert "成功" in page_text

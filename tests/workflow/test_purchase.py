@@ -1,12 +1,23 @@
 from datetime import timedelta
+from typing import Protocol, cast
 
 import pytest
 from langgraph.types import Command
 from sqlalchemy.orm import Session
 
+from commerce.config import RuntimeConfigurationError, get_settings
 from commerce.models import ApprovalStatus, PurchaseOrder, utcnow
 from commerce.seed import AS_OF, reset_and_seed
-from commerce.workflow import create_purchase_draft, decide_approval, purchase_graph
+from commerce.workflow import (
+    create_purchase_draft,
+    decide_approval,
+    execute_approved_purchase,
+    purchase_graph,
+)
+
+
+class InvokableGraph(Protocol):
+    def invoke(self, input: object, config: object) -> dict[str, object]: ...
 
 
 def test_purchase_draft_requires_decision(db_session: Session) -> None:
@@ -29,11 +40,12 @@ def test_purchase_graph_is_used_by_real_approval_service(db_session: Session) ->
 
 def test_langgraph_interrupt_and_resume() -> None:
     config = {"configurable": {"thread_id": "workflow-test-1"}}
-    first = purchase_graph.invoke(
+    graph = cast(InvokableGraph, purchase_graph)
+    first = graph.invoke(
         {"approval_id": 1, "sku": "B205", "quantity": 300, "unit_cost": "32.00"}, config
     )
     assert "__interrupt__" in first
-    resumed = purchase_graph.invoke(Command(resume="approve"), config)
+    resumed = graph.invoke(Command(resume="approve"), config)
     assert resumed["status"] == "APPROVED"
     assert resumed["decision"] == "approve"
 
@@ -59,3 +71,23 @@ def test_draft_idempotency_and_conflicting_decision(db_session: Session) -> None
     assert decide_approval(db_session, first.id, "reject", "approver").id == first.id
     with pytest.raises(ValueError, match="相反决定"):
         decide_approval(db_session, first.id, "approve", "approver")
+
+
+def test_legacy_purchase_workflow_rejects_direct_production_calls(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reset_and_seed(db_session, order_count=1000)
+    draft = create_purchase_draft(db_session, "B205", AS_OF, "agent", "production-boundary-draft")
+    monkeypatch.setattr(get_settings(), "app_env", "production")
+    monkeypatch.setattr(get_settings(), "demo_data_enabled", False)
+
+    with pytest.raises(RuntimeConfigurationError, match="Legacy 采购工作流"):
+        create_purchase_draft(db_session, "B205", AS_OF, "unvalidated", "production-bypass-create")
+    with pytest.raises(RuntimeConfigurationError, match="Legacy 采购工作流"):
+        decide_approval(db_session, draft.id, "approve", "unvalidated")
+    with pytest.raises(RuntimeConfigurationError, match="Legacy 采购工作流"):
+        execute_approved_purchase(db_session, draft)
+
+    db_session.refresh(draft)
+    assert draft.status is ApprovalStatus.PENDING
+    assert db_session.query(PurchaseOrder).count() == 0

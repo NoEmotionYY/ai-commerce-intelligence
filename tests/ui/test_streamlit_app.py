@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -60,10 +61,9 @@ def assert_clean(app: AppTest) -> None:
         assert forbidden not in serialized
 
 
-def authentication_handler(
-    method: str, url: str, *, headers: dict[str, str] | None = None, **kwargs: object
-) -> httpx.Response:
-    headers = headers or {}
+def authentication_handler(method: str, url: str, **kwargs: object) -> httpx.Response:
+    header_value = kwargs.get("headers")
+    headers = cast(dict[str, str], header_value) if isinstance(header_value, dict) else {}
     if url.endswith("/api/auth/operator"):
         return response(
             200 if headers.get("X-Operator-Key") == "valid-operator" else 403,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
+from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -23,11 +25,50 @@ def build_engine(database_url: str | None = None) -> Engine:
 
 engine = build_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+AUDIT_BUFFER_KEY = "operation_audit_buffer"
+logger = logging.getLogger(__name__)
+
+
+def buffer_operation_audit(session: Session, operation: Any) -> None:
+    session.info.setdefault(AUDIT_BUFFER_KEY, []).append(operation)
+
+
+def operation_audit_checkpoint(session: Session) -> int:
+    return len(session.info.get(AUDIT_BUFFER_KEY, []))
+
+
+def discard_buffered_operation_audits_since(session: Session, checkpoint: int) -> None:
+    operations = session.info.get(AUDIT_BUFFER_KEY, [])
+    if checkpoint < 0 or checkpoint > len(operations):
+        raise ValueError("审计缓冲检查点无效")
+    del operations[checkpoint:]
+
+
+def persist_buffered_operation_audits(session: Session) -> None:
+    operations = session.info.pop(AUDIT_BUFFER_KEY, [])
+    if not operations:
+        return
+    try:
+        session.add_all(operations)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 def get_session() -> Generator[Session, None, None]:
     session = SessionLocal()
     try:
         yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        try:
+            persist_buffered_operation_audits(session)
+        except Exception:
+            logger.exception("Failed to persist buffered operation audits")
+        raise
+    else:
+        persist_buffered_operation_audits(session)
     finally:
         session.close()

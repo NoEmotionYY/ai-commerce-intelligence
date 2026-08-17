@@ -12,13 +12,16 @@ dependencies = [
   "alembic>=1.14,<2",
   "apscheduler>=3.10,<4",
   "beautifulsoup4>=4.12,<5",
+  "cryptography>=50,<51",
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "langchain-core>=1.2,<2",
   "langchain-openai>=1.1,<2",
   "langgraph>=1.0,<2",
+  "openpyxl>=3.0,<4",
   "pydantic-settings>=2.6,<3",
   "pymysql>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
   "playwright==1.58.0",
   "sqlalchemy>=2.0,<3",
   "streamlit>=1.40,<2",
@@ -28,6 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "defusedxml>=0.7,<1",
   "mypy>=1.13,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",

@@ -7,8 +7,12 @@ __pycache__/
 .coverage
 htmlcov/
 .env
+.env.*
+!.env.example
+!.env.production.example
 .venv/
 commerce.db
 test.db
 playwright-report/
-
+backups/
+/.tmp-security-*/
