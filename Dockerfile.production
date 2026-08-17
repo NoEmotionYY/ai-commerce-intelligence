@@ -1,4 +1,4 @@
-FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,9 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get upgrade --yes \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system commerce \
-    && useradd --system --gid commerce --create-home commerce
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
@@ -24,8 +22,51 @@ COPY .streamlit ./.streamlit
 RUN pip install --no-cache-dir -r requirements.production.lock \
     && pip install --no-cache-dir setuptools==80.9.0 wheel==0.45.1 \
     && pip install --no-cache-dir --no-deps --no-build-isolation . \
-    && pip uninstall --yes setuptools wheel \
-    && chown -R commerce:commerce /app /home/commerce
+    && pip uninstall --yes setuptools wheel
+
+# The final image has no shell or package manager. Remove standard-library extension modules that
+# are not part of the production path, then carry only the additional shared libraries still
+# required by the remaining Python runtime. Preserve their exact Debian package metadata so image
+# scanners continue to see and assess every copied OS library.
+RUN rm -f \
+        /usr/local/lib/python3.12/lib-dynload/_crypt*.so \
+        /usr/local/lib/python3.12/lib-dynload/_curses*.so \
+        /usr/local/lib/python3.12/lib-dynload/_dbm*.so \
+        /usr/local/lib/python3.12/lib-dynload/_gdbm*.so \
+        /usr/local/lib/python3.12/lib-dynload/_sqlite3*.so \
+        /usr/local/lib/python3.12/lib-dynload/_uuid*.so \
+        /usr/local/lib/python3.12/lib-dynload/readline*.so \
+    && mkdir -p /runtime/etc /runtime/home/commerce /runtime/var/lib/dpkg/status.d \
+    && printf '%s\n' 'commerce:x:65532:65532:commerce:/home/commerce:/sbin/nologin' \
+        > /runtime/etc/passwd \
+    && printf '%s\n' 'commerce:x:65532:' > /runtime/etc/group \
+    && for library in \
+        /lib/x86_64-linux-gnu/libbz2.so.1.0 \
+        /lib/x86_64-linux-gnu/libffi.so.8 \
+        /lib/x86_64-linux-gnu/liblzma.so.5; do \
+        resolved="$(readlink -f "$library")"; \
+        cp --parents --archive "$resolved" /runtime; \
+        if [ "$resolved" != "$library" ]; then cp --parents --archive "$library" /runtime; fi; \
+    done \
+    && dpkg-query --show \
+        --showformat='Package: ${binary:Package}\nStatus: install ok installed\nArchitecture: ${Architecture}\nVersion: ${Version}\nSource: ${source:Package} (${source:Version})\nDescription: copied Python runtime library\n\n' \
+        libbz2-1.0 libffi8 liblzma5 \
+        > /runtime/var/lib/dpkg/status.d/commerce-python-runtime-libs
+
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:d97bc0a941b8d4be647dc0ee75b264ddbb772f1ac5ba690a4309c00723b23775
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app \
+    HOME=/home/commerce \
+    PATH=/usr/local/bin:/usr/bin
+
+COPY --from=builder /usr/local /usr/local
+COPY --from=builder --chown=65532:65532 /app /app
+COPY --from=builder /runtime/ /
+
+WORKDIR /app
 
 USER commerce
 

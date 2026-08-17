@@ -56,11 +56,13 @@ The Trivy blocking failure was not waived. The upgraded Debian image passed the 
 Critical/High gate, but its authoritative GitHub SARIF still records 14 Debian Trixie findings
 without an available fixed package (4 Critical, 10 High). Reachability review is not being used as
 an exception. An official Python Alpine 3.24 candidate was rejected by two GitHub builds because
-production Playwright has no musllinux distribution. `Dockerfile.production` instead moves to the
-supported Python 3.12.13 Debian Bookworm slim digest and upgrades its packages before creating the
-application user. This replacement still requires GitHub Trivy, image-contract, and full Production
-verifier evidence; until all three pass, 011F remains open and the prior Trixie scan is not
-reclassified as clean.
+production Playwright has no musllinux distribution. An upgraded Bookworm slim candidate built and
+passed the fixable gate but retained 6 Critical and 18 High findings, so it was also rejected. The
+current candidate builds on the reviewed Python 3.12 glibc image, then copies the Python/app runtime
+onto a digest-pinned Distroless Debian 13 `cc` base. It removes unused curses/readline/dbm/sqlite/uuid
+extensions and copies only bz2/ffi/lzma libraries plus their exact package metadata for Trivy. This
+replacement still requires GitHub Trivy, image-contract, and full Production verifier evidence;
+until all three pass, 011F remains open and the prior scans are not reclassified as clean.
 
 Remaining 011E/F evidence: freeze/push the current source, run the GitHub-hosted quality, MySQL,
 production-image, Gitleaks/Bandit/pip-audit/Trivy jobs, download and verify the exported image

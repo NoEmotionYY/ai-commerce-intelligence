@@ -72,10 +72,14 @@ def test_production_image_runs_as_unprivileged_user() -> None:
     assert "WORKDIR /app" in dockerfile
     assert "PYTHONPATH=/app" in dockerfile
     assert "PYTHONDONTWRITEBYTECODE=1" in dockerfile
-    assert "python:3.12.13-slim-bookworm@sha256:" in dockerfile
+    assert "python:3.12-slim@sha256:" in dockerfile
+    assert "gcr.io/distroless/cc-debian13:nonroot@sha256:" in dockerfile
     assert "apt-get update" in dockerfile
     assert "apt-get upgrade --yes" in dockerfile
     assert "rm -rf /var/lib/apt/lists/*" in dockerfile
+    assert "/runtime/var/lib/dpkg/status.d/commerce-python-runtime-libs" in dockerfile
+    assert "libbz2-1.0 libffi8 liblzma5" in dockerfile
+    assert "_curses*.so" in dockerfile
     assert "requirements.production.lock" in dockerfile
     assert "--no-deps --no-build-isolation ." in dockerfile
 
